@@ -1,0 +1,1 @@
+pin.tga (GoldGreenDot.tga) snatched from TomTom.

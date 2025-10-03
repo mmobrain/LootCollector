@@ -1,0 +1,33 @@
+## Interface: 30300
+## Title: |ce5cc80ffLootCollector|r |cffff5555[alpha.0.4.1]
+## Notes: Community-driven addon enables players to collaboratively discover and share locations of lootable objects, enriching exploration and boosting gameplay efficiency. Designed for Ascension.Bronzebeard by Skulltrail.
+## Author: Skulltrail
+## Version: 0.4.1-alpha
+## SavedVariables: LootCollectorDB_Asc
+## OptionalDeps: Ace3, TomTom
+
+# Load Libraries
+libs\LibStub\LibStub.lua
+libs\Ace3\AceAddon-3.0\AceAddon-3.0.xml
+libs\Ace3\AceEvent-3.0\AceEvent-3.0.xml
+libs\Ace3\AceDB-3.0\AceDB-3.0.xml
+libs\Ace3\AceConsole-3.0\AceConsole-3.0.xml
+libs\Ace3\AceGUI-3.0\AceGUI-3.0.xml
+libs\Ace3\AceConfig-3.0\AceConfig-3.0.xml
+libs\AceSerializer-3.0\AceSerializer-3.0.lua
+libs\LibBase64-1.0\lib.xml
+libs\Ace3\AceComm-3.0\AceComm-3.0.xml
+libs\LibDeflate\lib.xml
+
+LootCollector.lua
+Core.lua
+Detect.lua
+Reinforce.lua
+Comm.lua
+DBSync.lua
+Settings.lua
+Decay.lua
+Map.lua
+Arrow.lua
+Toast.lua
+ImportExport.lua

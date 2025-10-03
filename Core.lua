@@ -17,6 +17,10 @@ local STATUS_CONFIRMED   = "CONFIRMED"
 local STATUS_FADING      = "FADING"
 local STATUS_STALE       = "STALE"
 
+-- Merge distance constants
+local DISCOVERY_MERGE_DISTANCE = 0.03 -- 3% of map width
+local DISCOVERY_MERGE_DISTANCE_SQ = DISCOVERY_MERGE_DISTANCE * DISCOVERY_MERGE_DISTANCE
+
 -- Round normalized map coordinates to 2 decimals for storage and GUIDs
 local function round2(v)
     v = tonumber(v) or 0
@@ -28,6 +32,23 @@ local function buildGuid2(zoneID, itemID, x, y)
     local x2 = round2(x or 0)
     local y2 = round2(y or 0)
     return tostring(zoneID or 0) .. "-" .. tostring(itemID or 0) .. "-" .. tostring(x2) .. "-" .. tostring(y2)
+end
+
+-- Find an existing discovery for the same item within a mergeable distance
+local function FindNearbyDiscovery(zoneID, itemID, x, y, db)
+    if not db then return nil end
+    for guid, d in pairs(db) do
+        if d.zoneID == zoneID and d.itemID == itemID then
+            if d.coords then
+                local dx = (d.coords.x or 0) - x
+                local dy = (d.coords.y or 0) - y
+                if (dx*dx + dy*dy) < DISCOVERY_MERGE_DISTANCE_SQ then
+                    return d
+                end
+            end
+        end
+    end
+    return nil
 end
 
 -- Extract numeric itemID from an itemLink
@@ -55,6 +76,8 @@ function Core:EnsureVerificationFields(d)
     d.coords = d.coords or { x = 0, y = 0 }
     d.coords.x = round2(d.coords.x or 0)
     d.coords.y = round2(d.coords.y or 0)
+    -- Initialize merge count for coordinate averaging
+    d.mergeCount = d.mergeCount or 1
     -- Strip any per-character flags from canonical records
     d.lootedByMe = nil
 end
@@ -77,6 +100,7 @@ end
 -- v1: add status/statusTs/lastSeen to legacy profile store
 -- v2: re-key to 2-decimal GUIDs and merge duplicates in legacy profile store
 -- v3: promote discoveries from profile -> global; convert lootedByMe -> char.looted[guid]
+-- v4 (global): merge nearby duplicate discoveries
 function Core:MigrateDiscoveries()
     if not (L.db and L.db.profile and L.db.global and L.db.char) then return end
 
@@ -151,6 +175,81 @@ function Core:MigrateDiscoveries()
             print(string.format("|cff00ff00LootCollector:|r Promoted %d discoveries to account scope.", moved))
         end
     end
+
+    -- v4 (global): merge nearby duplicate discoveries
+    if global._schemaVersion < 2 then
+        local byItemZone = {}
+        for guid, d in pairs(global.discoveries) do
+            if d and d.zoneID and d.itemID then
+                local key = tostring(d.zoneID) .. ":" .. tostring(d.itemID)
+                if not byItemZone[key] then byItemZone[key] = {} end
+                table.insert(byItemZone[key], d)
+            end
+        end
+
+        local newDb = {}
+        local numMerged = 0
+        local numTotalBefore = 0
+        local numTotalAfter = 0
+
+        for key, group in pairs(byItemZone) do
+            numTotalBefore = numTotalBefore + #group
+            while #group > 0 do
+                local cluster = { table.remove(group, 1) }
+                local i = #group
+                while i >= 1 do
+                    local d2 = group[i]
+                    local isNear = false
+                    for _, d1 in ipairs(cluster) do
+                        local dx = ((d1.coords and d1.coords.x) or 0) - ((d2.coords and d2.coords.x) or 0)
+                        local dy = ((d1.coords and d1.coords.y) or 0) - ((d2.coords and d2.coords.y) or 0)
+                        if (dx*dx + dy*dy) < DISCOVERY_MERGE_DISTANCE_SQ then
+                            isNear = true
+                            break
+                        end
+                    end
+                    if isNear then
+                        table.insert(cluster, table.remove(group, i))
+                    end
+                    i = i - 1
+                end
+
+                if #cluster == 1 then
+                    local d = cluster[1]
+                    self:EnsureVerificationFields(d)
+                    newDb[d.guid] = d
+                else
+                    numMerged = numMerged + #cluster
+                    local sum_x, sum_y = 0, 0
+                    local merged_d = {}
+                    for k,v in pairs(cluster[1]) do merged_d[k] = v end
+
+                    for _, d_in_cluster in ipairs(cluster) do
+                        sum_x = sum_x + ((d_in_cluster.coords and d_in_cluster.coords.x) or 0)
+                        sum_y = sum_y + ((d_in_cluster.coords and d_in_cluster.coords.y) or 0)
+                        if (d_in_cluster.lastSeen or 0) > (merged_d.lastSeen or 0) then
+                            mergeRecords(merged_d, d_in_cluster)
+                        end
+                    end
+
+                    merged_d.coords.x = round2(sum_x / #cluster)
+                    merged_d.coords.y = round2(sum_y / #cluster)
+                    merged_d.mergeCount = #cluster
+                    local newGuid = buildGuid2(merged_d.zoneID, merged_d.itemID, merged_d.coords.x, merged_d.coords.y)
+                    merged_d.guid = newGuid
+                    newDb[newGuid] = merged_d
+                end
+                numTotalAfter = numTotalAfter + 1
+            end
+        end
+        
+        if numMerged > 0 then
+            print(string.format("|cff00ff00LootCollector:|r Merged %d nearby discoveries into %d more accurate locations.", numTotalBefore, numTotalAfter))
+        end
+        
+        global.discoveries = newDb
+        global._schemaVersion = 2
+    end
 end
 
 function Core:OnInitialize()
@@ -161,7 +260,7 @@ function Core:OnInitialize()
     L.db.char.looted = L.db.char.looted or {}
     L.db.char.hidden = L.db.char.hidden or {}
 
-    -- Run migrations (includes promotion to global/overlays)
+    -- Run migrations (includes promotion to global/overlays and merging)
     self:MigrateDiscoveries()
 end
 
@@ -219,14 +318,14 @@ function Core:HandleLocalLoot(discovery)
 
     local x = discovery.coords.x
     local y = discovery.coords.y
-    local guid = buildGuid2(discovery.zoneID, itemID, x, y)
     local nowTs = time()
 
     local db = L.db.global.discoveries
-    local existing = db[guid]
+    local existing = FindNearbyDiscovery(discovery.zoneID, itemID, x, y, db)
 
     if not existing then
-        -- New canonical discovery
+        -- New canonical discovery, not near any others
+        local guid = buildGuid2(discovery.zoneID, itemID, x, y)
         discovery.guid = guid
         discovery.itemID = itemID
         discovery.timestamp = discovery.timestamp or nowTs
@@ -234,7 +333,7 @@ function Core:HandleLocalLoot(discovery)
         discovery.status = STATUS_UNCONFIRMED
         discovery.statusTs = nowTs
         discovery.lootedByMe = nil
-        self:EnsureVerificationFields(discovery)
+        self:EnsureVerificationFields(discovery) -- This will set mergeCount = 1
         db[guid] = discovery
 
         -- Mark per-character completion
@@ -257,16 +356,25 @@ function Core:HandleLocalLoot(discovery)
         return
     end
 
-    -- Update existing canonical record on local loot
+    -- Merge into existing canonical record on local loot
     self:EnsureVerificationFields(existing)
+    
+    -- Weighted average of coordinates
+    local n = existing.mergeCount or 1
+    existing.coords.x = (existing.coords.x * n + x) / (n + 1)
+    existing.coords.y = (existing.coords.y * n + y) / (n + 1)
+    existing.coords.x = round2(existing.coords.x)
+    existing.coords.y = round2(existing.coords.y)
+    existing.mergeCount = n + 1
+
     existing.lastSeen = nowTs
     -- Ensure the original finder is preserved, unless it was Unknown
     if not existing.foundBy_player or existing.foundBy_player == "Unknown" then
         existing.foundBy_player = UnitName("player")
     end
 
-    -- Mark per-character completion
-    L.db.char.looted[guid] = nowTs
+    -- Mark per-character completion for the merged discovery's GUID
+    L.db.char.looted[existing.guid] = nowTs
 
     -- Hardcoded confirmation rule: Always share a confirmation if the discovery is FADING,
     -- as this helps refresh its status on the network.
@@ -287,7 +395,7 @@ function Core:HandleLocalLoot(discovery)
             zone = existing.zone,
             subZone = existing.subZone,
             zoneID = existing.zoneID,
-            coords = { x = existing.coords and existing.coords.x or x, y = existing.coords and existing.coords.y or y },
+            coords = { x = existing.coords.x, y = existing.coords.y },
             foundBy_player = UnitName("player"),
             foundBy_class = select(2, UnitClass("player")),
             timestamp = nowTs,
@@ -349,7 +457,7 @@ function Core:AddDiscovery(discoveryData, isNetworkDiscovery)
     local itemID = discoveryData.itemID or extractItemID(discoveryData.itemLink)
     if not itemID then return end
 
-    -- Normalize coords to 2 decimals before computing guid
+    -- Normalize coords to 2 decimals before any processing
     local x = (discoveryData.coords and discoveryData.coords.x) or 0
     local y = (discoveryData.coords and discoveryData.coords.y) or 0
     x = round2(x)
@@ -358,14 +466,16 @@ function Core:AddDiscovery(discoveryData, isNetworkDiscovery)
     discoveryData.coords.x = x
     discoveryData.coords.y = y
 
-    local guid = buildGuid2(discoveryData.zoneID, itemID, x, y)
-
     local db = L.db.global.discoveries
-    if not db[guid] then
+    local existing = FindNearbyDiscovery(discoveryData.zoneID, itemID, x, y, db)
+
+    if not existing then
+        -- New discovery, not near any others
+        local guid = buildGuid2(discoveryData.zoneID, itemID, x, y)
         discoveryData.guid = guid
         discoveryData.itemID = itemID
         discoveryData.lootedByMe = nil
-        self:EnsureVerificationFields(discoveryData)
+        self:EnsureVerificationFields(discoveryData) -- sets mergeCount = 1
         db[guid] = discoveryData
 
         -- Only show a toast for new discoveries from the network.
@@ -391,9 +501,17 @@ function Core:AddDiscovery(discoveryData, isNetworkDiscovery)
     end
 
     -- Merge into existing
-    local existing = db[guid]
     self:EnsureVerificationFields(existing)
 
+    -- Weighted average of coordinates for network updates
+    local n = existing.mergeCount or 1
+    existing.coords.x = (existing.coords.x * n + x) / (n + 1)
+    existing.coords.y = (existing.coords.y * n + y) / (n + 1)
+    existing.coords.x = round2(existing.coords.x)
+    existing.coords.y = round2(existing.coords.y)
+    existing.mergeCount = n + 1
+
+    -- Merge timestamps and status
     local incomingTs = tonumber(discoveryData.statusTs) or tonumber(discoveryData.lastSeen) or tonumber(discoveryData.timestamp) or time()
     if incomingTs > (existing.statusTs or 0) and discoveryData.status then
         existing.status = discoveryData.status

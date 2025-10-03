@@ -7,6 +7,9 @@
 
 Unlike addons that require manual updates after every server patch, LootCollector's database is evergreen. All it takes is one user to find a new item, and its location is instantly shared with the entire addon community.
 
+Screenhots from live Brozebeard few fours after launch (0.4.2-alpha):
+![image](https://i.imgur.com/cfYL2fM.jpeg)
+
 ## Installation
 
 1.  Download the latest version from the [Releases](https://github.com/your-username/LootCollector/releases) page.

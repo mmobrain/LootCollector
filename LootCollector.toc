@@ -1,8 +1,8 @@
 ## Interface: 30300
-## Title: |ce5cc80ffLootCollector|r |cffff5555[alpha.0.4.1]
+## Title: |ce5cc80ffLootCollector|r |cffff5555[alpha.0.4.2]
 ## Notes: Community-driven addon enables players to collaboratively discover and share locations of lootable objects, enriching exploration and boosting gameplay efficiency. Designed for Ascension.Bronzebeard by Skulltrail.
 ## Author: Skulltrail
-## Version: 0.4.1-alpha
+## Version: 0.4.2-alpha
 ## SavedVariables: LootCollectorDB_Asc
 ## OptionalDeps: Ace3, TomTom
 

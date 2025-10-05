@@ -42,6 +42,24 @@ StaticPopupDialogs["LOOTCOLLECTOR_REMOVE_DISCOVERY"] = {
 local FilterButton = nil
 local FilterMenuHost = CreateFrame("Frame", "LootCollectorFilterMenuHost", UIParent, "UIDropDownMenuTemplate")
 
+-- Minimap shape definitions (which corners are rounded)
+-- { upper-left, lower-left, upper-right, lower-right }
+local ValidMinimapShapes = {
+  ["SQUARE"]                = { false, false, false, false },
+  ["CORNER-TOPLEFT"]        = { true,  false, false, false },
+  ["CORNER-TOPRIGHT"]       = { false, false, true,  false },
+  ["CORNER-BOTTOMLEFT"]     = { false, true,  false, false },
+  ["CORNER-BOTTOMRIGHT"]    = { false, false, false, true },
+  ["SIDE-LEFT"]             = { true,  true,  false, false },
+  ["SIDE-RIGHT"]            = { false, false, true,  true },
+  ["SIDE-TOP"]              = { true,  false, true,  false },
+  ["SIDE-BOTTOM"]           = { false, true,  false, true },
+  ["TRICORNER-TOPLEFT"]     = { true,  true,  true,  false },
+  ["TRICORNER-TOPRIGHT"]    = { true,  false, true,  true },
+  ["TRICORNER-BOTTOMLEFT"]  = { true,  true,  false, true },
+  ["TRICORNER-BOTTOMRIGHT"] = { false, true,  true,  true },
+}
+
 -- Minimap indicators
 Map._mmPins = Map._mmPins or {}
 Map._mmTicker = Map._mmTicker or nil
@@ -74,7 +92,7 @@ local function AlphaForStatus(status)
 end
 
 local function getFilters()
-  local p = L.db and L.db.profile; local f = (p and p.mapFilters) or {}; if f.hideAll == nil then f.hideAll = false end; if f.hideFaded == nil then f.hideFaded = false end; if f.hideStale == nil then f.hideStale = false end; if f.hideLooted == nil then f.hideLooted = false end; if f.hideUnconfirmed == nil then f.hideUnconfirmed = false end; if f.hideUncached == nil then f.hideUncached = false end; if f.minRarity == nil then f.minRarity = 0 end; if f.allowedEquipLoc == nil then f.allowedEquipLoc = {} end; if f.allowedClasses == nil then f.allowedClasses = {} end; if f.showMinimap == nil then f.showMinimap = true end; if f.showMysticScrolls == nil then f.showMysticScrolls = true end; if f.showWorldforged == nil then f.showWorldforged = true end; return f
+  local p = L.db and L.db.profile; local f = (p and p.mapFilters) or {}; if f.hideAll == nil then f.hideAll = false end; if f.hideFaded == nil then f.hideFaded = false end; if f.hideStale == nil then f.hideStale = false end; if f.hideLooted == nil then f.hideLooted = false end; if f.hideUnconfirmed == nil then f.hideUnconfirmed = false end; if f.hideUncached == nil then f.hideUncached = false end; if f.minRarity == nil then f.minRarity = 0 end; if f.allowedEquipLoc == nil then f.allowedEquipLoc = {} end; if f.allowedClasses == nil then f.allowedClasses = {} end; if f.showMinimap == nil then f.showMinimap = true end; if f.showMysticScrolls == nil then f.showMysticScrolls = true end; if f.showWorldforged == nil then f.showWorldforged = true end; if f.maxMinimapDistance == nil then f.maxMinimapDistance = 0 end; return f
 end
 
 local function isLootedByChar(guid)
@@ -179,6 +197,14 @@ function Map:BuildPin()
   local pinSize=(L.db and L.db.profile.mapFilters.pinSize)or 16;local frame=CreateFrame("Button",nil,WorldMapButton);frame:SetSize(pinSize,pinSize);frame:SetFrameStrata(WorldMapButton:GetFrameStrata());frame:SetFrameLevel(WorldMapButton:GetFrameLevel()+10);frame:SetNormalTexture(nil);frame:SetHighlightTexture(nil);frame:SetPushedTexture(nil);frame:SetDisabledTexture(nil);frame.border=frame:CreateTexture(nil,"BACKGROUND");frame.border:SetHeight(pinSize);frame.border:SetWidth(pinSize);frame.border:SetPoint("CENTER",0,0);frame.border:SetTexture("Interface\\Buttons\\UI-Quickslot2");frame.border:SetTexCoord(0.2,0.8,0.2,0.8);frame.border:SetVertexColor(0,0,0,0.25);frame.unlootedOutline=frame:CreateTexture(nil,"BORDER");frame.unlootedOutline:SetTexture("Interface\\Buttons\\WHITE8X8");frame.unlootedOutline:SetHeight(pinSize);frame.unlootedOutline:SetWidth(pinSize);frame.unlootedOutline:SetPoint("CENTER",0,0);frame.unlootedOutline:Hide();local iconSize=pinSize-2;frame.texture=frame:CreateTexture(nil,"ARTWORK");frame.texture:SetHeight(iconSize);frame.texture:SetWidth(iconSize);frame.texture:SetPoint("CENTER",0,0);frame.texture:SetTexture(PIN_FALLBACK_TEXTURE);frame:RegisterForClicks("LeftButtonUp","RightButtonUp");frame:SetScript("OnEnter",function(self)if Map._pinnedPin and Map._pinnedPin~=self then return end;if not self.discovery then return end;Map:ShowDiscoveryTooltip(self)end);frame:SetScript("OnLeave",function(self)if Map._pinnedPin==self then return end;Map:HideDiscoveryTooltip()end);frame:SetScript("OnClick",function(self,button)if button=="RightButton"then Map:OpenPinMenu(self);return end;if Map._pinnedPin==self then Map._pinnedPin=nil;Map:HideDiscoveryTooltip()else Map._pinnedPin=self;Map:ShowDiscoveryTooltip(self)end end);table.insert(self.pins,frame);return frame
 end
 
+local function GetCurrentMinimapShape()
+  if _G.GetMinimapShape then
+    local shape = _G.GetMinimapShape()
+    return ValidMinimapShapes[shape] or ValidMinimapShapes["SQUARE"]
+  end
+  return ValidMinimapShapes["SQUARE"]
+end
+
 local function GetRotateMinimapFacing()
   local rotate = GetCVar and GetCVar("rotateMinimap"); if rotate == "1" and MiniMapCompassRing and MiniMapCompassRing.GetFacing then return MiniMapCompassRing:GetFacing() or 0 end; return 0
 end
@@ -190,7 +216,7 @@ function Map:HideAllMmPins()
 end
 
 function Map:UpdateMinimap()
-  local f = getFilters(); if not f.showMinimap or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then self:HideAllMmPins(); return end; local mapID = GetCurrentMapZone(); local px, py = GetPlayerMapPosition("player"); if not px or not py or (px == 0 and py == 0) then self:HideAllMmPins(); return end; local count = 0; local centerX, centerY = Minimap:GetWidth() * 0.5, Minimap:GetHeight() * 0.5; local radius = math.min(centerX, centerY) - 6; local facing = GetRotateMinimapFacing(); for _, d in pairs(L.db.global.discoveries or {}) do repeat if not d or not d.coords or not d.zoneID or d.zoneID ~= mapID or not passesFilters(d) then break end; local dx, dy = (d.coords.x or 0) - px, (d.coords.y or 0) - py; local minimapScale = 0.03; local mmX = (dx / minimapScale) * centerX; local mmY = (-dy / minimapScale) * centerY; if facing ~= 0 then local cos_f = math.cos(-facing); local sin_f = math.sin(-facing); local rotX = mmX * cos_f - mmY * sin_f; local rotY = mmX * sin_f + mmY * cos_f; mmX, mmY = rotX, rotY end; local dist = math.sqrt(mmX*mmX + mmY*mmY); if dist > radius then local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale end; count = count + 1; local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint("CENTER", Minimap, "CENTER", mmX, mmY); local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or PIN_FALLBACK_TEXTURE); pin:Show() until true end; for i = count + 1, #self._mmPins do self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil end
+  local f = getFilters(); if not f.showMinimap or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then self:HideAllMmPins(); return end; local mapID = GetCurrentMapZone(); local px, py = GetPlayerMapPosition("player"); if not px or not py or (px == 0 and py == 0) then self:HideAllMmPins(); return end; local count = 0; local centerX, centerY = Minimap:GetWidth() * 0.5, Minimap:GetHeight() * 0.5; local radius = math.min(centerX, centerY) - 6; local facing = GetRotateMinimapFacing(); local minimapShape = GetCurrentMinimapShape(); local maxDist = f.maxMinimapDistance or 0; for _, d in pairs(L.db.global.discoveries or {}) do repeat if not d or not d.coords or not d.zoneID or d.zoneID ~= mapID or not passesFilters(d) then break end; local dx, dy = (d.coords.x or 0) - px, (d.coords.y or 0) - py; if maxDist > 0 then local mapDist = math.sqrt(dx*dx + dy*dy); if mapDist > maxDist then break end end; local minimapScale = 0.03; local mmX = (dx / minimapScale) * centerX; local mmY = (-dy / minimapScale) * centerY; if facing ~= 0 then local cos_f = math.cos(-facing); local sin_f = math.sin(-facing); local rotX = mmX * cos_f - mmY * sin_f; local rotY = mmX * sin_f + mmY * cos_f; mmX, mmY = rotX, rotY end; local isRound = true; if minimapShape and not (mmX == 0 or mmY == 0) then local cornerIndex = (mmX < 0) and 1 or 3; if mmY >= 0 then cornerIndex = cornerIndex + 1 end; isRound = minimapShape[cornerIndex] end; local dist; if isRound then dist = math.sqrt(mmX*mmX + mmY*mmY) else dist = math.max(math.abs(mmX), math.abs(mmY)) end; if dist > radius then local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale end; count = count + 1; local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint("CENTER", Minimap, "CENTER", mmX, mmY); local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or PIN_FALLBACK_TEXTURE); pin:Show() until true end; for i = count + 1, #self._mmPins do self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil end
 end
 
 function Map:EnsureMinimapTicker()

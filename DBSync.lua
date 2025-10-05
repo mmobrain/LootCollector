@@ -28,6 +28,7 @@ local MAX_STEPS = 7
 local importCounters = {}
 local importTimers = {}
 local summaryTicker = nil
+
 local lastShareTime = 0
 local announcedSenders = {}
 
@@ -95,7 +96,7 @@ local function recordsIterator()
 end
 
 function DBSync:Share(scope, target)
-    -- Add cooldown check
+ 
     local now = GetTime()
     if now - lastShareTime < SHARE_COOLDOWN then
         print(string.format("|cffff7f00LootCollector:|r /lcshare is on cooldown. Please wait %d more seconds.", math.ceil(SHARE_COOLDOWN - (now - lastShareTime))))

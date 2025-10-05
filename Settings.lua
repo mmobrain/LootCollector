@@ -88,9 +88,9 @@ function Settings:OnInitialize()
         AceConfig:RegisterOptionsTable("LootCollector", options)
         local optionsFrame = AceConfigDialog:AddToBlizOptions("LootCollector", "LootCollector")
 
-      
+       
         local function openOptions(tab)
-            
+           
             InterfaceOptionsFrame_OpenToCategory("LootCollector")
             if tab == "discoveries" then
                 InterfaceOptionsFrame_OpenToCategory("Discoveries")

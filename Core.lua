@@ -25,6 +25,27 @@ local itemCacheTooltip
 local cacheTicker 
 local CACHE_MIN_DELAY, CACHE_MAX_DELAY = 30, 60
 
+-- List of city zones to purge items from during manual cleanup
+local cityZonesToPurge = {
+    ["Stormwind City"] = true,
+    ["Ironforge"] = true,
+    ["Darnassus"] = true,
+    ["Orgrimmar"] = true,
+    ["Thunder Bluff"] = true,
+    ["Undercity"] = true,
+    ["Shattrath City"] = true,
+    ["Dalaran"] = true,
+}
+
+-- ist of GUID prefixes (Zone IDs) to purge
+local guidPrefixesToPurge = {
+    -- ["22-"] = true, -- skip for now because Org and Hillsbrad returns same id...
+    ["37-"] = true, 
+    ["23-"] = true, 
+    -- ["46-"] = true, -- skip for now because UC and WC returns same id...
+    ["10-"] = true, 
+}
+
 local function debugPrint(message)
     local Comm = L:GetModule("Comm", true)
     if Comm and Comm.verbose then
@@ -73,6 +94,107 @@ function Core:PurgeEmbossedScrolls()
     if L.db.global.purgeEmbossedState == 2 then debugPrint("Skipping PurgeEmbossedScrolls: Verification complete."); return end; local purgeState = L.db.global.purgeEmbossedState or 0; debugPrint("Starting PurgeEmbossedScrolls scan (State: " .. purgeState .. ")"); local discoveries = L.db.global.discoveries or {}; local guidsToProcess = {}; local processedCount = 0; for guid, d in pairs(discoveries) do if d then local name; local itemID = d.itemID or extractItemID(d.itemLink); debugPrint(string.format("Checking GUID: %s, ItemID: %s", tostring(guid), tostring(itemID))); if d.itemLink then name = d.itemLink:match("%[(.+)%]") ; debugPrint(string.format("... Name from itemLink: '%s'", tostring(name))) end; if not name and itemID then name = GetItemInfo(itemID); debugPrint(string.format("... Name from GetItemInfo(%s): '%s'", tostring(itemID), tostring(name))) end; if name and string.find(name, "Embossed Mystic Scroll", 1, true) then debugPrint(string.format("|cff00ff00MATCH FOUND! Queuing for removal.|r")); table.insert(guidsToProcess, guid) end end end; processedCount = #guidsToProcess; if purgeState == 0 then debugPrint("Running Cleanup stage. Found " .. processedCount .. " items to remove."); for _, guid in ipairs(guidsToProcess) do discoveries[guid] = nil end; if processedCount > 0 then print(string.format("|cff00ff00LootCollector:|r Removed %d 'Embossed Mystic Scroll' entries from the database.", processedCount)) end; L.db.global.purgeEmbossedState = 1 elseif purgeState == 1 then debugPrint("Running Verification stage. Found " .. processedCount .. " items."); if processedCount == 0 then debugPrint("|cff00ff00Verification successful. No Embossed scrolls found.|r"); L.db.global.purgeEmbossedState = 2 else print("|cffff7f00LootCollector:|r Verification failed! Found " .. processedCount .. " 'Embossed Mystic Scroll' entries that should have been deleted. The cleanup will run again on next login.") end end; debugPrint("Finished PurgeEmbossedScrolls scan.")
 end
 
+function Core:PurgeAllIgnoredItems()
+    if not (L.db and L.db.global and L.db.global.discoveries) then return 0 end
+    local discoveries = L.db.global.discoveries
+    local fullIgnoreList = {}
+    if L.ignoreList then for name, _ in pairs(L.ignoreList) do fullIgnoreList[name] = true end end
+    if L.sourceSpecificIgnoreList then for name, _ in pairs(L.sourceSpecificIgnoreList) do fullIgnoreList[name] = true end end
+    if not next(fullIgnoreList) then return 0 end
+    local guidsToRemove = {}; for guid, d in pairs(discoveries) do if d then local name = (d.itemLink and d.itemLink:match("%[(.+)%]")) or (d.itemID and GetItemInfo(d.itemID)); if name and fullIgnoreList[name] then table.insert(guidsToRemove, guid) end end end
+    local removedCount = #guidsToRemove
+    if removedCount > 0 then for _, guid in ipairs(guidsToRemove) do discoveries[guid] = nil end end
+    return removedCount
+end
+
+-- Function to purge based on GUID prefix 
+function Core:PurgeByGUIDPrefix()
+    if not (L.db and L.db.global and L.db.global.discoveries) then return 0 end
+    local discoveries = L.db.global.discoveries
+    local guidsToRemove = {}
+    for guid, d in pairs(discoveries) do
+        for prefix, _ in pairs(guidPrefixesToPurge) do
+            if string.sub(guid, 1, #prefix) == prefix then
+                table.insert(guidsToRemove, guid)
+                break 
+            end
+        end
+    end
+    local removedCount = #guidsToRemove
+    if removedCount > 0 then
+        for _, guid in ipairs(guidsToRemove) do
+            discoveries[guid] = nil
+        end
+    end
+    return removedCount
+end
+
+function Core:DeduplicateItems(mysticScrollsKeepOldest)
+    if not (L.db and L.db.global and L.db.global.discoveries) then return 0, 0 end
+    local groups = {}; for guid, d in pairs(L.db.global.discoveries) do if d and d.itemID and d.zoneID then local key = d.zoneID .. ":" .. d.itemID; groups[key] = groups[key] or {}; table.insert(groups[key], guid) end end
+    local guidsToRemove = {}; local wfRemoved, msRemoved = 0, 0
+    for key, guids in pairs(groups) do
+        if #guids > 1 then
+            local firstDiscovery = L.db.global.discoveries[guids[1]]; local itemID = firstDiscovery.itemID; local name = (firstDiscovery.itemLink and firstDiscovery.itemLink:match("%[(.+)%]")) or GetItemInfo(itemID)
+            if name and string.find(name, "Mystic Scroll", 1, true) and mysticScrollsKeepOldest then
+                local guidToKeep, oldestTs = nil, nil; for _, guid in ipairs(guids) do local d = L.db.global.discoveries[guid]; local currentTs = tonumber(d.timestamp) or 0; if not oldestTs or currentTs < oldestTs then oldestTs = currentTs; guidToKeep = guid end end
+                for _, guid in ipairs(guids) do if guid ~= guidToKeep then table.insert(guidsToRemove, guid); msRemoved = msRemoved + 1 end end
+            else
+                local guidToKeep, latestTs = nil, nil; for _, guid in ipairs(guids) do local d = L.db.global.discoveries[guid]; local currentTs = tonumber(d.lastSeen) or 0; if not latestTs or currentTs > latestTs then latestTs = currentTs; guidToKeep = guid end end
+                for _, guid in ipairs(guids) do if guid ~= guidToKeep then table.insert(guidsToRemove, guid); if name and string.find(name, "Mystic Scroll", 1, true) then msRemoved = msRemoved + 1 else wfRemoved = wfRemoved + 1 end end end
+            end
+        end
+    end
+    if #guidsToRemove > 0 then for _, guid in ipairs(guidsToRemove) do L.db.global.discoveries[guid] = nil end end
+    return wfRemoved, msRemoved
+end
+
+function Core:RunManualDatabaseCleanup()
+    print("|cff00ff00LootCollector:|r Starting manual database cleanup...")
+    local cityGuidsToRemove = {}; for guid, d in pairs(L.db.global.discoveries or {}) do if d and d.zone and cityZonesToPurge[d.zone] then table.insert(cityGuidsToRemove, guid) end end
+    local cityRemoved = #cityGuidsToRemove; if cityRemoved > 0 then for _, guid in ipairs(cityGuidsToRemove) do L.db.global.discoveries[guid] = nil end; print(string.format("|cff00ff00LootCollector:|r Purged %d entries found in city zones.", cityRemoved)) end
+    local prefixRemoved = self:PurgeByGUIDPrefix(); if prefixRemoved > 0 then print(string.format("|cff00ff00LootCollector:|r Purged %d entries from specific zone GUIDs.", prefixRemoved)) end
+    local ignoredRemoved = self:PurgeAllIgnoredItems(); if ignoredRemoved > 0 then print(string.format("|cff00ff00LootCollector:|r Purged %d entries matching internal ignore lists.", ignoredRemoved)) end
+    local wfRemoved, msRemoved = self:DeduplicateItems(true); if wfRemoved > 0 then print(string.format("|cff00ff00LootCollector:|r Removed %d duplicate Worldforged entries, keeping the most recent.", wfRemoved)) end; if msRemoved > 0 then print(string.format("|cff00ff00LootCollector:|r Removed %d duplicate Mystic Scroll entries, keeping the oldest.", msRemoved)) end
+    L.db.global.manualCleanupRunCount = (L.db.global.manualCleanupRunCount or 0) + 1; print(string.format("|cffffff00LootCollector:|r Manual cleanup has now been run %d time(s).", L.db.global.manualCleanupRunCount))
+    if (cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved) == 0 then print("|cff00ff00LootCollector:|r No items needed purging or deduplication.") else print("|cff00ff00LootCollector:|r Manual cleanup complete."); local Map = L:GetModule("Map", true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end end
+end
+
+function Core:RunInitialCleanup()
+    local cityGuidsToRemove = {}; for guid, d in pairs(L.db.global.discoveries or {}) do if d and d.zone and cityZonesToPurge[d.zone] then table.insert(cityGuidsToRemove, guid) end end
+    local cityRemoved = #cityGuidsToRemove; if cityRemoved > 0 then for _, guid in ipairs(cityGuidsToRemove) do L.db.global.discoveries[guid] = nil end end
+    local prefixRemoved = self:PurgeByGUIDPrefix()
+    local ignoredRemoved = self:PurgeAllIgnoredItems()
+    local wfRemoved, msRemoved = self:DeduplicateItems(true)
+    if (cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved) > 0 then
+        print("|cff00ff00LootCollector:|r Initial cleanup complete. Removed: " .. cityRemoved .. " city, " .. prefixRemoved .. " prefix, " .. ignoredRemoved .. " ignored, " .. wfRemoved .. " WF dupes, " .. msRemoved .. " MS dupes.")
+        local Map = L:GetModule("Map", true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
+    end
+end
+
+function Core:RunAutomaticOnLoginCleanup()
+    local wfRemoved, msRemoved = self:DeduplicateItems(false)
+    if (wfRemoved + msRemoved) > 0 then
+        print("|cff00ff00LootCollector:|r Routine maintenance complete. Removed: " .. wfRemoved .. " WF dupes, " .. msRemoved .. " MS dupes.")
+        local Map = L:GetModule("Map", true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
+    end
+end
+
+function Core:PerformOnLoginMaintenance()
+    if self.onLoginCleanupPerformed then return end
+    self.onLoginCleanupPerformed = true
+
+    local phase = L.db.global.autoCleanupPhase or 0
+    if phase < 2 then
+        print(string.format("|cff00ff00LootCollector:|r Performing initial database cleanup (stage %d of 2)...", phase + 1))
+        self:RunInitialCleanup()
+        L.db.global.autoCleanupPhase = phase + 1
+    else
+        print("|cff00ff00LootCollector:|r Performing routine database maintenance...")
+        self:RunAutomaticOnLoginCleanup()
+    end
+end
+
 local function findDiscoveryDetails(itemID) if not itemID then return "Unknown Item", "Unknown Zone" end; local discoveries = L.db.global.discoveries or {}; for guid, d in pairs(discoveries) do if d and d.itemID == itemID then local name = (d.itemLink and d.itemLink:match("%[(.+)%]")) or ("Item " .. itemID); return name, d.zone or "Unknown Zone" end end; return "Item " .. itemID, "Unknown Zone" end;
 function Core:IsItemCached(itemID) if not itemID then return true end; local name = GetItemInfo(itemID); return name ~= nil end;
 function Core:QueueItemForCaching(itemID) if not itemID or not L.db.profile.autoCache then return end; L.db.global.cacheQueue = L.db.global.cacheQueue or {}; local queueMap = {}; for _, id in ipairs(L.db.global.cacheQueue) do queueMap[id] = true end; if not queueMap[itemID] then table.insert(L.db.global.cacheQueue, itemID) end end;
@@ -81,13 +203,64 @@ function Core:ProcessCacheQueue() if not L.db.profile.autoCache then if cacheTic
 function Core:OnGetItemInfoReceived(event, itemID) local name, itemLink, _, _, _, _, _, _, _, texture = GetItemInfo(itemID); if name and texture then debugPrint(string.format("|cff00ff00Successfully cached item %d (%s).|r", itemID, name)); if itemLink then local discoveries = L.db.global.discoveries or {}; for guid, d in pairs(discoveries) do if d and d.itemID == itemID and not d.itemLink then d.itemLink = itemLink end end end end; local Map = L:GetModule("Map", true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end end;
 
 function Core:OnInitialize()
-    if not (L.db and L.db.profile and L.db.global and L.db.char) then return end; if L.db.profile.autoCache == nil then L.db.profile.autoCache = true end; L.db.global.cacheQueue = L.db.global.cacheQueue or {}; L.db.global.discoveries = L.db.global.discoveries or {}; L.db.char.looted = L.db.char.looted or {}; L.db.char.hidden = L.db.char.hidden or {}; self:MigrateDiscoveries();
-    itemCacheTooltip = CreateFrame("GameTooltip", "LootCollectorCacheTooltip", UIParent, "GameTooltipTemplate"); itemCacheTooltip:SetOwner(UIParent, "ANCHOR_NONE"); L:RegisterEvent("GET_ITEM_INFO_RECEIVED", self.OnGetItemInfoReceived);
-    Timer.After(10, function() self:PurgeEmbossedScrolls(); self:ScanDatabaseForUncachedItems(); if #L.db.global.cacheQueue > 0 and (not cacheTicker or cacheTicker:IsCancelled()) then self:ProcessCacheQueue() end end)
+    if not (L.db and L.db.profile and L.db.global and L.db.char) then return end
+    self.onLoginCleanupPerformed = false
+    if L.db.profile.autoCache == nil then L.db.profile.autoCache = true end
+    L.db.global.cacheQueue = L.db.global.cacheQueue or {}
+    L.db.global.discoveries = L.db.global.discoveries or {}
+    L.db.char.looted = L.db.char.looted or {}
+    L.db.char.hidden = L.db.char.hidden or {}
+    L.db.global.manualCleanupRunCount = L.db.global.manualCleanupRunCount or 0
+    L.db.global.autoCleanupPhase = L.db.global.autoCleanupPhase or 0
+
+    self:MigrateDiscoveries()
+    itemCacheTooltip = CreateFrame("GameTooltip", "LootCollectorCacheTooltip", UIParent, "GameTooltipTemplate")
+    itemCacheTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    L:RegisterEvent("GET_ITEM_INFO_RECEIVED", self.OnGetItemInfoReceived)
+    
+    Timer.After(10, function() 
+        self:PurgeEmbossedScrolls()
+        self:PerformOnLoginMaintenance()
+        self:ScanDatabaseForUncachedItems()
+        if #L.db.global.cacheQueue > 0 and (not cacheTicker or cacheTicker:IsCancelled()) then self:ProcessCacheQueue() end
+    end)
 end
 
-function Core:Qualifies(linkOrQuality) if type(linkOrQuality)=="number" then return false end; local link=linkOrQuality; if not link then return false end; local SCAN_TIP_NAME="LootCollectorCoreScanTip"; if not self._scanTip then self._scanTip=CreateFrame("GameTooltip",SCAN_TIP_NAME,nil,"GameTooltipTemplate"); self._scanTip:SetOwner(UIParent,"ANCHOR_NONE") end; local function tipHas(needle) self._scanTip:ClearLines(); self._scanTip:SetHyperlink(link); for i=2,5 do local fs=_G[SCAN_TIP_NAME.."TextLeft"..i]; local text=fs and fs:GetText(); if text and string.find(string.lower(text),string.lower(needle),1,true) then return true end end; return false end;
-    local name=(select(1,GetItemInfo(link)))or(link:match("%[(.-)%]"))or""; if name=="" then return false end; if string.find(name,"Embossed Mystic Scroll",1,true) then return false end; local isScroll=string.find(name,"Mystic Scroll",1,true)~=nil; local isWorldforged=tipHas("Worldforged"); return isWorldforged or isScroll
+function Core:Qualifies(linkOrQuality)
+    if type(linkOrQuality) == "number" then return false end
+    local link = linkOrQuality
+    if not link then return false end
+
+    local name = (select(1, GetItemInfo(link))) or (link:match("%[(.-)%]")) or ""
+    if name == "" then return false end
+
+    if L.ignoreList and L.ignoreList[name] then
+        return false
+    end
+    
+    local SCAN_TIP_NAME = "LootCollectorCoreScanTip"
+    if not self._scanTip then
+        self._scanTip = CreateFrame("GameTooltip", SCAN_TIP_NAME, nil, "GameTooltipTemplate")
+        self._scanTip:SetOwner(UIParent, "ANCHOR_NONE")
+    end
+    
+    local function tipHas(needle)
+        self._scanTip:ClearLines()
+        self._scanTip:SetHyperlink(link)
+        for i = 2, 5 do
+            local fs = _G[SCAN_TIP_NAME .. "TextLeft" .. i]
+            local text = fs and fs:GetText()
+            if text and string.find(string.lower(text), string.lower(needle), 1, true) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local isScroll = string.find(name, "Mystic Scroll", 1, true) ~= nil
+    local isWorldforged = tipHas("Worldforged")
+
+    return isWorldforged or isScroll
 end
 
 function Core:HandleLocalLoot(discovery)
@@ -150,6 +323,11 @@ function Core:RemoveDiscovery(guid)
         return true
     end
     return false
+end
+
+SLASH_LootCollectorPURGEFORCE1 = "/lcpurgeforce"
+SlashCmdList["LootCollectorPURGEFORCE"] = function()
+    Core:RunManualDatabaseCleanup()
 end
 
 return Core

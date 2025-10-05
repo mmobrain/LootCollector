@@ -5,6 +5,7 @@ local L = LootCollector
 local Comm = L:NewModule("Comm", "AceComm-3.0")
 
 local AceSerializer = LibStub("AceSerializer-3.0")
+-- Use the same proven libraries as Import/Export
 local LibDeflate = LibStub("LibDeflate", true)
 
 -- Configuration and state
@@ -139,7 +140,32 @@ function Comm:SendLC1Discovery(d)
 end
 
 function Comm:HandleIncomingWire(tbl, via, sender)
-    if L:IsPaused() then local norm = normalizeIncomingData(tbl, sender); if norm then table.insert(L.pauseQueue.incoming, norm) end; return end; if L:IsZoneIgnored() then return end; if not L.db.profile.sharing.enabled or type(tbl) ~= 'table' or tbl.v ~= 1 then return end; if shouldDropByDedupe(tbl) then return end; local Core = L:GetModule("Core", true); if not Core then return end; local norm = normalizeIncomingData(tbl, sender); if norm then Core:AddDiscovery(norm, true) end
+    if L:IsPaused() then local norm = normalizeIncomingData(tbl, sender); if norm then table.insert(L.pauseQueue.incoming, norm) end; return end
+    if L:IsZoneIgnored() then return end
+    if not L.db.profile.sharing.enabled or type(tbl) ~= 'table' or tbl.v ~= 1 then return end
+    if shouldDropByDedupe(tbl) then return end
+    
+    local Core = L:GetModule("Core", true)
+    if not Core then return end
+    
+    local norm = normalizeIncomingData(tbl, sender)
+    if norm then
+        -- Filter check for incoming network data
+        local name = norm.itemName or (norm.itemLink and norm.itemLink:match("%[(.+)%]"))
+        if not name and norm.itemID then name = GetItemInfo(norm.itemID) end
+
+        if name then
+            if L.ignoreList and L.ignoreList[name] then
+                debugPrint("Comm", "Dropping incoming discovery for permanently ignored item: " .. name)
+                return -- Silently drop
+            end
+            if L.sourceSpecificIgnoreList and L.sourceSpecificIgnoreList[name] then
+                debugPrint("Comm", "Dropping incoming discovery for source-specific ignored item: " .. name)
+                return -- Silently drop, as network source is untrusted for these items
+            end
+        end
+        Core:AddDiscovery(norm, true)
+    end
 end
 
 local function chatEventHandler(e, ...)
@@ -153,7 +179,7 @@ local function chatEventHandler(e, ...)
     local v, op, z, i, x, y, t, q = string.match(header, "^LC1:(%d+):(%a+):(%d+):(%d+):([%d%.%-]+):([%d%.%-]+):(%d+):(%d+)$")
     if tonumber(v) ~= 1 then return end
     
-    -- Parse the tab-separated payload 
+    -- Parse the tab-separated payload
     local parts = {}
     for part in string.gmatch(payload, "[^\t]+") do
         table.insert(parts, part)

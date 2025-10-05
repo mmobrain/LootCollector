@@ -10,7 +10,7 @@ local L = LootCollector
 local Reinforce = L:NewModule("Reinforce", "AceEvent-3.0", "AceComm-3.0")
 local AceSerializer = LibStub and LibStub("AceSerializer-3.0", true) or nil
 
-
+-- Updated reinforcement schedule
 local OFFSETS = {
     0,      -- Step 1: Immediate (t0)
     1800,   -- Step 2: +30 minutes

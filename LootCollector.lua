@@ -9,9 +9,37 @@ _G.LootCollector = LootCollector
 LootCollector.addonPrefix = "BBLCAM25"
 LootCollector.chatChannel = "BBLCC25"
 
+-- Centralized item ignore lists
+LootCollector.ignoreList = {
+    ["Embossed Mystic Scroll"] = true,
+    ["Unimbued Mystic Scroll"] = true,
+    ["Untapped Mystic Scroll"] = true,
+    ["Felforged Mystic Scroll: Unlock Uncommon"] = true,
+    ["Felforged Mystic Scroll: Unlock Rare"] = true,
+    ["Felforged Mystic Scroll: Unlock Legendary"] = true,
+    ["Felforged Mystic Scroll: Unlock Epic"] = true,
+    ["Enigmatic Mystic Scroll"] = true,
+}
+
+LootCollector.sourceSpecificIgnoreList = {
+    ["Mystic Scroll: White Walker"] = true,
+    ["Mystic Scroll: Powder Mage"] = true,
+    ["Mystic Scroll: Midnight Flames"] = true,
+    ["Mystic Scroll: Lucifur"] = true,
+    ["Mystic Scroll: Knight of the Eclipse"] = true,
+    ["Mystic Scroll: Hoplite"] = true,
+    ["Mystic Scroll: Fire Watch"] = true,
+    ["Mystic Scroll: Eskimo"] = true,
+    ["Mystic Scroll: Dark Surgeon"] = true,
+    ["Mystic Scroll: Cauterizing Fire"] = true,
+    ["Mystic Scroll: Blood Venom"] = true,
+    ["Mystic Scroll: Ancestral Ninja"] = true,
+}
+
+-- Version key for the optional database. Change this if you update db.lua. 
 local OPTIONAL_DB_VERSION = "v1"
 
--- Static Popup definition
+-- Static Popup definition 
 StaticPopupDialogs["LOOTCOLLECTOR_OPTIONAL_DB_IMPORT"] = {
   text = "LootCollector has detected a starter database of discoveries. Would you like to merge it with your existing data?\n\nThis can be done later from the 'Discoveries' panel in the addon's options.",
   button1 = "Yes, Merge",
@@ -42,7 +70,7 @@ local dbDefaults = {
     profile = {
         enabled = true,
         paused = false,
-        offeredOptionalDB = nil, -- flag for one-time offer        
+        offeredOptionalDB = nil, -- Flag for one-time offer
         minQuality = 2,
         checkOnlySingleItemLoot = true,
         mapFilters = { hideAll = false, hideFaded = false, hideStale = false, hideLooted = false, pinSize = 16, },

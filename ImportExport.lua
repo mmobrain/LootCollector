@@ -33,10 +33,29 @@ local STATUS_CONFIRMED   = "CONFIRMED"
 local STATUS_FADING      = "FADING"
 local STATUS_STALE       = "STALE"
 
+-- The cleanRecord function now includes founder info
 local function cleanRecord(d)
   if type(d) ~= "table" then return nil end
-  return { guid=d.guid, itemID=d.itemID, zoneID=d.zoneID, coords=d.coords and {x=tonumber(d.coords.x) or 0, y=tonumber(d.coords.y) or 0} or {x=0,y=0}, status=d.status or STATUS_UNCONFIRMED, statusTs=tonumber(d.statusTs) or tonumber(d.lastSeen) or tonumber(d.timestamp) or now(), lastSeen=tonumber(d.lastSeen) or tonumber(d.timestamp) or now(), timestamp=tonumber(d.timestamp) or now(), itemLink=d.itemLink, zone=d.zone, subZone=d.subZone, }
+  return {
+    guid = d.guid,
+    itemID = d.itemID,
+    zoneID = d.zoneID,
+    coords = d.coords and {x = tonumber(d.coords.x) or 0, y = tonumber(d.coords.y) or 0} or {x = 0, y = 0},
+    status = d.status or STATUS_UNCONFIRMED,
+    statusTs = tonumber(d.statusTs) or tonumber(d.lastSeen) or tonumber(d.timestamp) or now(),
+    lastSeen = tonumber(d.lastSeen) or tonumber(d.timestamp) or now(),
+    timestamp = tonumber(d.timestamp) or now(),
+    itemLink = d.itemLink,
+    zone = d.zone,
+    subZone = d.subZone,
+    -- Added fields
+    foundBy_player = d.foundBy_player,
+    originator = d.originator,
+    source = d.source,
+    mergeCount = d.mergeCount,
+  }
 end
+
 
 local function countTableKeys(t)
   local n = 0; if type(t) == "table" then for _ in pairs(t) do n = n + 1 end end; return n
@@ -123,7 +142,6 @@ local function setLooted(guid, on) if not (L.db and L.db.char) then return end; 
 local function BuildLootedListPage(parent, titleText)
   local page=CreateFrame("Frame",nil,parent);page:SetAllPoints(parent);local title=page:CreateFontString(nil,"OVERLAY","GameFontHighlight");title:SetPoint("TOPLEFT",page,"TOPLEFT",0,0);title:SetText(titleText or"Looted by this character");
   
-  -- Count Display
   local countDisplay = page:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall");
   countDisplay:SetPoint("TOPRIGHT", page, "TOPRIGHT", -4, 0);
   countDisplay:SetText("");
@@ -140,7 +158,6 @@ end
 local function BuildAllListPage(parent, titleText)
   local page=CreateFrame("Frame",nil,parent);page:SetAllPoints(parent);local title=page:CreateFontString(nil,"OVERLAY","GameFontHighlight");title:SetPoint("TOPLEFT",page,"TOPLEFT",0,0);title:SetText(titleText or"All World Discoveries");
   
-
   local countDisplay = page:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall");
   countDisplay:SetPoint("TOPRIGHT", page, "TOPRIGHT", -4, 0);
   countDisplay:SetText("");
@@ -157,7 +174,6 @@ end
 local function BuildInstanceListPage(parent, titleText)
   local page=CreateFrame("Frame",nil,parent);page:SetAllPoints(parent);local title=page:CreateFontString(nil,"OVERLAY","GameFontHighlight");title:SetPoint("TOPLEFT",page,"TOPLEFT",0,0);title:SetText(titleText or"Instance Discoveries (No Map Pins)");
   
-
   local countDisplay = page:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall");
   countDisplay:SetPoint("TOPRIGHT", page, "TOPRIGHT", -4, 0);
   countDisplay:SetText("");

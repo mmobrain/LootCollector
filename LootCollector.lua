@@ -90,7 +90,7 @@ local dbDefaults = {
 function LootCollector:OnInitialize()
     self.db = LibStub("AceDB-3.0"):New("LootCollectorDB_Asc", dbDefaults, true)
     self.name = "LootCollector"
-    self.Version = "0.4.7-alpha-r"
+    self.Version = "0.4.9-alpha-nr"
 
     self.pauseQueue = { incoming = {}, outgoing = {} }
     self.notifiedNewVersion = nil

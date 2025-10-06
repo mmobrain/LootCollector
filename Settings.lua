@@ -22,6 +22,7 @@ local function ensureDefaults()
     if p.sharing.rejectWhisperSync == nil then p.sharing.rejectWhisperSync = false end
     
     if p.autoCache == nil then p.autoCache = true end
+    if p.sharing.rateLimitInterval == nil then p.sharing.rateLimitInterval = 5 end
 end
 
 local function refreshUI()
@@ -73,6 +74,7 @@ local function buildOptions()
                     rejectPartySync = { type = "toggle", name = "Block Party/Raid Sync", desc = "Ignore incoming database syncs (/lcshare) from party or raid members.", order = 20, get = function() return L.db.profile.sharing.rejectPartySync end, set = function(_, val) L.db.profile.sharing.rejectPartySync = val end, },
                     rejectGuildSync = { type = "toggle", name = "Block Guild Sync", desc = "Ignore incoming database syncs (/lcshare) from guild members.", order = 21, get = function() return L.db.profile.sharing.rejectGuildSync end, set = function(_, val) L.db.profile.sharing.rejectGuildSync = val end, },
                     rejectWhisperSync = { type = "toggle", name = "Block Whisper Sync", desc = "Ignore incoming database syncs (/lcshare) from whispers.", order = 22, get = function() return L.db.profile.sharing.rejectWhisperSync end, set = function(_, val) L.db.profile.sharing.rejectWhisperSync = val end, },
+                    interval = { type = "range", name = "Message Interval (seconds)", desc = "Minimum seconds between messages from the same sender.", order = 25, min = 5, max = 60, step = 1, get = function() return L.db.profile.sharing.rateLimitInterval end, set = function(_, val) L.db.profile.sharing.rateLimitInterval = val end, },
                 },
             },
         },

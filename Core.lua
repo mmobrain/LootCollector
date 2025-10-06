@@ -287,12 +287,16 @@ function Core:OnLootOpened()
                 zone     = GetRealZoneText(),
                 subZone  = GetSubZoneText(),
                 zoneID   = GetCurrentMapZone() or 0,
+                continentID = GetCurrentMapContinent() or 0,
                 coords   = { x = px, y = py },
                 foundBy_player = UnitName("player"),
                 foundBy_class  = select(2, UnitClass("player")),
                 timestamp = time(),
                 source    = "world_loot",
             }
+            debugPrint(string.format("Item picked up: %s in %s (ZoneID: %d, ContinentID: %d) at (%.2f, %.2f)",
+                discovery.itemLink or "Unknown Item", discovery.zone or "Unknown Zone",
+                discovery.zoneID, discovery.continentID, discovery.coords.x, discovery.coords.y))
             self:HandleLocalLoot(discovery)
         end
     end

@@ -72,6 +72,7 @@ local function buildWireV1(discovery, op)
       l = discovery.itemLink,
       q = quality or 1,
       z = discovery.zoneID,
+      c = discovery.continentID,
       zn = discovery.zone,
       x = round2(discovery.coords and discovery.coords.x or 0), 
       y = round2(discovery.coords and discovery.coords.y or 0), 
@@ -87,12 +88,13 @@ local function normalizeIncomingData(tbl, defaultSender)
     local link = tbl.l or (itemID and select(2, GetItemInfo(itemID))) -- Derive link if not provided, or if ID is valid
     local itemName = tbl.n or (link and select(1, GetItemInfo(link))) or (itemID and select(1, GetItemInfo(itemID))) -- Get item name from link or ID
 
-    return { 
+    return {
         itemLink = link, 
         itemName = itemName,
         itemID = itemID, 
         itemQuality = tonumber(tbl.q),
         zoneID = tonumber(tbl.z) or 0, 
+        continentID = tonumber(tbl.c) or 0, 
         zone = tbl.zn,
         coords = { x = round2(tbl.x), y = round2(tbl.y) }, 
         foundBy_player = tbl.s or defaultSender or "Unknown",
@@ -182,7 +184,7 @@ function Comm:HandleIncomingWire(tbl, via, sender)
 
         -- Debug for incoming discovery
         if Comm.verbose then
-            debugPrint("Comm", string.format("Incoming discovery: %s in %s (by %s)", norm.itemLink or name or "Unknown Item", norm.zone or "Unknown Zone", norm.foundBy_player or "Unknown Sender"))
+            debugPrint("Comm", string.format("Incoming discovery: %s in %s, ContinentID: %d, ZoneID: %d (by %s)", norm.itemLink or name or "Unknown Item", norm.zone or "Unknown Zone", norm.continentID or 0, norm.zoneID or 0, norm.foundBy_player or "Unknown Sender"))
         end
 
         if (L.ignoreList and L.ignoreList[name]) or (L.sourceSpecificIgnoreList and L.sourceSpecificIgnoreList[name]) then

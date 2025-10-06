@@ -148,6 +148,7 @@ function Detect:OnChatMsgLoot(event, msg)
     zone     = GetRealZoneText(),
     subZone  = GetSubZoneText(),
     zoneID   = GetCurrentMapZone() or 0,
+    continentID = GetCurrentMapContinent() or 0,
     coords   = { x = px, y = py },
     foundByplayer = UnitName("player"),
     foundByclass  = select(2, UnitClass("player")),

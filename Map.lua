@@ -28,10 +28,6 @@ local function GetMapZoneNumbers(zonename)
 
     -- Try to translate the zone name to English using LibBabble-Zone-3.0 if it's not already English
     local canonicalZonename = BZR[zonename] or zonename
-    if canonicalZonename ~= zonename then
-        print("LC Debug: GetMapZoneNumbers - Translated '" .. zonename .. "' to canonical '" .. canonicalZonename .. "'")
-    end
-
     for cont in pairs{GetMapContinents()} do
         for zone,name in pairs{GetMapZones(cont)} do
             local cleanedName = string.lower(string.trim(name or ""))

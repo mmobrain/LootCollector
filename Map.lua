@@ -101,12 +101,28 @@ local ValidMinimapShapes = {
   ["TRICORNER-BOTTOMRIGHT"] = { false, true,  true,  true },
 }
 
+-- Distance scale values for different minimap zoom levels
+local MINIMAP_ZOOM_SCALES = {
+  [0] = 0.10,  -- Largest view (largest area)
+  [1] = 0.09, 
+  [2] = 0.08,  
+  [3] = 0.07,  
+  [4] = 0.06, 
+  [5] = 0.05, 
+  [6] = 0.04,  
+  [7] = 0.03,  -- Closest view (smallest area)
+}
+
 -- Minimap indicators
 Map._mmPins = Map._mmPins or {}
 Map._mmTicker = Map._mmTicker or nil
 Map._mmElapsed = 0
-Map._mmInterval = 0.2
+Map._mmInterval = 0.1
 Map._mmSize = 10
+
+local function GetMinimapScale(zoom)
+    return MINIMAP_ZOOM_SCALES[zoom] or MINIMAP_ZOOM_SCALES[0]
+end
 
 -- Slot options (INVTYPE for multi-select)
 local SLOT_OPTIONS = {
@@ -247,9 +263,6 @@ local function GetCurrentMinimapShape()
   return ValidMinimapShapes["SQUARE"]
 end
 
-local function GetRotateMinimapFacing()
-  local rotate = GetCVar and GetCVar("rotateMinimap"); if rotate == "1" and MiniMapCompassRing and MiniMapCompassRing.GetFacing then return MiniMapCompassRing:GetFacing() or 0 end; return 0
-end
 local function EnsureMmPin(i)
   if Map._mmPins[i] then return Map._mmPins[i] end; local f = CreateFrame("Frame", nil, Minimap); f:SetSize(Map._mmSize, Map._mmSize); f.tex = f:CreateTexture(nil, "ARTWORK"); f.tex:SetAllPoints(f); f:Hide(); Map._mmPins[i] = f; return f
 end
@@ -258,7 +271,7 @@ function Map:HideAllMmPins()
 end
 
 function Map:UpdateMinimap()
-  local f = getFilters(); if not f.showMinimap or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then self:HideAllMmPins(); return end; local mapID = GetCurrentMapZone(); local px, py = GetPlayerMapPosition("player"); if not px or not py or (px == 0 and py == 0) then self:HideAllMmPins(); return end; local count = 0; local centerX, centerY = Minimap:GetWidth() * 0.5, Minimap:GetHeight() * 0.5; local radius = math.min(centerX, centerY) - 6; local facing = GetRotateMinimapFacing(); local minimapShape = GetCurrentMinimapShape(); local maxDist = f.maxMinimapDistance or 0; for _, d in pairs(L.db.global.discoveries or {}) do repeat if not d or not d.coords or not d.zoneID or d.zoneID ~= mapID or not passesFilters(d) then break end; local dx, dy = (d.coords.x or 0) - px, (d.coords.y or 0) - py; if maxDist > 0 then local mapDist = math.sqrt(dx*dx + dy*dy); if mapDist > maxDist then break end end; local minimapScale = 0.03; local mmX = (dx / minimapScale) * centerX; local mmY = (-dy / minimapScale) * centerY; if facing ~= 0 then local cos_f = math.cos(-facing); local sin_f = math.sin(-facing); local rotX = mmX * cos_f - mmY * sin_f; local rotY = mmX * sin_f + mmY * cos_f; mmX, mmY = rotX, rotY end; local isRound = true; if minimapShape and not (mmX == 0 or mmY == 0) then local cornerIndex = (mmX < 0) and 1 or 3; if mmY >= 0 then cornerIndex = cornerIndex + 1 end; isRound = minimapShape[cornerIndex] end; local dist; if isRound then dist = math.sqrt(mmX*mmX + mmY*mmY) else dist = math.max(math.abs(mmX), math.abs(mmY)) end; if dist > radius then local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale end; count = count + 1; local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint("CENTER", Minimap, "CENTER", mmX, mmY); local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or PIN_FALLBACK_TEXTURE); pin:Show() until true end; for i = count + 1, #self._mmPins do self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil end
+  local f = getFilters(); if not f.showMinimap or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then self:HideAllMmPins(); return end;  local mapID = GetCurrentMapZone();  local px, py = GetPlayerMapPosition("player"); if not px or not py or (px == 0 and py == 0) then self:HideAllMmPins(); return end;  local count = 0; local centerX, centerY = Minimap:GetWidth() * 0.5, Minimap:GetHeight() * 0.5;  local radius = math.min(centerX, centerY) - 6;  local minimapShape = GetCurrentMinimapShape();  local zoom = Minimap:GetZoom()  local minimapScale = GetMinimapScale(zoom)  local maxDist = f.maxMinimapDistance or 0;  for _, d in pairs(L.db.global.discoveries or {}) do  repeat  if not d or not d.coords or not d.zoneID or d.zoneID ~= mapID or not passesFilters(d) then break end;  local x, y = (d.coords.x or 0), (d.coords.y or 0);  local dx, dy = (x - px), (y - py);  if maxDist > 0 then  local mapDist = math.sqrt(dx * dx + dy * dy); if mapDist > maxDist then break end  end;  local mmX = (x - px) / minimapScale * centerX;  local mmY = (py - y) / minimapScale * centerY;  local isRound = true; if minimapShape and not (mmX == 0 or mmY == 0) then  local cornerIndex = (mmX < 0) and 1 or 3; if mmY >= 0 then cornerIndex = cornerIndex + 1 end; isRound =  minimapShape[cornerIndex]  end; local dist; if isRound then  dist = math.sqrt(mmX * mmX + mmY * mmY)  else  dist = math.max(math.abs(mmX),  math.abs(mmY))  end; if dist > radius then  local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale  end; count = count + 1;  local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint(  "CENTER", Minimap, "CENTER", mmX, mmY);  local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or  PIN_FALLBACK_TEXTURE); pin:Show()  pin:SetSize(Map._mmSize, Map._mmSize)  until true  end; for i = count + 1, #self._mmPins do  self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil  end
 end
 
 function Map:EnsureMinimapTicker()
@@ -269,6 +282,7 @@ function Map:OnInitialize()
   if not (L.db and L.db.profile and L.db.global and L.db.char) then return end; 
   self:UpdateFilterSettings();
   self:EnsureFilterUI(); self:EnsureMinimapTicker(); if WorldMapDetailFrame then WorldMapDetailFrame:EnableMouse(true); WorldMapDetailFrame:SetScript("OnMouseDown", function() if Map._pinnedPin then Map._pinnedPin = nil; Map:HideDiscoveryTooltip() end end) end; if WorldMapFrame and hooksecurefunc then hooksecurefunc(WorldMapFrame, "Hide", function() if Map._pinnedPin then Map._pinnedPin = nil; Map:HideDiscoveryTooltip() end end) end
+  if Minimap and hooksecurefunc then hooksecurefunc(Minimap, "SetZoom", function() Map:UpdateMinimap() end) end
 end
 
 function Map:UpdateFilterSettings()

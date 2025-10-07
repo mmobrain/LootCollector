@@ -281,6 +281,7 @@ function Core:OnLootOpened()
         if link and self:Qualifies(link) then           
             local px, py = GetPlayerMapPosition("player")
             px, py = px or 0, py or 0
+            SetMapToCurrentZone() -- Ensure map is set to current zone before getting IDs
             
             local discovery = {
                 itemLink = link,

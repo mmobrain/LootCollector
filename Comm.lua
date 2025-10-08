@@ -50,7 +50,9 @@ function Comm:ClearCaches()
         if self.cooldown.CONF then wipe(self.cooldown.CONF) end
         if self.cooldown.GONE then wipe(self.cooldown.GONE) end
     end
-    print("|cff00ff00LootCollector:|r Communication caches (seen/cooldown) have been cleared for this session.")
+    local ZoneResolver = L:GetModule("ZoneResolver", true)
+    if ZoneResolver then ZoneResolver:ClearCache() end
+    print("|cff00ff00LootCollector:|r Communication caches (seen/cooldown/zone) have been cleared for this session.")
 end
 
 local function buildWireV1(discovery, op)
@@ -87,18 +89,33 @@ local function normalizeIncomingData(tbl, defaultSender)
     local itemID = tonumber(tbl.i)
     local link = tbl.l or (itemID and select(2, GetItemInfo(itemID))) -- Derive link if not provided, or if ID is valid
     local itemName = tbl.n or (link and select(1, GetItemInfo(link))) or (itemID and select(1, GetItemInfo(itemID))) -- Get item name from link or ID
+    local zoneID = tonumber(tbl.z) or 0
+    local continentID = tonumber(tbl.c) or 0
+    local zoneName = tbl.zn
+
+    -- Resolve missing or 0 continentID using zone name
+    local ZoneResolver = L:GetModule("ZoneResolver", true)
+    if (continentID == 0 or not continentID) and zoneName and zoneName ~= "" and ZoneResolver then
+        local resolvedContID, resolvedZoneID = ZoneResolver:GetMapZoneNumbers(zoneName)
+        if resolvedContID and resolvedContID > 0 then
+            continentID = resolvedContID
+            if zoneID == 0 or not zoneID then
+                zoneID = resolvedZoneID
+            end
+        end
+    end
 
     return {
-        itemLink = link, 
+        itemLink = link,
         itemName = itemName,
-        itemID = itemID, 
+        itemID = itemID,
         itemQuality = tonumber(tbl.q),
-        zoneID = tonumber(tbl.z) or 0, 
-        continentID = tonumber(tbl.c) or 0, 
-        zone = tbl.zn,
-        coords = { x = round2(tbl.x), y = round2(tbl.y) }, 
+        zoneID = zoneID,
+        continentID = continentID,
+        zone = zoneName,
+        coords = { x = round2(tbl.x), y = round2(tbl.y) },
         foundBy_player = tbl.s or defaultSender or "Unknown",
-        timestamp = tonumber(tbl.t) or now(), 
+        timestamp = tonumber(tbl.t) or now(),
         lastSeen = tonumber(tbl.t) or now()
     }
 end

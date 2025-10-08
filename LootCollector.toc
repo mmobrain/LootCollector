@@ -24,6 +24,7 @@ DBopt\db.lua
 
 LootCollector.lua
 Core.lua
+ZoneResolver.lua
 Detect.lua
 Reinforce.lua
 Comm.lua

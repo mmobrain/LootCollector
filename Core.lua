@@ -335,4 +335,17 @@ SlashCmdList["LootCollectorPURGEFORCE"] = function()
     Core:RunManualDatabaseCleanup()
 end
 
+SLASH_LootCollectorUPDATECONTINENTS1 = "/lcupdatecontinents"
+SlashCmdList["LootCollectorUPDATECONTINENTS"] = function()
+    local ZoneResolver = L:GetModule("ZoneResolver", true)
+    if ZoneResolver then
+        local updated = ZoneResolver:UpdateMissingContinentIDs()
+        if updated == 0 then
+            print("|cff00ff00LootCollector:|r No discoveries found with missing continentID values.")
+        end
+    else
+        print("|cffff0000LootCollector:|r ZoneResolver module not available.")
+    end
+end
+
 return Core

@@ -5,9 +5,6 @@
 local L = LootCollector
 local Map = L:NewModule("Map")
 
-local BZ = LibStub("LibBabble-Zone-3.0")
-local BZL = BZ:GetUnstrictLookupTable()
-local BZR = BZ:GetReverseLookupTable()
 
 local ItemInfoCache = {}
 local function GetCachedItemInfo(linkOrId)
@@ -21,25 +18,6 @@ local function GetCachedItemInfo(linkOrId)
     return name, itemLink, quality, itemLevel, minLevel, itemType, itemSubType, stackCount, equipLoc, texture, sellPrice
 end
 
-local MapZoneCache = {}
-local function GetMapZoneNumbers(zonename)
-    local cached = MapZoneCache[zonename]
-    if cached then return unpack(cached) end
-
-    -- Try to translate the zone name to English using LibBabble-Zone-3.0 if it's not already English
-    local canonicalZonename = BZR[zonename] or zonename
-    for cont in pairs{GetMapContinents()} do
-        for zone,name in pairs{GetMapZones(cont)} do
-            local cleanedName = string.lower(string.trim(name or ""))
-            local cleanedCanonicalZonename = string.lower(string.trim(canonicalZonename or ""))
-            if cleanedName == cleanedCanonicalZonename then
-                MapZoneCache[zonename]={cont,zone}
-                return cont,zone
-            end
-        end
-    end
-    return 0,0
-end
 
 -- Pin size (per request)
 local PIN_FALLBACK_TEXTURE = "Interface\\AddOns\\LootCollector\\media\\pin"
@@ -260,14 +238,28 @@ local function GetCurrentMinimapShape()
 end
 
 local function EnsureMmPin(i)
-  if Map._mmPins[i] then return Map._mmPins[i] end; local f = CreateFrame("Frame", nil, Minimap); f:SetSize(Map._mmSize, Map._mmSize); f.tex = f:CreateTexture(nil, "ARTWORK"); f.tex:SetAllPoints(f); f:Hide(); Map._mmPins[i] = f; return f
+  if Map._mmPins[i] then return Map._mmPins[i] end; local f = CreateFrame("Frame", nil, Minimap); f:SetSize(Map._mmSize, Map._mmSize); f.tex = f:CreateTexture(nil, "ARTWORK"); f.tex:SetAllPoints(f); f.tex:SetTexCoord(0.1, 0.9, 0.1, 0.9); f:Hide(); Map._mmPins[i] = f; return f
 end
 function Map:HideAllMmPins()
   for _, pin in ipairs(self._mmPins) do pin:Hide(); pin.discovery = nil end
 end
 
 function Map:UpdateMinimap()
-  local f = getFilters(); if not f.showMinimap or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then self:HideAllMmPins(); return end;  local mapID = GetCurrentMapZone();  local px, py = GetPlayerMapPosition("player"); if not px or not py or (px == 0 and py == 0) then self:HideAllMmPins(); return end;  local count = 0; local centerX, centerY = Minimap:GetWidth() * 0.5, Minimap:GetHeight() * 0.5;  local radius = math.min(centerX, centerY) - 6;  local minimapShape = GetCurrentMinimapShape();  local zoom = Minimap:GetZoom()  local minimapScale = GetMinimapScale(zoom)  local maxDist = f.maxMinimapDistance or 0;  for _, d in pairs(L.db.global.discoveries or {}) do  repeat  if not d or not d.coords or not d.zoneID or d.zoneID ~= mapID or not passesFilters(d) then break end;  local x, y = (d.coords.x or 0), (d.coords.y or 0);  local dx, dy = (x - px), (y - py);  if maxDist > 0 then  local mapDist = math.sqrt(dx * dx + dy * dy); if mapDist > maxDist then break end  end;  local mmX = (x - px) / minimapScale * centerX;  local mmY = (py - y) / minimapScale * centerY;  local isRound = true; if minimapShape and not (mmX == 0 or mmY == 0) then  local cornerIndex = (mmX < 0) and 1 or 3; if mmY >= 0 then cornerIndex = cornerIndex + 1 end; isRound =  minimapShape[cornerIndex]  end; local dist; if isRound then  dist = math.sqrt(mmX * mmX + mmY * mmY)  else  dist = math.max(math.abs(mmX),  math.abs(mmY))  end; if dist > radius then  local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale  end; count = count + 1;  local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint(  "CENTER", Minimap, "CENTER", mmX, mmY);  local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or  PIN_FALLBACK_TEXTURE); pin:Show()  pin:SetSize(Map._mmSize, Map._mmSize)  until true  end; for i = count + 1, #self._mmPins do  self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil  end
+  local f = getFilters(); if not f.showMinimap or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then self:HideAllMmPins(); return end;  local mapID = GetCurrentMapZone();  local currentContinentID = GetCurrentMapContinent();  local px, py = GetPlayerMapPosition("player"); if not px or not py or (px == 0 and py == 0) then self:HideAllMmPins(); return end;  local count = 0; local centerX, centerY = Minimap:GetWidth() * 0.5, Minimap:GetHeight() * 0.5;  local radius = math.min(centerX, centerY) - 6;  local minimapShape = GetCurrentMinimapShape();  local zoom = Minimap:GetZoom()  local minimapScale = GetMinimapScale(zoom)  local maxDist = f.maxMinimapDistance or 0;  for _, d in pairs(L.db.global.discoveries or {}) do  repeat  if not d or not d.coords or not d.zoneID or d.zoneID ~= mapID or not passesFilters(d) then break end; 
+      -- Check continentID to ensure discovery is in the same continent
+      local discoveryContinentID = d.continentID or 0
+      if discoveryContinentID ~= 0 and currentContinentID ~= 0 and discoveryContinentID ~= currentContinentID then break end
+
+      local x, y = (d.coords.x or 0), (d.coords.y or 0);
+      local dx, dy = (x - px), (y - py);
+
+      -- Early distance culling
+      if maxDist > 0 then
+        local mapDistSquared = dx * dx + dy * dy;
+        local maxDistSquared = maxDist * maxDist;
+        if mapDistSquared > maxDistSquared then break end
+      end;
+      local mmX = (x - px) / minimapScale * centerX;  local mmY = (py - y) / minimapScale * centerY;  local isRound = true; if minimapShape and not (mmX == 0 or mmY == 0) then  local cornerIndex = (mmX < 0) and 1 or 3; if mmY >= 0 then cornerIndex = cornerIndex + 1 end; isRound =  minimapShape[cornerIndex]  end; local dist; if isRound then  dist = math.sqrt(mmX * mmX + mmY * mmY)  else  dist = math.max(math.abs(mmX),  math.abs(mmY))  end; if dist > radius then  local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale  end; count = count + 1;  local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint(  "CENTER", Minimap, "CENTER", mmX, mmY);  local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or  PIN_FALLBACK_TEXTURE); pin:Show()  pin:SetSize(Map._mmSize, Map._mmSize)  until true  end; for i = count + 1, #self._mmPins do  self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil  end
 end
 
 function Map:EnsureMinimapTicker()
@@ -322,18 +314,22 @@ function Map:Update()
   local currentContinentID = GetCurrentMapContinent();
   if not WorldMapDetailFrame or not WorldMapButton then return end; local mapWidth, mapHeight = WorldMapDetailFrame:GetWidth(), WorldMapDetailFrame:GetHeight(); local mapLeft, mapTop = WorldMapDetailFrame:GetLeft(), WorldMapDetailFrame:GetTop(); local parentLeft, parentTop = WorldMapButton:GetLeft(), WorldMapButton:GetTop(); if not mapWidth or not mapHeight or not mapLeft or not mapTop or not parentLeft or not parentTop then return end; if mapWidth == 0 or mapHeight == 0 then return end; local offsetX = mapLeft - parentLeft; local offsetY = mapTop - parentTop; 
   local pinIndex = 1; local stillPinned = false; 
+  local ZoneResolver = L:GetModule("ZoneResolver", true)
+
   for _, discovery in pairs(L.db.global.discoveries) do 
     repeat 
       local discoveryContinentID = discovery.continentID or 0
       local discoveryZoneID = discovery.zoneID or 0
 
-      -- Attempt to get correct map info for old data (continentID 0) using local GetMapZoneNumbers
-      if discoveryContinentID == 0 and GetMapZoneNumbers and discovery.zone then
-          local tempContID, tempZoneID = GetMapZoneNumbers(discovery.zone)
+      -- Attempt to get correct map info for old data (continentID 0)
+      if discoveryContinentID == 0 and discovery.zone then
+        if ZoneResolver then
+          local tempContID, tempZoneID = ZoneResolver:GetMapZoneNumbers(discovery.zone)
           if tempContID and tempZoneID then
-              discoveryContinentID = tempContID
-              discoveryZoneID = tempZoneID
+            discoveryContinentID = tempContID
+            discoveryZoneID = tempZoneID
           end
+        end
       end
 
       if not discovery or not discovery.coords or discoveryZoneID == 0 or 
@@ -342,8 +338,8 @@ function Map:Update()
           (discoveryZoneID == 0 or discoveryZoneID == 41) then break end;
       if not passesFilters(discovery) then break end; 
       local pin = self.pins[pinIndex] or self:BuildPin(); pinIndex = pinIndex + 1; pin.discovery = discovery; local pinSize=(L.db.profile.mapFilters.pinSize)or 16;pin:SetSize(pinSize,pinSize);local isLooted=isLootedByChar(discovery.guid);local icon=self:GetDiscoveryIcon(discovery);local isFallbackTexture=(icon==PIN_FALLBACK_TEXTURE or not icon);pin.texture:SetTexture(icon);if isFallbackTexture then if pin.border then pin.border:Hide()end;if pin.unlootedOutline then pin.unlootedOutline:Hide()end;pin.texture:SetVertexColor(1,1,1)else if pin.border then pin.border:Show()end;if isLooted then if pin.unlootedOutline then pin.unlootedOutline:Hide()end;pin.texture:SetVertexColor(0.7,0.7,0.7)else if pin.unlootedOutline then pin.unlootedOutline:Show()end;pin.texture:SetVertexColor(1,1,1);local _,_,quality=GetCachedItemInfo(discovery.itemLink or discovery.itemID);local r,g,b=GetQualityColor(quality);pin.unlootedOutline:SetVertexColor(r,g,b)end end;pin:SetAlpha(AlphaForStatus(GetStatus(discovery)));local pinX_relative=(discovery.coords.x or 0)*mapWidth;local pinY_relative=(discovery.coords.y or 0)*mapHeight;local finalX=offsetX+pinX_relative;local finalY=offsetY-pinY_relative;pin:ClearAllPoints();pin:SetPoint("CENTER",WorldMapButton,"TOPLEFT",finalX,finalY);pin:Show();if self._pinnedPin==pin then stillPinned=true;self:ShowDiscoveryTooltip(pin)end 
-    until true 
-  end; 
+    until true
+  end;
   for i = pinIndex, #self.pins do self.pins[i]:Hide(); self.pins[i].discovery = nil end; if self._pinnedPin and not stillPinned then self._pinnedPin = nil; self:HideDiscoveryTooltip() end
 end
 

@@ -75,28 +75,12 @@ local ValidMinimapShapes = {
   ["TRICORNER-BOTTOMRIGHT"] = { false, true,  true,  true },
 }
 
--- Distance scale values for different minimap zoom levels
-local MINIMAP_ZOOM_SCALES = {
-  [0] = 0.10,  -- Largest view (largest area)
-  [1] = 0.09, 
-  [2] = 0.08,  
-  [3] = 0.07,  
-  [4] = 0.06, 
-  [5] = 0.05, 
-  [6] = 0.04,  
-  [7] = 0.03,  -- Closest view (smallest area)
-}
-
 -- Minimap indicators
 Map._mmPins = Map._mmPins or {}
 Map._mmTicker = Map._mmTicker or nil
 Map._mmElapsed = 0
-Map._mmInterval = 0.1
+Map._mmInterval = 0.05
 Map._mmSize = 10
-
-local function GetMinimapScale(zoom)
-    return MINIMAP_ZOOM_SCALES[zoom] or MINIMAP_ZOOM_SCALES[0]
-end
 
 -- Slot options (INVTYPE for multi-select)
 local SLOT_OPTIONS = {
@@ -197,7 +181,7 @@ local SOURCE_TEXT_MAP = {
 }
 
 function Map:ShowDiscoveryTooltip(pin)
-    if not pin or not pin.discovery then return end; local d = pin.discovery; GameTooltip:SetOwner(pin, "ANCHOR_RIGHT"); GameTooltip:ClearLines(); if self._pinnedPin == pin and d.itemLink then if not itemInfoTooltip then itemInfoTooltip = CreateFrame("GameTooltip", "LootCollectorItemInfoTooltip", UIParent, "GameTooltipTemplate") end; itemInfoTooltip:SetOwner(UIParent, "ANCHOR_NONE"); itemInfoTooltip:SetHyperlink(d.itemLink); for i = 1, itemInfoTooltip:NumLines() do local line = _G["LootCollectorItemInfoTooltipTextLeft" .. i]; local r, g, b; if line and line:GetText() then r, g, b = line:GetTextColor(); GameTooltip:AddLine(line:GetText(), r, g, b) end end; itemInfoTooltip:Hide(); GameTooltip:AddLine(" ") else local name, _, quality = GetCachedItemInfo(d.itemLink or d.itemID or ""); local header = d.itemLink or name or "Discovery"; GameTooltip:AddLine(header, 1, 1, 1, true); if quality then local r, g, b = GetQualityColor(quality); GameTooltipTextLeft1:SetTextColor(r, g, b) end end; GameTooltip:AddLine(string.format("Found by: %s", d.foundBy_player or "Unknown"), 0.6, 0.8, 1, true); local ts = tonumber(d.timestamp) or time(); GameTooltip:AddDoubleLine("Date", date("%Y-%m-%d %H:%M", ts), 0.8, 0.8, 0.8, 1, 1, 1); local status = GetStatus(d); local ls = tonumber(d.lastSeen) or ts; GameTooltip:AddDoubleLine("Status", status, 0.8, 0.8, 0.8, 1, 1, 1); GameTooltip:AddDoubleLine("Last seen", date("%Y-%m-%d %H:%M", ls), 0.8, 0.8, 0.8, 1, 1, 1); 
+    if not pin or not pin.discovery then return end; local d = pin.discovery; GameTooltip:SetOwner(pin, "ANCHOR_RIGHT"); GameTooltip:ClearLines(); if self._pinnedPin == pin and d.itemLink then if not itemInfoTooltip then itemInfoTooltip = CreateFrame("GameTooltip", "LootCollectorItemInfoTooltip", UIParent, "GameTooltipTemplate") end; itemInfoTooltip:SetOwner(UIParent, "ANCHOR_NONE"); itemInfoTooltip:SetHyperlink(d.itemLink); for i = 1, itemInfoTooltip:NumLines() do local line = _G["LootCollectorItemInfoTooltipTextLeft" .. i]; local r, g, b; if line and line:GetText() then r, g, b = line:GetTextColor(); GameTooltip:AddLine(line:GetText(), r, g, b) end end; itemInfoTooltip:Hide(); GameTooltip:AddLine(" ") else local name, _, quality, _, _, itemType, itemSubType = GetCachedItemInfo(d.itemLink or d.itemID or ""); local header = d.itemLink or name or "Discovery"; GameTooltip:AddLine(header, 1, 1, 1, true); if quality then local r, g, b = GetQualityColor(quality); GameTooltipTextLeft1:SetTextColor(r, g, b) end; if itemType == "Armor" and itemSubType and itemSubType ~= "" then GameTooltip:AddLine(itemSubType, 1, 1, 1, true) end end; GameTooltip:AddLine(string.format("Found by: %s", d.foundBy_player or "Unknown"), 0.6, 0.8, 1, true); local ts = tonumber(d.timestamp) or time(); GameTooltip:AddDoubleLine("Date", date("%Y-%m-%d %H:%M", ts), 0.8, 0.8, 0.8, 1, 1, 1); local status = GetStatus(d); local ls = tonumber(d.lastSeen) or ts; GameTooltip:AddDoubleLine("Status", status, 0.8, 0.8, 0.8, 1, 1, 1); GameTooltip:AddDoubleLine("Last seen", date("%Y-%m-%d %H:%M", ls), 0.8, 0.8, 0.8, 1, 1, 1); 
 
     GameTooltip:AddDoubleLine("Zone", d.zone or "Unknown Zone", 0.8, 0.8, 0.8, 1, 1, 1); 
     if d.source then local sourceText = SOURCE_TEXT_MAP[d.source] or d.source; GameTooltip:AddDoubleLine("Source", sourceText, 0.8, 0.8, 0.8, 1, 1, 1) end; if d.coords then GameTooltip:AddDoubleLine("Location", string.format("%.1f, %.1f", (d.coords.x or 0) * 100, (d.coords.y or 0) * 100), 0.8, 0.8, 0.8, 1, 1, 1) end; if self._pinnedPin == pin and (d.itemLink or d.itemID) then self:EnsureHoverButton(); self._hoverBtnItemLink = d.itemLink or d.itemID; local icon = self:GetDiscoveryIcon(d); self._hoverBtn.tex:SetTexture(icon or PIN_FALLBACK_TEXTURE); GameTooltip:Show(); self._hoverBtn:ClearAllPoints(); if GameTooltipTextLeft1 then self._hoverBtn:SetPoint("LEFT", GameTooltipTextLeft1, "RIGHT", 4, 0) else self._hoverBtn:SetPoint("TOPRIGHT", GameTooltip, "TOPRIGHT", -6, -6) end; self._hoverBtn:Show() else if self._hoverBtn then self._hoverBtn:Hide() end; self._hoverBtnItemLink = nil; GameTooltip:Show() end
@@ -245,7 +229,22 @@ function Map:HideAllMmPins()
 end
 
 function Map:UpdateMinimap()
-  local f = getFilters(); if not f.showMinimap or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then self:HideAllMmPins(); return end;  local mapID = GetCurrentMapZone();  local currentContinentID = GetCurrentMapContinent();  local px, py = GetPlayerMapPosition("player"); if not px or not py or (px == 0 and py == 0) then self:HideAllMmPins(); return end;  local count = 0; local centerX, centerY = Minimap:GetWidth() * 0.5, Minimap:GetHeight() * 0.5;  local radius = math.min(centerX, centerY) - 6;  local minimapShape = GetCurrentMinimapShape();  local zoom = Minimap:GetZoom()  local minimapScale = GetMinimapScale(zoom)  local maxDist = f.maxMinimapDistance or 0;  for _, d in pairs(L.db.global.discoveries or {}) do  repeat  if not d or not d.coords or not d.zoneID or d.zoneID ~= mapID or not passesFilters(d) then break end; 
+  local f = getFilters(); if not f.showMinimap or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then self:HideAllMmPins(); return end;  local mapID = GetCurrentMapZone();  local currentContinentID = GetCurrentMapContinent();  local px, py = GetPlayerMapPosition("player"); if not px or not py or (px == 0 and py == 0) then self:HideAllMmPins(); return end;  local count = 0; local centerX, centerY = Minimap:GetWidth() * 0.5, Minimap:GetHeight() * 0.5;  local radius = math.min(centerX, centerY) - 6;  local minimapShape = GetCurrentMinimapShape();  
+  local viewRadius = Minimap:GetViewRadius(); 
+  local mapWidth, mapHeight = L.MapDimensions:GetMapDimensions(mapID);
+
+  if mapWidth == 0 or mapHeight == 0 or viewRadius == 0 then
+      self:HideAllMmPins();
+      return;
+  end
+
+  local xScale = (viewRadius * 2) / mapWidth;
+  local yScale = (viewRadius * 2) / mapHeight;
+
+  local xPixelScale = Minimap:GetWidth() / xScale;
+  local yPixelScale = Minimap:GetHeight() / yScale;
+
+  local maxDist = f.maxMinimapDistance or 0;  for _, d in pairs(L.db.global.discoveries or {}) do  repeat  if not d or not d.coords or not d.zoneID or d.zoneID ~= mapID or not passesFilters(d) then break end; 
       -- Check continentID to ensure discovery is in the same continent
       local discoveryContinentID = d.continentID or 0
       if discoveryContinentID ~= 0 and currentContinentID ~= 0 and discoveryContinentID ~= currentContinentID then break end
@@ -259,7 +258,12 @@ function Map:UpdateMinimap()
         local maxDistSquared = maxDist * maxDist;
         if mapDistSquared > maxDistSquared then break end
       end;
-      local mmX = (x - px) / minimapScale * centerX;  local mmY = (py - y) / minimapScale * centerY;  local isRound = true; if minimapShape and not (mmX == 0 or mmY == 0) then  local cornerIndex = (mmX < 0) and 1 or 3; if mmY >= 0 then cornerIndex = cornerIndex + 1 end; isRound =  minimapShape[cornerIndex]  end; local dist; if isRound then  dist = math.sqrt(mmX * mmX + mmY * mmY)  else  dist = math.max(math.abs(mmX),  math.abs(mmY))  end; if dist > radius then  local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale  end; count = count + 1;  local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint(  "CENTER", Minimap, "CENTER", mmX, mmY);  local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or  PIN_FALLBACK_TEXTURE); pin:Show()  pin:SetSize(Map._mmSize, Map._mmSize)  until true  end; for i = count + 1, #self._mmPins do  self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil  end
+      
+      -- Use the new dynamically calculated pixel scales
+      local mmX = dx * xPixelScale;  
+      local mmY = (py - y) * yPixelScale;  
+      
+      local isRound = true; if minimapShape and not (mmX == 0 or mmY == 0) then  local cornerIndex = (mmX < 0) and 1 or 3; if mmY >= 0 then cornerIndex = cornerIndex + 1 end; isRound =  minimapShape[cornerIndex]  end; local dist; if isRound then  dist = math.sqrt(mmX * mmX + mmY * mmY)  else  dist = math.max(math.abs(mmX),  math.abs(mmY))  end; if dist > radius then  local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale  end; count = count + 1;  local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint(  "CENTER", Minimap, "CENTER", mmX, mmY);  local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or  PIN_FALLBACK_TEXTURE); pin:Show()  pin:SetSize(Map._mmSize, Map._mmSize)  until true  end; for i = count + 1, #self._mmPins do  self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil  end
 end
 
 function Map:EnsureMinimapTicker()

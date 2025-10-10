@@ -19,7 +19,7 @@ local function ensureDefaults()
     if p.sharing.pauseInHighRisk == nil then p.sharing.pauseInHighRisk = false end
     if p.sharing.rejectPartySync == nil then p.sharing.rejectPartySync = false end
     if p.sharing.rejectGuildSync == nil then p.sharing.rejectGuildSync = false end
-    if p.sharing.rejectWhisperSync == nil then p.sharing.rejectWhisperSync = false end
+    if p.sharing.rejectWhisperSync == nil then p.sharing.rejectWhisperSync = false end 
     
     if p.autoCache == nil then p.autoCache = true end
     if p.sharing.rateLimitInterval == nil then p.sharing.rateLimitInterval = 5 end
@@ -60,6 +60,7 @@ local function buildOptions()
                     hideLooted = { type = "toggle", name = "Hide Looted", desc = "Hide discoveries already looted by this character.", order = 4, get = function() return L.db.profile.mapFilters.hideLooted end, set = function(_, val) L.db.profile.mapFilters.hideLooted = val; refreshUI() end, },
                     pinSizeSlider = { type = "range", name = "Map Icon Size", desc = "Adjust the size of the discovery icons on the world map.", order = 5, min = 8, max = 32, step = 1, get = function() return L.db.profile.mapFilters.pinSize end, set = function(_, val) L.db.profile.mapFilters.pinSize = val; refreshUI() end, },
                     maxMinimapDistance = { type = "range", name = "Max Minimap Distance", desc = "Maximum distance from player to show minimap icons. 0 = unlimited. Distance is in yards (approximate, varies by zone).", order = 6, min = 0, max = 2000, step = 50, get = function() local val = L.db.profile.mapFilters.maxMinimapDistance or 0; return val * 3340 end, set = function(_, val) L.db.profile.mapFilters.maxMinimapDistance = val / 3340; refreshUI() end, },
+                    hideMysticScrolls = { type = "toggle", name = "Hide Mystic Scrolls", desc = "Hide Mystic Scroll discovery markers from the map.", order = 7, get = function() return not L.db.profile.mapFilters.showMysticScrolls end, set = function(_, val) L.db.profile.mapFilters.showMysticScrolls = not val; refreshUI() end, },
                 },
             },
             behavior = {
@@ -116,6 +117,27 @@ function Settings:OnInitialize()
         end
     end
     SLASH_LootCollectorTOP1 = "/lctop"; SlashCmdList["LootCollectorTOP"] = ShowTopContributors
+    
+    -- Debug toggle command
+    SLASH_LootCollectorDEBUG1 = "/lcdebug"
+    SlashCmdList["LootCollectorDEBUG"] = function(msg)
+        msg = msg or ""
+        local cmd = msg:match("^(%S*)") or ""
+        cmd = cmd:lower()
+        
+        if cmd == "on" or cmd == "1" or cmd == "true" then
+            L.db.profile.chatDebug = true
+            print("|cff00ff00LootCollector:|r Debug mode |cffffff00ENABLED|r")
+        elseif cmd == "off" or cmd == "0" or cmd == "false" then
+            L.db.profile.chatDebug = false
+            print("|cff00ff00LootCollector:|r Debug mode |cffff7f00DISABLED|r")
+        else
+            -- Toggle current state
+            L.db.profile.chatDebug = not L.db.profile.chatDebug
+            local state = L.db.profile.chatDebug and "|cffffff00ENABLED|r" or "|cffff7f00DISABLED|r"
+            print("|cff00ff00LootCollector:|r Debug mode " .. state)
+        end
+    end
 end
 
 return Settings

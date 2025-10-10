@@ -200,7 +200,56 @@ function Core:IsItemCached(itemID) if not itemID then return true end; local nam
 function Core:QueueItemForCaching(itemID) if not itemID or not L.db.profile.autoCache then return end; L.db.global.cacheQueue = L.db.global.cacheQueue or {}; local queueMap = {}; for _, id in ipairs(L.db.global.cacheQueue) do queueMap[id] = true end; if not queueMap[itemID] then table.insert(L.db.global.cacheQueue, itemID) end end;
 function Core:ScanDatabaseForUncachedItems() if not L.db.profile.autoCache then return end; local discoveries = L.db.global.discoveries or {}; local queuedCount = 0; for guid, d in pairs(discoveries) do if d and d.itemID and not self:IsItemCached(d.itemID) then self:QueueItemForCaching(d.itemID); queuedCount = queuedCount + 1 end end; if queuedCount > 0 then print(string.format("|cff00ff00LootCollector:|r Found and queued %d uncached items for background processing.", queuedCount)); debugPrint(string.format("Total items in cache queue: %d", #(L.db.global.cacheQueue or {}))) end end;
 function Core:ProcessCacheQueue() if not L.db.profile.autoCache then if cacheTicker then cacheTicker:Cancel(); cacheTicker = nil end; return end; local queue = L.db.global.cacheQueue; if not queue or #queue == 0 then if cacheTicker then cacheTicker:Cancel(); cacheTicker = nil end; debugPrint("Item cache queue is now empty."); return end; local itemID = table.remove(queue, 1); if itemID then if not self:IsItemCached(itemID) then local itemName, itemZone = findDiscoveryDetails(itemID); debugPrint(string.format("Processing cache for item %d (%s in %s). Queue remaining: %d", itemID, itemName, itemZone, #queue)); itemCacheTooltip:SetHyperlink("item:" .. itemID); itemCacheTooltip:Hide() else debugPrint(string.format("Item %d was already cached, skipping. Queue remaining: %d", itemID, #queue)) end end; if cacheTicker then cacheTicker:Cancel() end; if #queue > 0 then local delay = math.random(CACHE_MIN_DELAY, CACHE_MAX_DELAY); debugPrint(string.format("Next cache check in %d seconds.", delay)); cacheTicker = Timer.After(delay, function() self:ProcessCacheQueue() end) end end;
-function Core:OnGetItemInfoReceived(event, itemID) local name, itemLink, _, _, _, _, _, _, _, texture = GetItemInfo(itemID); if name and texture then debugPrint(string.format("|cff00ff00Successfully cached item %d (%s).|r", itemID, name)); if itemLink then local discoveries = L.db.global.discoveries or {}; for guid, d in pairs(discoveries) do if d and d.itemID == itemID and not d.itemLink then d.itemLink = itemLink end end end end; local Map = L:GetModule("Map", true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end end;
+function Core:OnGetItemInfoReceived(event, itemID) 
+    local name, itemLink, _, _, _, _, _, _, _, texture = GetItemInfo(itemID)
+    if name and texture then 
+        debugPrint(string.format("|cff00ff00Successfully cached item %d (%s).|r", itemID, name))
+        
+        -- Update itemLinks for discoveries that don't have them yet
+        if itemLink then 
+            local discoveries = L.db.global.discoveries or {}
+            for guid, d in pairs(discoveries) do 
+                if d and d.itemID == itemID and not d.itemLink then 
+                    d.itemLink = itemLink 
+                end 
+            end 
+        end
+        
+        -- Deferred validation: Check items that were marked as needing validation
+        local Detect = L:GetModule("Detect", true)
+        if Detect then
+            local discoveries = L.db.global.discoveries or {}
+            local guidsToRemove = {}
+            
+            for guid, d in pairs(discoveries) do
+                if d and d.itemID == itemID and d.needsValidation then
+                    -- Now that the item is cached, validate it
+                    if not Detect:Qualifies(d.itemLink or ("item:" .. itemID), "deferred") then
+                        debugPrint(string.format("|cffff0000Deferred validation failed for item %d (%s) - removing invalid discovery.|r", itemID, name))
+                        table.insert(guidsToRemove, guid)
+                    else
+                        debugPrint(string.format("|cff00ff00Deferred validation passed for item %d (%s).|r", itemID, name))
+                        d.needsValidation = nil -- Clear the flag
+                    end
+                end
+            end
+            
+            -- Remove invalid discoveries
+            for _, guid in ipairs(guidsToRemove) do
+                discoveries[guid] = nil
+            end
+            
+            if #guidsToRemove > 0 then
+                print(string.format("|cff00ff00LootCollector:|r Removed %d invalid discoveries after deferred validation.", #guidsToRemove))
+            end
+        end
+    end
+    
+    local Map = L:GetModule("Map", true)
+    if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then 
+        Map:Update() 
+    end 
+end
 
 function Core:OnInitialize()
     if not (L.db and L.db.profile and L.db.global and L.db.char) then return end
@@ -303,6 +352,18 @@ function Core:OnLootOpened()
     end
 end
 function Core:AddDiscovery(discoveryData,isNetworkDiscovery) if L:IsZoneIgnored()and isNetworkDiscovery then return end; if not(L.db and L.db.global)then return end; if type(discoveryData)~="table"then return end; local itemID=discoveryData.itemID or extractItemID(discoveryData.itemLink); if not itemID then return end; if not self:IsItemCached(itemID)then self:QueueItemForCaching(itemID); if not cacheTicker or cacheTicker:IsCancelled()then self:ProcessCacheQueue()end end; local x=(discoveryData.coords and discoveryData.coords.x)or 0; local y=(discoveryData.coords and discoveryData.coords.y)or 0; x=round2(x); y=round2(y); discoveryData.coords=discoveryData.coords or{}; discoveryData.coords.x=x; discoveryData.coords.y=y; local db=L.db.global.discoveries; local existing=FindNearbyDiscovery(discoveryData.zoneID,itemID,x,y,db); if not existing then local guid=buildGuid2(discoveryData.zoneID,itemID,x,y); discoveryData.guid=guid; discoveryData.itemID=itemID; discoveryData.lootedByMe=nil; self:EnsureVerificationFields(discoveryData); db[guid]=discoveryData; if isNetworkDiscovery then local toast=L:GetModule("Toast",true); if toast and toast.Show then toast:Show(discoveryData)end end; if not isNetworkDiscovery then print(string.format("|cff00ff00[%s]:|r New discovery! %s in %s.",L.name,discoveryData.itemLink or"an item",discoveryData.zone or"Unknown"))end; if WorldMapFrame and WorldMapFrame:IsShown()then local Map=L:GetModule("Map",true); if Map and Map.Update then Map:Update()end end; return end; self:EnsureVerificationFields(existing); local n=existing.mergeCount or 1; existing.coords.x=(existing.coords.x*n+x)/(n+1); existing.coords.y=(existing.coords.y*n+y)/(n+1); existing.coords.x=round2(existing.coords.x); existing.coords.y=round2(existing.coords.y); existing.mergeCount=n+1; local incomingTs=tonumber(discoveryData.statusTs)or tonumber(discoveryData.lastSeen)or tonumber(discoveryData.timestamp)or time(); if incomingTs>(existing.statusTs or 0)and discoveryData.status then existing.status=discoveryData.status; existing.statusTs=incomingTs end; local incomingLastSeen=tonumber(discoveryData.lastSeen)or tonumber(discoveryData.timestamp)or time(); if incomingLastSeen>(existing.lastSeen or 0)then existing.lastSeen=incomingLastSeen end; if not existing.itemLink and discoveryData.itemLink then existing.itemLink=discoveryData.itemLink; existing.itemID=existing.itemID or itemID end;
+    -- Update continentID if the existing one is invalid and incoming is valid
+    if (not existing.continentID or existing.continentID == 0) and 
+       discoveryData.continentID and discoveryData.continentID > 0 then
+        existing.continentID = discoveryData.continentID
+    end
+
+    -- Similarly for zoneID if needed
+    if (not existing.zoneID or existing.zoneID == 0) and 
+       discoveryData.zoneID and discoveryData.zoneID > 0 then
+        existing.zoneID = discoveryData.zoneID
+    end
+
     local Map=L:GetModule("Map",true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown()then Map:Update()end
 end
 

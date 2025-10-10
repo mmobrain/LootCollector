@@ -101,10 +101,46 @@ local function acquireToast()
         if not anyShown() and toastContainer then toastContainer:Hide() end
     end)
 
-    t.text = t:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    t.text = CreateFrame("Button", nil, t)
     t.text:SetPoint("TOPLEFT", t.icon, "TOPRIGHT", 10, -6)
     t.text:SetPoint("RIGHT", t.close, "LEFT", -8, 0)
-    t.text:SetJustifyH("LEFT")
+    t.text:SetHeight(16)
+    t.text:EnableMouse(true)
+    
+    t.text.fontString = t.text:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    t.text.fontString:SetAllPoints(t.text)
+    t.text.fontString:SetJustifyH("LEFT")
+    
+    -- Add tooltip for item links
+    t.text:SetScript("OnEnter", function(self)
+        if self.itemLink then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetHyperlink(self.itemLink)
+            GameTooltip:Show()
+        end
+    end)
+    
+    t.text:SetScript("OnLeave", function(self)
+        GameTooltip:Hide()
+    end)
+    
+    t.text:SetScript("OnClick", function(self, button)
+        if self.itemLink then
+            if button == "LeftButton" then
+                if IsShiftKeyDown() then
+                    -- Shift + click: insert into chat
+                    local editBox = ChatEdit_ChooseBoxForSend()
+                    if editBox then
+                        ChatEdit_ActivateChat(editBox)
+                        editBox:Insert(self.itemLink)
+                    end
+                else
+                    -- Click: Show Item Tooltip
+                    SetItemRef(self.itemLink, self.itemLink, "LeftButton")
+                end
+            end
+        end
+    end)
 
     t.subtext = t:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     t.subtext:SetPoint("TOPLEFT", t.text, "BOTTOMLEFT", 0, -2)
@@ -135,6 +171,7 @@ function Toast:Show(discoveryData)
 
     local t = acquireToast()
     t.icon:SetTexture(texture)
+    t.text.itemLink = discoveryData.itemLink or discoveryData.itemID
 
     -- UPDATED: Manually colorize name if itemLink is not available
     local itemDisplayString
@@ -146,7 +183,7 @@ function Toast:Show(discoveryData)
         itemDisplayString = string.format("|c%s[%s]|r", hex, name)
     end
     
-    t.text:SetFormattedText("%s found %s!", finder, itemDisplayString)
+    t.text.fontString:SetFormattedText("%s found %s!", finder, itemDisplayString)
     t.subtext:SetText("in " .. (discoveryData.zone or "Unknown"))
 
     if not toastContainer:IsShown() then toastContainer:Show() end

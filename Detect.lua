@@ -36,7 +36,20 @@ Detect._cache = { isWF = {}, isMS = {}, }
 Detect._recent = {}
 
 function Detect:IsWorldforged(link)
-  local c = self._cache.isWF[link]; if c ~= nil then return c end; local ok = TooltipHas(link, "Worldforged"); self._cache.isWF[link] = ok and true or false; return self._cache.isWF[link]
+  local c = self._cache.isWF[link]
+  if c ~= nil then return c end
+  
+  -- Check if item is cached before scanning tooltip
+  local itemName = GetItemInfo(link)
+  if not itemName then
+    -- Item not cached yet - return false but don't cache the result
+    return false
+  end
+  
+  -- Item is cached, safe to scan tooltip and cache result
+  local ok = TooltipHas(link, "Worldforged")
+  self._cache.isWF[link] = ok and true or false
+  return self._cache.isWF[link]
 end
 
 function Detect:IsMysticScroll(link, source)
@@ -58,6 +71,12 @@ function Detect:IsMysticScroll(link, source)
 
   local isMystic = string.find(name, "Mystic Scroll", 1, true)
   return isMystic and true or false
+end
+
+function Detect:IsItemCached(itemID)
+  if not itemID then return false end
+  local name = GetItemInfo(itemID)
+  return name ~= nil
 end
 
 function Detect:Qualifies(link, source)

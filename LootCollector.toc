@@ -31,6 +31,7 @@ Comm.lua
 DBSync.lua
 Settings.lua
 Decay.lua
+MapDimensions.lua
 Map.lua
 Arrow.lua
 Toast.lua

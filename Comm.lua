@@ -186,17 +186,29 @@ function Comm:HandleIncomingWire(tbl, via, sender)
     
     local norm = normalizeIncomingData(tbl, sender)
     if norm then
-        -- Validate item using the same logic as Detect:Qualifies to ensure it is an item the addon would broadcast
-        local Detect = L:GetModule("Detect", true)
-        if Detect and not Detect:Qualifies(norm.itemLink, "network") then
-            debugPrint("Comm", "Dropping incoming discovery for ignored item: " .. norm.itemLink)
-            return -- Drop if it doesn't qualify
-        end
-        -- Filter check for incoming network data
         local name = norm.itemName or (norm.itemLink and norm.itemLink:match("%[(.+)%]")) or (norm.itemID and GetItemInfo(norm.itemID))
         if not name then
             debugPrint("Comm", "Could not determine item name for incoming discovery.")
             return
+        end
+
+        -- Always check ignore lists immediately (these use item names)
+        if (L.ignoreList and L.ignoreList[name]) or (L.sourceSpecificIgnoreList and L.sourceSpecificIgnoreList[name]) then
+            debugPrint("Comm", "Dropping incoming discovery for ignored item: " .. name)
+            return -- Silently drop
+        end
+
+        -- For cached items, validate immediately using Detect:Qualifies
+        local Detect = L:GetModule("Detect", true)
+        if Detect and Detect:IsItemCached(norm.itemID) then
+            if not Detect:Qualifies(norm.itemLink, "network") then
+                debugPrint("Comm", "Dropping incoming discovery for invalid cached item: " .. norm.itemLink)
+                return -- Drop if it doesn't qualify
+            end
+        else
+            -- For uncached items, accept them but mark for deferred validation
+            norm.needsValidation = true
+            debugPrint("Comm", "Accepting uncached item for deferred validation: " .. norm.itemLink)
         end
 
         -- Debug for incoming discovery
@@ -204,10 +216,6 @@ function Comm:HandleIncomingWire(tbl, via, sender)
             debugPrint("Comm", string.format("Incoming discovery: %s in %s, ContinentID: %d, ZoneID: %d (by %s)", norm.itemLink or name or "Unknown Item", norm.zone or "Unknown Zone", norm.continentID or 0, norm.zoneID or 0, norm.foundBy_player or "Unknown Sender"))
         end
 
-        if (L.ignoreList and L.ignoreList[name]) or (L.sourceSpecificIgnoreList and L.sourceSpecificIgnoreList[name]) then
-            debugPrint("Comm", "Dropping incoming discovery for ignored item: " .. name)
-            return -- Silently drop
-        end
         Core:AddDiscovery(norm, true)
     end
 end

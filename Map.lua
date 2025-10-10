@@ -5,6 +5,20 @@
 local L = LootCollector
 local Map = L:NewModule("Map")
 
+
+local ItemInfoCache = {}
+local function GetCachedItemInfo(linkOrId)
+    if not linkOrId or linkOrId == "" then return nil end
+    if ItemInfoCache[linkOrId] then return unpack(ItemInfoCache[linkOrId]) end
+
+    local name, itemLink, quality, itemLevel, minLevel, itemType, itemSubType, stackCount, equipLoc, texture, sellPrice = GetItemInfo(linkOrId)
+    if name then
+        ItemInfoCache[linkOrId] = { name, itemLink, quality, itemLevel, minLevel, itemType, itemSubType, stackCount, equipLoc, texture, sellPrice }
+    end
+    return name, itemLink, quality, itemLevel, minLevel, itemType, itemSubType, stackCount, equipLoc, texture, sellPrice
+end
+
+
 -- Pin size (per request)
 local PIN_FALLBACK_TEXTURE = "Interface\\AddOns\\LootCollector\\media\\pin"
 
@@ -41,6 +55,7 @@ StaticPopupDialogs["LOOTCOLLECTOR_REMOVE_DISCOVERY"] = {
 -- World map LC button and EasyMenu host
 local FilterButton = nil
 local FilterMenuHost = CreateFrame("Frame", "LootCollectorFilterMenuHost", UIParent, "UIDropDownMenuTemplate")
+Map._filters = Map._filters or {}
 
 -- Minimap shape definitions (which corners are rounded)
 -- { upper-left, lower-left, upper-right, lower-right }
@@ -64,7 +79,7 @@ local ValidMinimapShapes = {
 Map._mmPins = Map._mmPins or {}
 Map._mmTicker = Map._mmTicker or nil
 Map._mmElapsed = 0
-Map._mmInterval = 0.2
+Map._mmInterval = 0.05
 Map._mmSize = 10
 
 -- Slot options (INVTYPE for multi-select)
@@ -92,15 +107,15 @@ local function AlphaForStatus(status)
 end
 
 local function getFilters()
-  local p = L.db and L.db.profile; local f = (p and p.mapFilters) or {}; if f.hideAll == nil then f.hideAll = false end; if f.hideFaded == nil then f.hideFaded = false end; if f.hideStale == nil then f.hideStale = false end; if f.hideLooted == nil then f.hideLooted = false end; if f.hideUnconfirmed == nil then f.hideUnconfirmed = false end; if f.hideUncached == nil then f.hideUncached = false end; if f.minRarity == nil then f.minRarity = 0 end; if f.allowedEquipLoc == nil then f.allowedEquipLoc = {} end; if f.allowedClasses == nil then f.allowedClasses = {} end; if f.showMinimap == nil then f.showMinimap = true end; if f.showMysticScrolls == nil then f.showMysticScrolls = true end; if f.showWorldforged == nil then f.showWorldforged = true end; if f.maxMinimapDistance == nil then f.maxMinimapDistance = 0 end; return f
+  return Map._filters
 end
 
 local function isLootedByChar(guid)
   if not (L.db and L.db.char and L.db.char.looted) then return false end; return L.db.char.looted[guid] and true or false
 end
 
-local function isClassAgnosticItem(linkOrId)
-  local _, _, _, _, _, itemType, _, _, equipLoc = GetItemInfo(linkOrId or ""); if not itemType then return true end; if itemType ~= "Armor" and itemType ~= "Weapon" then return true end; return not equipLoc or equipLoc == "" or equipLoc == "INVTYPE_CLOAK"
+local function isClassAgnosticItem(itemType, equipLoc)
+  if not itemType then return true end; if itemType ~= "Armor" and itemType ~= "Weapon" then return true end; return not equipLoc or equipLoc == "" or equipLoc == "INVTYPE_CLOAK"
 end
 
 local function passesFilters(d)
@@ -115,18 +130,19 @@ local function passesFilters(d)
   
   local linkOrId = d.itemLink or d.itemID
   if linkOrId then
+    local name, _, quality, _, _, itemType, _, _, equipLoc = GetCachedItemInfo(linkOrId)
+
     if f.hideUncached then
-        if not select(1, GetItemInfo(linkOrId)) then
+        if not name then
             return false
         end
     end
     
-    local name, _, quality, _, _, itemType, _, _, equipLoc = GetItemInfo(linkOrId)
     if quality and quality < (f.minRarity or 0) then return false end
     if equipLoc and next(f.allowedEquipLoc) and not f.allowedEquipLoc[equipLoc] then return false end
     if next(f.allowedClasses) then 
       if itemType == "Armor" or itemType == "Weapon" then 
-        if isClassAgnosticItem(linkOrId) then 
+        if isClassAgnosticItem(itemType, equipLoc) then 
         else 
           local playerClass = select(2, UnitClass("player"))
           if playerClass and not f.allowedClasses[playerClass] then return false end 
@@ -150,7 +166,7 @@ local function NavigateHere(discovery)
 end
 
 function Map:GetDiscoveryIcon(d)
-  local texture = nil; if d and d.itemID then texture = select(10, GetItemInfo(d.itemID)) end; if (not texture) and d and d.itemLink then texture = select(10, GetItemInfo(d.itemLink)) end; return texture or PIN_FALLBACK_TEXTURE
+  local texture = nil; if d and d.itemID then texture = select(10, GetCachedItemInfo(d.itemID)) end; if (not texture) and d and d.itemLink then texture = select(10, GetCachedItemInfo(d.itemLink)) end; return texture or PIN_FALLBACK_TEXTURE
 end
 
 function Map:EnsureHoverButton()
@@ -165,7 +181,7 @@ local SOURCE_TEXT_MAP = {
 }
 
 function Map:ShowDiscoveryTooltip(pin)
-    if not pin or not pin.discovery then return end; local d = pin.discovery; GameTooltip:SetOwner(pin, "ANCHOR_RIGHT"); GameTooltip:ClearLines(); if self._pinnedPin == pin and d.itemLink then if not itemInfoTooltip then itemInfoTooltip = CreateFrame("GameTooltip", "LootCollectorItemInfoTooltip", UIParent, "GameTooltipTemplate") end; itemInfoTooltip:SetOwner(UIParent, "ANCHOR_NONE"); itemInfoTooltip:SetHyperlink(d.itemLink); for i = 1, itemInfoTooltip:NumLines() do local line = _G["LootCollectorItemInfoTooltipTextLeft" .. i]; local r, g, b; if line and line:GetText() then r, g, b = line:GetTextColor(); GameTooltip:AddLine(line:GetText(), r, g, b) end end; itemInfoTooltip:Hide(); GameTooltip:AddLine(" ") else local name, _, quality = GetItemInfo(d.itemLink or d.itemID or ""); local header = d.itemLink or name or "Discovery"; GameTooltip:AddLine(header, 1, 1, 1, true); if quality then local r, g, b = GetQualityColor(quality); GameTooltipTextLeft1:SetTextColor(r, g, b) end end; GameTooltip:AddLine(string.format("Found by: %s", d.foundBy_player or "Unknown"), 0.6, 0.8, 1, true); local ts = tonumber(d.timestamp) or time(); GameTooltip:AddDoubleLine("Date", date("%Y-%m-%d %H:%M", ts), 0.8, 0.8, 0.8, 1, 1, 1); local status = GetStatus(d); local ls = tonumber(d.lastSeen) or ts; GameTooltip:AddDoubleLine("Status", status, 0.8, 0.8, 0.8, 1, 1, 1); GameTooltip:AddDoubleLine("Last seen", date("%Y-%m-%d %H:%M", ls), 0.8, 0.8, 0.8, 1, 1, 1); 
+    if not pin or not pin.discovery then return end; local d = pin.discovery; GameTooltip:SetOwner(pin, "ANCHOR_RIGHT"); GameTooltip:ClearLines(); if self._pinnedPin == pin and d.itemLink then if not itemInfoTooltip then itemInfoTooltip = CreateFrame("GameTooltip", "LootCollectorItemInfoTooltip", UIParent, "GameTooltipTemplate") end; itemInfoTooltip:SetOwner(UIParent, "ANCHOR_NONE"); itemInfoTooltip:SetHyperlink(d.itemLink); for i = 1, itemInfoTooltip:NumLines() do local line = _G["LootCollectorItemInfoTooltipTextLeft" .. i]; local r, g, b; if line and line:GetText() then r, g, b = line:GetTextColor(); GameTooltip:AddLine(line:GetText(), r, g, b) end end; itemInfoTooltip:Hide(); GameTooltip:AddLine(" ") else local name, _, quality, _, _, itemType, itemSubType = GetCachedItemInfo(d.itemLink or d.itemID or ""); local header = d.itemLink or name or "Discovery"; GameTooltip:AddLine(header, 1, 1, 1, true); if quality then local r, g, b = GetQualityColor(quality); GameTooltipTextLeft1:SetTextColor(r, g, b) end; if itemType == "Armor" and itemSubType and itemSubType ~= "" then GameTooltip:AddLine(itemSubType, 1, 1, 1, true) end end; GameTooltip:AddLine(string.format("Found by: %s", d.foundBy_player or "Unknown"), 0.6, 0.8, 1, true); local ts = tonumber(d.timestamp) or time(); GameTooltip:AddDoubleLine("Date", date("%Y-%m-%d %H:%M", ts), 0.8, 0.8, 0.8, 1, 1, 1); local status = GetStatus(d); local ls = tonumber(d.lastSeen) or ts; GameTooltip:AddDoubleLine("Status", status, 0.8, 0.8, 0.8, 1, 1, 1); GameTooltip:AddDoubleLine("Last seen", date("%Y-%m-%d %H:%M", ls), 0.8, 0.8, 0.8, 1, 1, 1); 
 
     GameTooltip:AddDoubleLine("Zone", d.zone or "Unknown Zone", 0.8, 0.8, 0.8, 1, 1, 1); 
     if d.source then local sourceText = SOURCE_TEXT_MAP[d.source] or d.source; GameTooltip:AddDoubleLine("Source", sourceText, 0.8, 0.8, 0.8, 1, 1, 1) end; if d.coords then GameTooltip:AddDoubleLine("Location", string.format("%.1f, %.1f", (d.coords.x or 0) * 100, (d.coords.y or 0) * 100), 0.8, 0.8, 0.8, 1, 1, 1) end; if self._pinnedPin == pin and (d.itemLink or d.itemID) then self:EnsureHoverButton(); self._hoverBtnItemLink = d.itemLink or d.itemID; local icon = self:GetDiscoveryIcon(d); self._hoverBtn.tex:SetTexture(icon or PIN_FALLBACK_TEXTURE); GameTooltip:Show(); self._hoverBtn:ClearAllPoints(); if GameTooltipTextLeft1 then self._hoverBtn:SetPoint("LEFT", GameTooltipTextLeft1, "RIGHT", 4, 0) else self._hoverBtn:SetPoint("TOPRIGHT", GameTooltip, "TOPRIGHT", -6, -6) end; self._hoverBtn:Show() else if self._hoverBtn then self._hoverBtn:Hide() end; self._hoverBtnItemLink = nil; GameTooltip:Show() end
@@ -176,13 +192,13 @@ function Map:HideDiscoveryTooltip()
 end
 
 function Map:OpenPinMenu(anchorFrame)
-    if not anchorFrame or not anchorFrame.discovery then return end; local d = anchorFrame.discovery; local name = d.itemLink or (select(1, GetItemInfo(d.itemID)) or "Discovery"); wipe(menuList); table.insert(menuList, { text = tostring(name), isTitle = true, notCheckable = true }); table.insert(menuList, { text = "Navigate here", notCheckable = true, func = function() NavigateHere(d) end }); table.insert(menuList, { text = "Set as looted", notCheckable = true, func = function() if not (L.db and L.db.char) then return end; L.db.char.looted = L.db.char.looted or {}; L.db.char.looted[d.guid] = time(); Map:Update() end }); table.insert(menuList, { text = "Set as unlooted", notCheckable = true, func = function() if not (L.db and L.db.char and L.db.char.looted) then return end; L.db.char.looted[d.guid] = nil; Map:Update() end }); table.insert(menuList, { text = "", notCheckable = true, disabled = true }); table.insert(menuList, { text = "|cffff7f00Remove Discovery|r", notCheckable = true, func = function() StaticPopup_Show("LOOTCOLLECTOR_REMOVE_DISCOVERY", nil, nil, d.guid) end, }); table.insert(menuList, { text = "Close", notCheckable = true }); if EasyMenu then EasyMenu(menuList, DropFrame, "cursor", 0, 0, "MENU", 2) else ToggleDropDownMenu(1, nil, DropFrame, anchorFrame, 0, 0); UIDropDownMenu_Initialize(DropFrame, function(self, level) for _, item in ipairs(menuList) do UIDropDownMenu_AddButton(item, level) end end, "MENU") end
+    if not anchorFrame or not anchorFrame.discovery then return end; local d = anchorFrame.discovery; local name, _, quality = GetCachedItemInfo(d.itemLink or d.itemID or ""); name = name or "Discovery"; wipe(menuList); table.insert(menuList, { text = tostring(name), isTitle = true, notCheckable = true }); table.insert(menuList, { text = "Navigate here", notCheckable = true, func = function() NavigateHere(d) end }); table.insert(menuList, { text = "Set as looted", notCheckable = true, func = function() if not (L.db and L.db.char) then return end; L.db.char.looted = L.db.char.looted or {}; L.db.char.looted[d.guid] = time(); Map:Update() end }); table.insert(menuList, { text = "Set as unlooted", notCheckable = true, func = function() if not (L.db and L.db.char and L.db.char.looted) then return end; L.db.char.looted[d.guid] = nil; Map:Update() end }); table.insert(menuList, { text = "", notCheckable = true, disabled = true }); table.insert(menuList, { text = "|cffff7f00Remove Discovery|r", notCheckable = true, func = function() StaticPopup_Show("LOOTCOLLECTOR_REMOVE_DISCOVERY", nil, nil, d.guid) end, }); table.insert(menuList, { text = "Close", notCheckable = true }); if EasyMenu then EasyMenu(menuList, DropFrame, "cursor", 0, 0, "MENU", 2) else ToggleDropDownMenu(1, nil, DropFrame, anchorFrame, 0, 0); UIDropDownMenu_Initialize(DropFrame, function(self, level) for _, item in ipairs(menuList) do UIDropDownMenu_AddButton(item, level) end end, "MENU") end
 end
 
 local function BuildFilterEasyMenu()
-  local f=getFilters();local menu={};table.insert(menu,{text="LootCollector Filters",isTitle=true,notCheckable=true});table.insert(menu,{text=L:IsPaused()and"|cffff7f00Resume Processing|r"or"|cff00ff00Pause Processing|r",checked=L:IsPaused(),keepShownOnClick=true,func=function()L:TogglePause();Map:Update();if EasyMenu and FilterButton then EasyMenu(BuildFilterEasyMenu(),FilterMenuHost,FilterButton,0,0,"MENU",2)end end});table.insert(menu,{text="",notCheckable=true,disabled=true});local function addToggle(label,key)table.insert(menu,{text=label,checked=f[key]and true or false,keepShownOnClick=true,func=function()f[key]=not f[key];Map:Update()end})end;addToggle("Hide All Discoveries","hideAll");addToggle("Hide Looted","hideLooted");addToggle("Hide Unconfirmed","hideUnconfirmed");addToggle("Hide Uncached","hideUncached");addToggle("Hide Faded","hideFaded");addToggle("Hide Stale","hideStale");addToggle("Show on Minimap","showMinimap");
-  local showSub={{text="Show Item Types",isTitle=true,notCheckable=true}}; table.insert(showSub,{text="Mystic Scrolls",checked=f.showMysticScrolls,keepShownOnClick=true,func=function()f.showMysticScrolls=not f.showMysticScrolls;Map:Update()end}); table.insert(showSub,{text="Worldforged Items",checked=f.showWorldforged,keepShownOnClick=true,func=function()f.showWorldforged=not f.showWorldforged;Map:Update()end}); table.insert(menu,{text="Show",hasArrow=true,notCheckable=true,menuList=showSub});
-  local qualities={"Poor","Common","Uncommon","Rare","Epic","Legendary","Artifact","Heirloom"};local raritySub={{text="Minimum Quality",isTitle=true,notCheckable=true}};for q=0,7 do local r,g,b=GetQualityColor(q);table.insert(raritySub,{text=qualities[q+1]or("Quality "..q),colorCode=string.format("|cff%02x%02x%02x",r*255,g*255,b*255),checked=(f.minRarity==q),keepShownOnClick=true,func=function()f.minRarity=q;Map:Update();if EasyMenu and FilterButton then EasyMenu(BuildFilterEasyMenu(),FilterMenuHost,FilterButton,0,0,"MENU",2)end end})end;table.insert(menu,{text="Minimum Quality",hasArrow=true,notCheckable=true,menuList=raritySub});local slotsSub={{text="Slots",isTitle=true,notCheckable=true},{text="Clear All",notCheckable=true,func=function()for k in pairs(f.allowedEquipLoc)do f.allowedEquipLoc[k]=nil end;Map:Update()end}};for _,opt in ipairs(SLOT_OPTIONS)do table.insert(slotsSub,{text=opt.text,checked=f.allowedEquipLoc[opt.loc]and true or false,keepShownOnClick=true,func=function()if f.allowedEquipLoc[opt.loc]then f.allowedEquipLoc[opt.loc]=nil else f.allowedEquipLoc[opt.loc]=true end;Map:Update()end})end;table.insert(menu,{text="Slots",hasArrow=true,notCheckable=true,menuList=slotsSub});local classesSub={{text="Classes",isTitle=true,notCheckable=true},{text="Clear All",notCheckable=true,func=function()for k in pairs(f.allowedClasses)do f.allowedClasses[k]=nil end;Map:Update()end}};for _,classTok in ipairs(CLASS_OPTIONS)do local locName=(LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[classTok])or classTok;table.insert(classesSub,{text=locName,checked=f.allowedClasses[classTok]and true or false,keepShownOnClick=true,func=function()if f.allowedClasses[classTok]then f.allowedClasses[classTok]=nil else f.allowedClasses[classTok]=true end;Map:Update()end})end;table.insert(menu,{text="Classes",hasArrow=true,notCheckable=true,menuList=classesSub});return menu
+  local f=getFilters();local menu={};table.insert(menu,{text="LootCollector Filters",isTitle=true,notCheckable=true});table.insert(menu,{text=L:IsPaused()and"|cffff7f00Resume Processing|r"or"|cff00ff00Pause Processing|r",checked=L:IsPaused(),keepShownOnClick=true,func=function()L:TogglePause();Map:Update();if EasyMenu and FilterButton then EasyMenu(BuildFilterEasyMenu(),FilterMenuHost,FilterButton,0,0,"MENU",2)end end});table.insert(menu,{text="",notCheckable=true,disabled=true});local function addToggle(label,key)table.insert(menu,{text=label,checked=f[key]and true or false,keepShownOnClick=true,func=function()f[key]=not f[key];Map:UpdateFilterSettings();Map:Update()end})end;addToggle("Hide All Discoveries","hideAll");addToggle("Hide Looted","hideLooted");addToggle("Hide Unconfirmed","hideUnconfirmed");addToggle("Hide Uncached","hideUncached");addToggle("Hide Faded","hideFaded");addToggle("Hide Stale","hideStale");addToggle("Show on Minimap","showMinimap");
+  local showSub={{text="Show Item Types",isTitle=true,notCheckable=true}}; table.insert(showSub,{text="Mystic Scrolls",checked=f.showMysticScrolls,keepShownOnClick=true,func=function()f.showMysticScrolls=not f.showMysticScrolls;Map:UpdateFilterSettings();Map:Update()end}); table.insert(showSub,{text="Worldforged Items",checked=f.showWorldforged,keepShownOnClick=true,func=function()f.showWorldforged=not f.showWorldforged;Map:UpdateFilterSettings();Map:Update()end}); table.insert(menu,{text="Show",hasArrow=true,notCheckable=true,menuList=showSub});
+  local qualities={"Poor","Common","Uncommon","Rare","Epic","Legendary","Artifact","Heirloom"};local raritySub={{text="Minimum Quality",isTitle=true,notCheckable=true}};for q=0,7 do local r,g,b=GetQualityColor(q);table.insert(raritySub,{text=qualities[q+1]or("Quality "..q),colorCode=string.format("|cff%02x%02x%02x",r*255,g*255,b*255),checked=(f.minRarity==q),keepShownOnClick=true,func=function()f.minRarity=q;Map:UpdateFilterSettings();Map:Update();if EasyMenu and FilterButton then EasyMenu(BuildFilterEasyMenu(),FilterMenuHost,FilterButton,0,0,"MENU",2)end end})end;table.insert(menu,{text="Minimum Quality",hasArrow=true,notCheckable=true,menuList=raritySub});local slotsSub={{text="Slots",isTitle=true,notCheckable=true},{text="Clear All",notCheckable=true,func=function()for k in pairs(f.allowedEquipLoc)do f.allowedEquipLoc[k]=nil end;Map:UpdateFilterSettings();Map:Update()end}};for _,opt in ipairs(SLOT_OPTIONS)do table.insert(slotsSub,{text=opt.text,checked=f.allowedEquipLoc[opt.loc]and true or false,keepShownOnClick=true,func=function()if f.allowedEquipLoc[opt.loc]then f.allowedEquipLoc[opt.loc]=nil else f.allowedEquipLoc[opt.loc]=true end;Map:UpdateFilterSettings();Map:Update()end})end;table.insert(menu,{text="Slots",hasArrow=true,notCheckable=true,menuList=slotsSub});local classesSub={{text="Classes",isTitle=true,notCheckable=true},{text="Clear All",notCheckable=true,func=function()for k in pairs(f.allowedClasses)do f.allowedClasses[k]=nil end;Map:UpdateFilterSettings();Map:Update()end}};for _,classTok in ipairs(CLASS_OPTIONS)do local locName=(LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[classTok])or classTok;table.insert(classesSub,{text=locName,checked=f.allowedClasses[classTok]and true or false,keepShownOnClick=true,func=function()if f.allowedClasses[classTok]then f.allowedClasses[classTok]=nil else f.allowedClasses[classTok]=true end;Map:UpdateFilterSettings();Map:Update()end})end;table.insert(menu,{text="Classes",hasArrow=true,notCheckable=true,menuList=classesSub});return menu
 end
 
 local function PlaceFilterButton(btn)
@@ -205,18 +221,107 @@ local function GetCurrentMinimapShape()
   return ValidMinimapShapes["SQUARE"]
 end
 
-local function GetRotateMinimapFacing()
-  local rotate = GetCVar and GetCVar("rotateMinimap"); if rotate == "1" and MiniMapCompassRing and MiniMapCompassRing.GetFacing then return MiniMapCompassRing:GetFacing() or 0 end; return 0
-end
 local function EnsureMmPin(i)
-  if Map._mmPins[i] then return Map._mmPins[i] end; local f = CreateFrame("Frame", nil, Minimap); f:SetSize(Map._mmSize, Map._mmSize); f.tex = f:CreateTexture(nil, "ARTWORK"); f.tex:SetAllPoints(f); f:Hide(); Map._mmPins[i] = f; return f
+  if Map._mmPins[i] then return Map._mmPins[i] end; local f = CreateFrame("Frame", nil, Minimap); f:SetSize(Map._mmSize, Map._mmSize); f.tex = f:CreateTexture(nil, "ARTWORK"); f.tex:SetAllPoints(f); f.tex:SetTexCoord(0.1, 0.9, 0.1, 0.9); f:Hide(); Map._mmPins[i] = f; return f
 end
 function Map:HideAllMmPins()
   for _, pin in ipairs(self._mmPins) do pin:Hide(); pin.discovery = nil end
 end
 
 function Map:UpdateMinimap()
-  local f = getFilters(); if not f.showMinimap or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then self:HideAllMmPins(); return end; local mapID = GetCurrentMapZone(); local px, py = GetPlayerMapPosition("player"); if not px or not py or (px == 0 and py == 0) then self:HideAllMmPins(); return end; local count = 0; local centerX, centerY = Minimap:GetWidth() * 0.5, Minimap:GetHeight() * 0.5; local radius = math.min(centerX, centerY) - 6; local facing = GetRotateMinimapFacing(); local minimapShape = GetCurrentMinimapShape(); local maxDist = f.maxMinimapDistance or 0; for _, d in pairs(L.db.global.discoveries or {}) do repeat if not d or not d.coords or not d.zoneID or d.zoneID ~= mapID or not passesFilters(d) then break end; local dx, dy = (d.coords.x or 0) - px, (d.coords.y or 0) - py; if maxDist > 0 then local mapDist = math.sqrt(dx*dx + dy*dy); if mapDist > maxDist then break end end; local minimapScale = 0.03; local mmX = (dx / minimapScale) * centerX; local mmY = (-dy / minimapScale) * centerY; if facing ~= 0 then local cos_f = math.cos(-facing); local sin_f = math.sin(-facing); local rotX = mmX * cos_f - mmY * sin_f; local rotY = mmX * sin_f + mmY * cos_f; mmX, mmY = rotX, rotY end; local isRound = true; if minimapShape and not (mmX == 0 or mmY == 0) then local cornerIndex = (mmX < 0) and 1 or 3; if mmY >= 0 then cornerIndex = cornerIndex + 1 end; isRound = minimapShape[cornerIndex] end; local dist; if isRound then dist = math.sqrt(mmX*mmX + mmY*mmY) else dist = math.max(math.abs(mmX), math.abs(mmY)) end; if dist > radius then local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale end; count = count + 1; local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint("CENTER", Minimap, "CENTER", mmX, mmY); local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or PIN_FALLBACK_TEXTURE); pin:Show() until true end; for i = count + 1, #self._mmPins do self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil end
+  local f = getFilters(); if not f.showMinimap or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then self:HideAllMmPins(); return end;  local mapID = GetCurrentMapZone();  local currentContinentID = GetCurrentMapContinent();  local px, py = GetPlayerMapPosition("player"); if not px or not py or (px == 0 and py == 0) then self:HideAllMmPins(); return end;  local count = 0; local centerX, centerY = Minimap:GetWidth() * 0.5, Minimap:GetHeight() * 0.5;  local radius = math.min(centerX, centerY) - 6;  local minimapShape = GetCurrentMinimapShape();  
+  local Core = L:GetModule("Core", true);
+  local MapDimensions = L:GetModule("MapDimensions", true);
+
+  local viewRadius = Minimap:GetViewRadius();
+  local zoneName = GetRealZoneText();
+  local zoom = Minimap:GetZoom();
+  local isIndoor = GetCVar("minimapZoom")+0 == zoom and false or true; -- True if indoors, false if outdoors
+
+  if not Core or not MapDimensions or viewRadius == 0 then
+      self:HideAllMmPins();
+      return;
+  end
+
+  local function PointToYards(x, y, zoneName_local)
+    local MapDimensions_local = L:GetModule("MapDimensions", true)
+    if not MapDimensions_local then return 0, 0 end
+    local width, height = MapDimensions_local:GetZoneDimensions(zoneName_local)
+    return width * x, height * y
+  end
+
+  local px_yards, py_yards = PointToYards(px, py, zoneName);
+
+  local mapRadius_yards = viewRadius; -- Reverted to direct API call for accurate dynamic radius
+  local minimapPixelHalfWidth = Minimap:GetWidth() / 2;
+  local minimapPixelHalfHeight = Minimap:GetHeight() / 2;
+  
+  local maxDist = f.maxMinimapDistance or 0; -- maxDist is expected to be in yards
+  local maxDistSquared_yards = maxDist * maxDist;
+
+  local cosFacing, sinFacing; -- Cache these outside the loop
+  if GetCVar("rotateMinimap") ~= "0" then
+    local playerFacing = GetPlayerFacing();
+    cosFacing = math.cos(playerFacing);
+    sinFacing = math.sin(playerFacing);
+  end
+
+  for _, d in pairs(L.db.global.discoveries or {}) do  repeat  
+
+      if not d or not d.coords or not d.zoneID or d.zoneID == 0 then 
+          break 
+      end; 
+      
+      if d.zoneID ~= mapID then
+          break
+      end;
+
+      local discoveryContinentID = d.continentID or 0
+      if discoveryContinentID ~= 0 and currentContinentID ~= 0 and discoveryContinentID ~= currentContinentID then 
+          break 
+      end
+
+      local passes = passesFilters(d);
+      if not passes then 
+          break 
+      end;
+
+      local discovery_x_yards, discovery_y_yards = PointToYards(d.coords.x, d.coords.y, zoneName);
+      local dx_yards = discovery_x_yards - px_yards;
+      local dy_yards = discovery_y_yards - py_yards;
+
+      -- Apply minimap rotation if enabled
+      if cosFacing and sinFacing then -- Use cached values
+        local rotatedDx_yards = (dx_yards * cosFacing) - (dy_yards * sinFacing);
+        local rotatedDy_yards = (dx_yards * sinFacing) + (dy_yards * cosFacing);
+
+        dx_yards = rotatedDx_yards;
+        dy_yards = rotatedDy_yards;
+      end
+
+      -- Early distance culling (using yard distances)
+      if maxDist > 0 then
+        local distSquared_yards = dx_yards * dx_yards + dy_yards * dy_yards;
+        if distSquared_yards > maxDistSquared_yards then 
+            break 
+        end
+      end;
+      
+      -- Calculate normalized minimap offsets
+      local diffX = dx_yards / mapRadius_yards;  
+      local diffY = dy_yards / mapRadius_yards;  
+      
+      -- Convert normalized offsets to minimap pixels
+      local mmX = diffX * minimapPixelHalfWidth;
+      local mmY = -diffY * minimapPixelHalfHeight; -- Y-axis is inverted in UI coordinates
+
+      local isRound = true;
+      if minimapShape and (mmX ~= 0 or mmY ~= 0) then 
+          local cornerIndex = (mmX < 0) and 1 or 3;
+          if mmY >= 0 then cornerIndex = cornerIndex + 1 end;
+          isRound = minimapShape[cornerIndex];
+      end;
+      local dist; if isRound then  dist = math.sqrt(mmX * mmX + mmY * mmY)  else  dist = math.max(math.abs(mmX),  math.abs(mmY))  end; if dist > radius then  local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale  end; count = count + 1;  local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint(  "CENTER", Minimap, "CENTER", mmX, mmY);  local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or  PIN_FALLBACK_TEXTURE); pin:Show();   pin:SetSize(Map._mmSize, Map._mmSize)  until true  end; for i = count + 1, #self._mmPins do  self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil  end;
 end
 
 function Map:EnsureMinimapTicker()
@@ -224,19 +329,79 @@ function Map:EnsureMinimapTicker()
 end
 
 function Map:OnInitialize()
-  if not (L.db and L.db.profile and L.db.global and L.db.char) then return end; self:EnsureFilterUI(); self:EnsureMinimapTicker(); if WorldMapDetailFrame then WorldMapDetailFrame:EnableMouse(true); WorldMapDetailFrame:SetScript("OnMouseDown", function() if Map._pinnedPin then Map._pinnedPin = nil; Map:HideDiscoveryTooltip() end end) end; if WorldMapFrame and hooksecurefunc then hooksecurefunc(WorldMapFrame, "Hide", function() if Map._pinnedPin then Map._pinnedPin = nil; Map:HideDiscoveryTooltip() end end) end
+  if not (L.db and L.db.profile and L.db.global and L.db.char) then return end; 
+  self:UpdateFilterSettings();
+  self:EnsureFilterUI(); self:EnsureMinimapTicker(); if WorldMapDetailFrame then WorldMapDetailFrame:EnableMouse(true); WorldMapDetailFrame:SetScript("OnMouseDown", function() if Map._pinnedPin then Map._pinnedPin = nil; Map:HideDiscoveryTooltip() end end) end; if WorldMapFrame and hooksecurefunc then hooksecurefunc(WorldMapFrame, "Hide", function() if Map._pinnedPin then Map._pinnedPin = nil; Map:HideDiscoveryTooltip() end end) end
+  if Minimap and hooksecurefunc then hooksecurefunc(Minimap, "SetZoom", function() Map:UpdateMinimap() end) end
+end
+
+function Map:UpdateFilterSettings()
+  local p = L.db and L.db.profile; 
+  local f = (p and p.mapFilters) or {}; 
+  if f.hideAll == nil then f.hideAll = false end;
+  if f.hideFaded == nil then f.hideFaded = false end;
+  if f.hideStale == nil then f.hideStale = false end;
+  if f.hideLooted == nil then f.hideLooted = false end;
+  if f.hideUnconfirmed == nil then f.hideUnconfirmed = false end;
+  if f.hideUncached == nil then f.hideUncached = false end;
+  if f.minRarity == nil then f.minRarity = 0 end;
+  if f.allowedEquipLoc == nil then f.allowedEquipLoc = {} end;
+  if f.allowedClasses == nil then f.allowedClasses = {} end;
+  if f.showMinimap == nil then f.showMinimap = true end;
+  if f.showMysticScrolls == nil then f.showMysticScrolls = true end;
+  if f.showWorldforged == nil then f.showWorldforged = true end;
+  if f.maxMinimapDistance == nil then f.maxMinimapDistance = 0 end;
+  Map._filters = f;
 end
 
 function Map:Update()
-  if not WorldMapFrame or not WorldMapFrame:IsShown() then return end; if L:IsZoneIgnored() or not (L.db and L.db.global and L.db.global.discoveries) then for i = 1, #self.pins do self.pins[i]:Hide(); self.pins[i].discovery = nil end; self._pinnedPin = nil; self:HideDiscoveryTooltip(); return end; self:EnsureFilterUI(); local filters = (L.db.profile and L.db.profile.mapFilters) or {}; if filters.hideAll then for i = 1, #self.pins do self.pins[i]:Hide(); self.pins[i].discovery = nil end; self._pinnedPin = nil; self:HideDiscoveryTooltip(); return end; local mapID = GetCurrentMapZone(); if not WorldMapDetailFrame or not WorldMapButton then return end; local mapWidth, mapHeight = WorldMapDetailFrame:GetWidth(), WorldMapDetailFrame:GetHeight(); local mapLeft, mapTop = WorldMapDetailFrame:GetLeft(), WorldMapDetailFrame:GetTop(); local parentLeft, parentTop = WorldMapButton:GetLeft(), WorldMapButton:GetTop(); if not mapWidth or not mapHeight or not mapLeft or not mapTop or not parentLeft or not parentTop then return end; if mapWidth == 0 or mapHeight == 0 then return end; local offsetX = mapLeft - parentLeft; local offsetY = mapTop - parentTop; 
+  if not WorldMapFrame or not WorldMapFrame:IsShown() then return end;
+  local filters = getFilters();
+  if filters.hideAll then
+    for i = 1, #self.pins do self.pins[i]:Hide(); self.pins[i].discovery = nil end;
+    self._pinnedPin = nil;
+    self:HideDiscoveryTooltip();
+    return
+  end;
+
+  if L:IsZoneIgnored() or not (L.db and L.db.global and L.db.global.discoveries) then
+    for i = 1, #self.pins do self.pins[i]:Hide(); self.pins[i].discovery = nil end;
+    self._pinnedPin = nil;
+    self:HideDiscoveryTooltip();
+    return
+  end;
+
+  self:EnsureFilterUI();
+  local mapID = GetCurrentMapZone();
+  local currentContinentID = GetCurrentMapContinent();
+  if not WorldMapDetailFrame or not WorldMapButton then return end; local mapWidth, mapHeight = WorldMapDetailFrame:GetWidth(), WorldMapDetailFrame:GetHeight(); local mapLeft, mapTop = WorldMapDetailFrame:GetLeft(), WorldMapDetailFrame:GetTop(); local parentLeft, parentTop = WorldMapButton:GetLeft(), WorldMapButton:GetTop(); if not mapWidth or not mapHeight or not mapLeft or not mapTop or not parentLeft or not parentTop then return end; if mapWidth == 0 or mapHeight == 0 then return end; local offsetX = mapLeft - parentLeft; local offsetY = mapTop - parentTop; 
   local pinIndex = 1; local stillPinned = false; 
+  local ZoneResolver = L:GetModule("ZoneResolver", true)
+
   for _, discovery in pairs(L.db.global.discoveries) do 
     repeat 
-      if not discovery or not discovery.coords or not discovery.zoneID or discovery.zoneID ~= mapID or (discovery.zoneID == 0 or discovery.zoneID == 41) then break end;
+      local discoveryContinentID = discovery.continentID or 0
+      local discoveryZoneID = discovery.zoneID or 0
+
+      -- Attempt to get correct map info for old data (continentID 0)
+      if discoveryContinentID == 0 and discovery.zone then
+        if ZoneResolver then
+          local tempContID, tempZoneID = ZoneResolver:GetMapZoneNumbers(discovery.zone)
+          if tempContID and tempZoneID then
+            discoveryContinentID = tempContID
+            discoveryZoneID = tempZoneID
+          end
+        end
+      end
+
+      if not discovery or not discovery.coords or discoveryZoneID == 0 or 
+          (discoveryContinentID ~= 0 and discoveryContinentID ~= currentContinentID) or 
+          (discoveryZoneID ~= mapID and not (discoveryContinentID == 0 and discoveryZoneID == 0)) or 
+          (discoveryZoneID == 0 or discoveryZoneID == 41) then break end;
       if not passesFilters(discovery) then break end; 
-      local pin = self.pins[pinIndex] or self:BuildPin(); pinIndex = pinIndex + 1; pin.discovery = discovery; local pinSize=(L.db.profile.mapFilters.pinSize)or 16;pin:SetSize(pinSize,pinSize);local isLooted=isLootedByChar(discovery.guid);local icon=self:GetDiscoveryIcon(discovery);local isFallbackTexture=(icon==PIN_FALLBACK_TEXTURE or not icon);pin.texture:SetTexture(icon);if isFallbackTexture then if pin.border then pin.border:Hide()end;if pin.unlootedOutline then pin.unlootedOutline:Hide()end;pin.texture:SetVertexColor(1,1,1)else if pin.border then pin.border:Show()end;if isLooted then if pin.unlootedOutline then pin.unlootedOutline:Hide()end;pin.texture:SetVertexColor(0.7,0.7,0.7)else if pin.unlootedOutline then pin.unlootedOutline:Show()end;pin.texture:SetVertexColor(1,1,1);local _,_,quality=GetItemInfo(discovery.itemLink or discovery.itemID);local r,g,b=GetQualityColor(quality);pin.unlootedOutline:SetVertexColor(r,g,b)end end;pin:SetAlpha(AlphaForStatus(GetStatus(discovery)));local pinX_relative=(discovery.coords.x or 0)*mapWidth;local pinY_relative=(discovery.coords.y or 0)*mapHeight;local finalX=offsetX+pinX_relative;local finalY=offsetY-pinY_relative;pin:ClearAllPoints();pin:SetPoint("CENTER",WorldMapButton,"TOPLEFT",finalX,finalY);pin:Show();if self._pinnedPin==pin then stillPinned=true;self:ShowDiscoveryTooltip(pin)end 
-    until true 
-  end; 
+      local pin = self.pins[pinIndex] or self:BuildPin(); pinIndex = pinIndex + 1; pin.discovery = discovery; local pinSize=(L.db.profile.mapFilters.pinSize)or 16;pin:SetSize(pinSize,pinSize);local isLooted=isLootedByChar(discovery.guid);local icon=self:GetDiscoveryIcon(discovery);local isFallbackTexture=(icon==PIN_FALLBACK_TEXTURE or not icon);pin.texture:SetTexture(icon);if isFallbackTexture then if pin.border then pin.border:Hide()end;if pin.unlootedOutline then pin.unlootedOutline:Hide()end;pin.texture:SetVertexColor(1,1,1)else if pin.border then pin.border:Show()end;if isLooted then if pin.unlootedOutline then pin.unlootedOutline:Hide()end;pin.texture:SetVertexColor(0.7,0.7,0.7)else if pin.unlootedOutline then pin.unlootedOutline:Show()end;pin.texture:SetVertexColor(1,1,1);local _,_,quality=GetCachedItemInfo(discovery.itemLink or discovery.itemID);local r,g,b=GetQualityColor(quality);pin.unlootedOutline:SetVertexColor(r,g,b)end end;pin:SetAlpha(AlphaForStatus(GetStatus(discovery)));local pinX_relative=(discovery.coords.x or 0)*mapWidth;local pinY_relative=(discovery.coords.y or 0)*mapHeight;local finalX=offsetX+pinX_relative;local finalY=offsetY-pinY_relative;pin:ClearAllPoints();pin:SetPoint("CENTER",WorldMapButton,"TOPLEFT",finalX,finalY);pin:Show();if self._pinnedPin==pin then stillPinned=true;self:ShowDiscoveryTooltip(pin)end 
+    until true
+  end;
   for i = pinIndex, #self.pins do self.pins[i]:Hide(); self.pins[i].discovery = nil end; if self._pinnedPin and not stillPinned then self._pinnedPin = nil; self:HideDiscoveryTooltip() end
 end
 

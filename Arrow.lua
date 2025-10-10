@@ -220,13 +220,14 @@ function Arrow:FindBestTarget()
   local px, py = self:GetPlayerPos()
   if not px or not py or (px == 0 and py == 0) then self.currentTarget = nil; return end
   local currentZoneID = self:GetPlayerZoneIdNormalized()
-
+  local currentContinentID = GetCurrentMapContinent()
   local bestTarget, minDist = nil, -1
 
   for _, d in pairs(db) do
     repeat
       if not d or not d.coords then break end
       if d.zoneID ~= currentZoneID then break end
+      if d.continentID ~= currentContinentID then break end
       if d.lootedByMe or not passesFilters(d) then break end
       
       local tx, ty = d.coords.x or 0, d.coords.y or 0
@@ -273,8 +274,8 @@ function Arrow:UpdateArrow(forceUpdate)
         local d = self.currentTarget
         self:EnsureDiscoveryLayer(d)
 
-        local mapC = d.mapC
-        local mapZ = d.mapZ
+        local mapC = d.continentID
+        local mapZ = d.zoneID
         local x = d.coords and d.coords.x or 0
         local y = d.coords and d.coords.y or 0
         local itemName = (d.itemLink and d.itemLink:match("%[(.+)%]")) or "Discovery"

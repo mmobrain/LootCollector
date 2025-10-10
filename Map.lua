@@ -259,6 +259,13 @@ function Map:UpdateMinimap()
   local maxDist = f.maxMinimapDistance or 0; -- maxDist is expected to be in yards
   local maxDistSquared_yards = maxDist * maxDist;
 
+  local cosFacing, sinFacing; -- Cache these outside the loop
+  if GetCVar("rotateMinimap") ~= "0" then
+    local playerFacing = GetPlayerFacing();
+    cosFacing = math.cos(playerFacing);
+    sinFacing = math.sin(playerFacing);
+  end
+
   for _, d in pairs(L.db.global.discoveries or {}) do  repeat  
 
       if not d or not d.coords or not d.zoneID or d.zoneID == 0 then 
@@ -284,11 +291,7 @@ function Map:UpdateMinimap()
       local dy_yards = discovery_y_yards - py_yards;
 
       -- Apply minimap rotation if enabled
-      if GetCVar("rotateMinimap") ~= "0" then
-        local playerFacing = GetPlayerFacing();
-        local cosFacing = math.cos(playerFacing);
-        local sinFacing = math.sin(playerFacing);
-
+      if cosFacing and sinFacing then -- Use cached values
         local rotatedDx_yards = (dx_yards * cosFacing) - (dy_yards * sinFacing);
         local rotatedDy_yards = (dx_yards * sinFacing) + (dy_yards * cosFacing);
 
@@ -312,7 +315,13 @@ function Map:UpdateMinimap()
       local mmX = diffX * minimapPixelHalfWidth;
       local mmY = -diffY * minimapPixelHalfHeight; -- Y-axis is inverted in UI coordinates
 
-      local isRound = true; if minimapShape and not (mmX == 0 or mmY == 0) then  local cornerIndex = (mmX < 0) and 1 or 3; if mmY >= 0 then cornerIndex = cornerIndex + 1 end; isRound =  minimapShape[cornerIndex]  end; local dist; if isRound then  dist = math.sqrt(mmX * mmX + mmY * mmY)  else  dist = math.max(math.abs(mmX),  math.abs(mmY))  end; if dist > radius then  local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale  end; count = count + 1;  local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint(  "CENTER", Minimap, "CENTER", mmX, mmY);  local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or  PIN_FALLBACK_TEXTURE); pin:Show();   pin:SetSize(Map._mmSize, Map._mmSize)  until true  end; for i = count + 1, #self._mmPins do  self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil  end;
+      local isRound = true;
+      if minimapShape and (mmX ~= 0 or mmY ~= 0) then 
+          local cornerIndex = (mmX < 0) and 1 or 3;
+          if mmY >= 0 then cornerIndex = cornerIndex + 1 end;
+          isRound = minimapShape[cornerIndex];
+      end;
+      local dist; if isRound then  dist = math.sqrt(mmX * mmX + mmY * mmY)  else  dist = math.max(math.abs(mmX),  math.abs(mmY))  end; if dist > radius then  local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale  end; count = count + 1;  local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint(  "CENTER", Minimap, "CENTER", mmX, mmY);  local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or  PIN_FALLBACK_TEXTURE); pin:Show();   pin:SetSize(Map._mmSize, Map._mmSize)  until true  end; for i = count + 1, #self._mmPins do  self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil  end;
 end
 
 function Map:EnsureMinimapTicker()

@@ -31,8 +31,8 @@ Comm.lua
 DBSync.lua
 Settings.lua
 Decay.lua
-MapDimensions.lua
 Map.lua
+MapData.lua
 Arrow.lua
 Toast.lua
 ImportExport.lua

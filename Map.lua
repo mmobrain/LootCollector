@@ -237,22 +237,22 @@ end
 function Map:UpdateMinimap()
   local f = getFilters(); if not f.showMinimap or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then self:HideAllMmPins(); return end;  local mapID = GetCurrentMapZone();  local currentContinentID = GetCurrentMapContinent();  local px, py = GetPlayerMapPosition("player"); if not px or not py or (px == 0 and py == 0) then self:HideAllMmPins(); return end;  local count = 0; local centerX, centerY = Minimap:GetWidth() * 0.5, Minimap:GetHeight() * 0.5;  local radius = math.min(centerX, centerY) - 6;  local minimapShape = GetCurrentMinimapShape();  
   local Core = L:GetModule("Core", true);
-  local MapDimensions = L:GetModule("MapDimensions", true);
+  local MapData = L:GetModule("MapData", true);
 
   local viewRadius = Minimap:GetViewRadius();
   local zoneName = GetRealZoneText();
   local zoom = Minimap:GetZoom();
   local isIndoor = GetCVar("minimapZoom")+0 == zoom and false or true; -- True if indoors, false if outdoors
 
-  if not Core or not MapDimensions or viewRadius == 0 then
+  if not Core or not MapData or viewRadius == 0 then
       self:HideAllMmPins();
       return;
   end
 
   local function PointToYards(x, y, zoneName_local)
-    local MapDimensions_local = L:GetModule("MapDimensions", true)
-    if not MapDimensions_local then return 0, 0 end
-    local width, height = MapDimensions_local:GetZoneDimensions(zoneName_local)
+    local MapData_local = L:GetModule("MapData", true)
+    if not MapData_local then return 0, 0 end
+    local width, height = MapData_local:GetZoneDimensionsByName(zoneName_local)
     return width * x, height * y
   end
 

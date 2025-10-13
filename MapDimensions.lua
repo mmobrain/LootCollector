@@ -107,6 +107,10 @@ MapDimensions.data = {
   -- Static data, keyed by zone name
 }
 
+MapDimensions.idData = {
+  -- Static data, keyed by zone ID
+}
+
 -- Minimap_size settings for zoom (radius values in yards)
 local minimap_size_data = {
 	indoor = {
@@ -140,7 +144,9 @@ end
 -- Populate MapDimensions.data with zone_data on initialization
 function MapDimensions:OnInitialize()
     for zoneName, data in pairs(zone_data) do
-        MapDimensions.data[zoneName] = { width = data[1], height = data[2], id = data[3], name = zoneName }
+        local width, height, id = data[1], data[2], data[3]
+        MapDimensions.data[zoneName] = { width = width, height = height, id = id, name = zoneName }
+        MapDimensions.idData[id] = { width = width, height = height, id = id, name = zoneName }
     end
     -- Clear the local zone_data table to save memory
     zone_data = nil
@@ -162,19 +168,19 @@ function MapDimensions:GetZoneDimensions(zoneName)
     return 1600, 1600, 0 -- Default fallback values
 end
 
-function MapDimensions:GetMapDimensions(mapID)
-    for zoneName, data in pairs(MapDimensions.data) do
-        if data.id == mapID then
-            return data.width, data.height, data.name
-        end
+function MapDimensions:GetMapDimensions(mapID) -- TODO: What is mapID? zoneID is not unique
+    local data = MapDimensions.idData[mapID]
+    if data then
+        return data.width, data.height, data.name
     end
     -- Fallback to dynamic retrieval if not found
     SetMapByID(mapID);
     local name, height, width = GetMapInfo();
     local zoneID = GetCurrentMapZone();
     if height and width and height ~= 0 and width ~= 0 then
-        MapDimensions.data[name] = {width = width, height = height, id = zoneID, name = name}; -- Cache dynamic result
-        return width, height, zoneID;
+        MapDimensions.data[name] = {width = width, height = height, id = zoneID, name = name};
+        MapDimensions.idData[zoneID] = MapDimensions.data[name];
+        return width, height, name;
     end
     return 1600, 1600, "Unknown Zone" -- Default fallback values
 end

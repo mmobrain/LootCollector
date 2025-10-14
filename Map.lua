@@ -181,20 +181,47 @@ local SOURCE_TEXT_MAP = {
 }
 
 function Map:ShowDiscoveryTooltip(pin)
-    if not pin or not pin.discovery then return end; local d = pin.discovery; GameTooltip:SetOwner(pin, "ANCHOR_RIGHT"); GameTooltip:ClearLines(); if self._pinnedPin == pin and d.itemLink then if not itemInfoTooltip then itemInfoTooltip = CreateFrame("GameTooltip", "LootCollectorItemInfoTooltip", UIParent, "GameTooltipTemplate") end; itemInfoTooltip:SetOwner(UIParent, "ANCHOR_NONE"); itemInfoTooltip:SetHyperlink(d.itemLink); for i = 1, itemInfoTooltip:NumLines() do local line = _G["LootCollectorItemInfoTooltipTextLeft" .. i]; local r, g, b; if line and line:GetText() then r, g, b = line:GetTextColor(); GameTooltip:AddLine(line:GetText(), r, g, b) end end; itemInfoTooltip:Hide(); GameTooltip:AddLine(" ") else local name, _, quality, _, _, itemType, itemSubType = GetCachedItemInfo(d.itemLink or d.itemID or ""); local header = d.itemLink or name or "Discovery"; GameTooltip:AddLine(header, 1, 1, 1, true); if quality then local r, g, b = GetQualityColor(quality); GameTooltipTextLeft1:SetTextColor(r, g, b) end; if itemType == "Armor" and itemSubType and itemSubType ~= "" then GameTooltip:AddLine(itemSubType, 1, 1, 1, true) end end; GameTooltip:AddLine(string.format("Found by: %s", d.foundBy_player or "Unknown"), 0.6, 0.8, 1, true); local ts = tonumber(d.timestamp) or time(); GameTooltip:AddDoubleLine("Date", date("%Y-%m-%d %H:%M", ts), 0.8, 0.8, 0.8, 1, 1, 1); local status = GetStatus(d); local ls = tonumber(d.lastSeen) or ts; GameTooltip:AddDoubleLine("Status", status, 0.8, 0.8, 0.8, 1, 1, 1); GameTooltip:AddDoubleLine("Last seen", date("%Y-%m-%d %H:%M", ls), 0.8, 0.8, 0.8, 1, 1, 1); 
+  if not pin or not pin.discovery then return end; local d = pin.discovery;
+  
+  -- Store the old value and set to false to prevent default POI tooltips
+  if WorldMapPOIFrame and WorldMapPOIFrame.allowBlobTooltip ~= nil then
+    self._oldAllowBlobTooltip = WorldMapPOIFrame.allowBlobTooltip;
+    WorldMapPOIFrame.allowBlobTooltip = false;
+  end
+
+  -- Determine which tooltip to use based on map size
+  local mapSize = WORLDMAP_SETTINGS.size
+  local useWorldMapTooltip = (mapSize == WORLDMAP_QUESTLIST_SIZE or mapSize == WORLDMAP_FULLMAP_SIZE)
+  local tooltip = useWorldMapTooltip and WorldMapTooltip or GameTooltip
+
+  tooltip:SetFrameStrata("TOOLTIP");
+  tooltip:SetFrameLevel(tooltip:GetFrameLevel() + 10);
+  tooltip:ClearAllPoints(); -- Clear existing anchors to force auto-sizing
+  tooltip:SetSize(1,1); -- Set minimal size to aid content-based resizing
+  tooltip:SetScale(0.9);
+  tooltip:SetOwner(pin, "ANCHOR_RIGHT"); tooltip:ClearLines(); if self._pinnedPin == pin and d.itemLink then if not itemInfoTooltip then itemInfoTooltip = CreateFrame("GameTooltip", "LootCollectorItemInfoTooltip", UIParent, "GameTooltipTemplate") end; itemInfoTooltip:SetOwner(UIParent, "ANCHOR_NONE"); if ItemRefTooltip then ItemRefTooltip:SetFrameStrata("TOOLTIP"); ItemRefTooltip:SetFrameLevel(ItemRefTooltip:GetFrameLevel() + 10); end; itemInfoTooltip:SetHyperlink(d.itemLink); for i = 1, itemInfoTooltip:NumLines() do local line = _G["LootCollectorItemInfoTooltipTextLeft" .. i]; local r, g, b; if line and line:GetText() then r, g, b = line:GetTextColor(); tooltip:AddLine(line:GetText(), r, g, b) end end; itemInfoTooltip:Hide(); tooltip:AddLine(" ") else local name, _, quality, _, _, itemType, itemSubType = GetCachedItemInfo(d.itemLink or d.itemID or ""); local header = d.itemLink or name or "Discovery"; if quality then local r,g,b = GetQualityColor(quality); header = string.format("|cff%02x%02x%02x%s|r", r*255, g*255, b*255, header); end; tooltip:AddLine(header, 1, 1, 1, true); if itemType == "Armor" and itemSubType and itemSubType ~= "" then tooltip:AddLine(itemSubType, 1, 1, 1, true) end end; tooltip:AddLine(string.format("Found by: %s", d.foundBy_player or "Unknown"), 0.6, 0.8, 1, true); local ts = tonumber(d.timestamp) or time(); tooltip:AddDoubleLine("Date", date("%Y-%m-%d %H:%M", ts), 0.8, 0.8, 0.8, 1, 1, 1); local status = GetStatus(d); local ls = tonumber(d.lastSeen) or ts; tooltip:AddDoubleLine("Status", status, 0.8, 0.8, 0.8, 1, 1, 1); tooltip:AddDoubleLine("Last seen", date("%Y-%m-%d %H:%M", ls), 0.8, 0.8, 0.8, 1, 1, 1); 
 
     local zoneText = d.zone or "Unknown Zone"
     if d.continentID and d.zoneID then
         zoneText = zoneText .. string.format(" (%d,%d)", d.continentID, d.zoneID)
     end
-    GameTooltip:AddDoubleLine("Zone", zoneText, 0.8, 0.8, 0.8, 1, 1, 1); 
+  tooltip:AddDoubleLine("Zone", zoneText, 0.8, 0.8, 0.8, 1, 1, 1); 
     local seenCount = (d.mergeCount or 0) + 1
-    GameTooltip:AddDoubleLine("Seen", tostring(seenCount) .. " times", 0.8, 0.8, 0.8, 1, 1, 1);
-    if d.source then local sourceText = SOURCE_TEXT_MAP[d.source] or d.source; GameTooltip:AddDoubleLine("Source", sourceText, 0.8, 0.8, 0.8, 1, 1, 1) end; if d.coords then GameTooltip:AddDoubleLine("Location", string.format("%.1f, %.1f", (d.coords.x or 0) * 100, (d.coords.y or 0) * 100), 0.8, 0.8, 0.8, 1, 1, 1) end; if self._pinnedPin == pin and (d.itemLink or d.itemID) then self:EnsureHoverButton(); self._hoverBtnItemLink = d.itemLink or d.itemID; local icon = self:GetDiscoveryIcon(d); self._hoverBtn.tex:SetTexture(icon or PIN_FALLBACK_TEXTURE); GameTooltip:Show(); self._hoverBtn:ClearAllPoints(); if GameTooltipTextLeft1 then self._hoverBtn:SetPoint("LEFT", GameTooltipTextLeft1, "RIGHT", 4, 0) else self._hoverBtn:SetPoint("TOPRIGHT", GameTooltip, "TOPRIGHT", -6, -6) end; self._hoverBtn:Show() else if self._hoverBtn then self._hoverBtn:Hide() end; self._hoverBtnItemLink = nil; GameTooltip:Show() end
+  tooltip:AddDoubleLine("Seen", tostring(seenCount) .. " times", 0.8, 0.8, 0.8, 1, 1, 1);
+  if d.source then local sourceText = SOURCE_TEXT_MAP[d.source] or d.source; tooltip:AddDoubleLine("Source", sourceText, 0.8, 0.8, 0.8, 1, 1, 1) end; if d.coords then tooltip:AddDoubleLine("Location", string.format("%.1f, %.1f", (d.coords.x or 0) * 100, (d.coords.y or 0) * 100), 0.8, 0.8, 0.8, 1, 1, 1) end; if self._pinnedPin == pin and (d.itemLink or d.itemID) then self:EnsureHoverButton(); self._hoverBtnItemLink = d.itemLink or d.itemID; local icon = self:GetDiscoveryIcon(d); self._hoverBtn.tex:SetTexture(icon or PIN_FALLBACK_TEXTURE); tooltip:Show(); self._hoverBtn:ClearAllPoints(); if _G[tooltip:GetName().."TextLeft1"] then self._hoverBtn:SetPoint("LEFT", _G[tooltip:GetName().."TextLeft1"], "RIGHT", 4, 0) else self._hoverBtn:SetPoint("TOPRIGHT", tooltip, "TOPRIGHT", -6, -6) end; self._hoverBtn:Show() else if self._hoverBtn then self._hoverBtn:Hide() end; self._hoverBtnItemLink = nil; tooltip:Show() end
 end
 
 function Map:HideDiscoveryTooltip()
-  if GameTooltip and GameTooltip:IsShown() then GameTooltip:Hide() end; if ItemRefTooltip then ItemRefTooltip:Hide() end; if self._hoverBtn then self._hoverBtn:Hide(); self._hoverBtnItemLink = nil end
+  if GameTooltip and GameTooltip:IsShown() then GameTooltip:Hide() end
+  if WorldMapTooltip and WorldMapTooltip:IsShown() then WorldMapTooltip:Hide() end
+  if ItemRefTooltip then ItemRefTooltip:Hide() end
+  if self._hoverBtn then self._hoverBtn:Hide(); self._hoverBtnItemLink = nil end
+
+  -- Restore WorldMapPOIFrame.allowBlobTooltip if it was modified
+  if WorldMapPOIFrame and self._oldAllowBlobTooltip ~= nil then
+      WorldMapPOIFrame.allowBlobTooltip = self._oldAllowBlobTooltip
+      self._oldAllowBlobTooltip = nil
+  end
 end
 
 function Map:OpenPinMenu(anchorFrame)

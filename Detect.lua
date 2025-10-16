@@ -36,7 +36,20 @@ Detect._cache = { isWF = {}, isMS = {}, }
 Detect._recent = {}
 
 function Detect:IsWorldforged(link)
-  local c = self._cache.isWF[link]; if c ~= nil then return c end; local ok = TooltipHas(link, "Worldforged"); self._cache.isWF[link] = ok and true or false; return self._cache.isWF[link]
+  local c = self._cache.isWF[link]
+  if c ~= nil then return c end
+  
+  -- Check if item is cached before scanning tooltip
+  local itemName = GetItemInfo(link)
+  if not itemName then
+    -- Item not cached yet - return false but don't cache the result
+    return false
+  end
+  
+  -- Item is cached, safe to scan tooltip and cache result
+  local ok = TooltipHas(link, "Worldforged")
+  self._cache.isWF[link] = ok and true or false
+  return self._cache.isWF[link]
 end
 
 function Detect:IsMysticScroll(link, source)
@@ -58,6 +71,12 @@ function Detect:IsMysticScroll(link, source)
 
   local isMystic = string.find(name, "Mystic Scroll", 1, true)
   return isMystic and true or false
+end
+
+function Detect:IsItemCached(itemID)
+  if not itemID then return false end
+  local name = GetItemInfo(itemID)
+  return name ~= nil
 end
 
 function Detect:Qualifies(link, source)
@@ -142,15 +161,22 @@ function Detect:OnChatMsgLoot(event, msg)
 
   local px, py = GetPlayerMapPosition("player")
   px, py = px or 0, py or 0
+  SetMapToCurrentZone() -- Ensure map is set to current zone before getting IDs
   
+  local currentZoneText = GetRealZoneText()
+  local currentWorldMapID = GetCurrentMapAreaID()
+  local resolvedContID, resolvedZoneID, resolvedWorldMapID = L:GetModule("ZoneResolver", true):GetMapZoneNumbers(currentZoneText, currentWorldMapID)
+
   local discovery = {
     itemLink = link,
-    zone     = GetRealZoneText(),
+    zone     = currentZoneText,
     subZone  = GetSubZoneText(),
-    zoneID   = GetCurrentMapZone() or 0,
+    worldMapID = resolvedWorldMapID or 0, -- Prioritize resolved WorldMapID
+    zoneID   = resolvedZoneID or 0,
+    continentID = resolvedContID or 0,
     coords   = { x = px, y = py },
-    foundByplayer = UnitName("player"),
-    foundByclass  = select(2, UnitClass("player")),
+    foundBy_player = UnitName("player"),
+    foundBy_class  = select(2, UnitClass("player")),
     timestamp = now,
     source    = src,
   }

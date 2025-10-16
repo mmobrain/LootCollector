@@ -112,6 +112,16 @@ function LootCollector:OnInitialize()
         local Arrow = self:GetModule("Arrow", true)
         if Arrow and Arrow.ToggleCommand then Arrow:ToggleCommand() else print("|cffff7f00LootCollector:|r Arrow module not available.") end
     end
+
+    SLASH_LootCollectorMAINTENANCE1 = "/lcfix"
+    SlashCmdList["LootCollectorMAINTENANCE"] = function()
+        local ZoneResolver = self:GetModule("ZoneResolver", true)
+        if ZoneResolver and ZoneResolver.UpdateAllContinentAndZoneIDs then 
+            ZoneResolver:UpdateAllContinentAndZoneIDs() 
+        else 
+            print("|cffff7f00LootCollector:|r ZoneResolver module not available.") 
+        end
+    end
 end
 
 function LootCollector:IsPaused()

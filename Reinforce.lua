@@ -42,6 +42,11 @@ Reinforce.scanPeriod = 30
 Reinforce.enabled = true
 
 -- Helpers
+local function roundPrecise(v)
+  v = tonumber(v) or 0
+  return math.floor(v * 10000 + 0.5) / 10000
+end
+
 local function round2(v)
   v = tonumber(v) or 0
   return math.floor(v * 100 + 0.5) / 100
@@ -101,8 +106,57 @@ local function scanAndEnqueue()
   local db = L.db and L.db.global and L.db.global.discoveries or nil; if not db then return 0 end; local addedToQueue = 0; local ENQUEUE_LIMIT = 10; for guid, d in pairs(db) do repeat if addedToQueue >= ENQUEUE_LIMIT then break end; if not d or not d.zoneID or not d.coords then break end; d.guid = d.guid or guid; ensurePerDiscoveryFields(d); if (tonumber(d.announceCount) or 0) >= MAX_STEPS then break end; if shouldEnqueue(d) then enqueue(d, tonumber(d.nextDueTs) or now()); addedToQueue = addedToQueue + 1 end until true end; return addedToQueue
 end
 
-function Reinforce:BumpFromWire(z, i, x, y, tstamp, op)
-  if not (L and L.db and L.db.global and L.db.global.discoveries) then return end; local guid = buildGuid2(tonumber(z) or 0, tonumber(i) or 0, tonumber(x) or 0, tonumber(y) or 0); local d = L.db.global.discoveries[guid]; if not d then return end; ensurePerDiscoveryFields(d); if op == "DISC" then local t0 = tonumber(tstamp) or tonumber(d.timestamp) or now(); if (tonumber(d.announceCount) or 0) < 1 then d.announceCount = 1 end; if not d.lastAnnouncedTs or t0 > (tonumber(d.lastAnnouncedTs) or 0) then d.lastAnnouncedTs = t0 end; recomputeNextDue(d) elseif op == "CONF" then bumpOnAnnouncement(d, tstamp) end
+function Reinforce:BumpFromWire(z, i, x, y, tstamp, op, hasHighPrecision)
+  if not (L and L.db and L.db.global and L.db.global.discoveries) then return end; local guid = buildGuid2(tonumber(z) or 0, tonumber(i) or 0, tonumber(x) or 0, tonumber(y) or 0); local d = L.db.global.discoveries[guid]; if not d then return end; ensurePerDiscoveryFields(d); 
+  
+  -- Only update coordinates if incoming data has high precision (upgrade-only policy)
+  if hasHighPrecision and d.coords then
+    local incomingX = roundPrecise(tonumber(x) or 0)
+    local incomingY = roundPrecise(tonumber(y) or 0)
+    local currentX = roundPrecise(d.coords.x or 0)
+    local currentY = roundPrecise(d.coords.y or 0)
+    
+    -- Only update if incoming precision is higher than current
+    local currentPrecision = string.format("%.4f", currentX):match("%.%.%d%d%d%d$") and 4 or 2
+    local incomingPrecision = string.format("%.4f", incomingX):match("%.%.%d%d%d%d$") and 4 or 2
+    
+    -- Debug logging for coordinate comparison in BumpFromWire
+    local Comm = L:GetModule("Comm", true)
+    if Comm and Comm.verbose then
+      local precisionNote = hasHighPrecision and " (High precision)" or " (Legacy precision)"
+      local updateNote = ""
+      if incomingPrecision > currentPrecision then
+        updateNote = " - UPGRADING coordinates"
+      elseif incomingPrecision == currentPrecision then
+        updateNote = " - Same precision, no update"
+      else
+        updateNote = " - Lower precision, no update (upgrade-only policy)"
+      end
+      
+      print(string.format("|cffffff00[Reinforce DEBUG]|r BumpFromWire %s: Existing (%.4f,%.4f) vs Incoming (%.4f,%.4f)%s%s", 
+        d.itemLink or "item", currentX, currentY, incomingX, incomingY, precisionNote, updateNote))
+    end
+    
+    if incomingPrecision > currentPrecision then
+      d.coords.x = incomingX
+      d.coords.y = incomingY
+      -- Update GUID to reflect new precision
+      local newGuid = buildGuid2(d.zoneID or 0, d.itemID or 0, d.coords.x, d.coords.y)
+      if newGuid ~= guid then
+        L.db.global.discoveries[newGuid] = d
+        L.db.global.discoveries[guid] = nil
+        d.guid = newGuid
+        
+        -- Debug logging for GUID update in BumpFromWire
+        local Comm = L:GetModule("Comm", true)
+        if Comm and Comm.verbose then
+          print(string.format("|cffffff00[Reinforce DEBUG]|r BumpFromWire updated GUID due to precision change: %s -> %s", guid, newGuid))
+        end
+      end
+    end
+  end
+  
+  if op == "DISC" then local t0 = tonumber(tstamp) or tonumber(d.timestamp) or now(); if (tonumber(d.announceCount) or 0) < 1 then d.announceCount = 1 end; if not d.lastAnnouncedTs or t0 > (tonumber(d.lastAnnouncedTs) or 0) then d.lastAnnouncedTs = t0 end; recomputeNextDue(d) elseif op == "CONF" then bumpOnAnnouncement(d, tstamp) end
 end
 
 local function hookCoreOnce()
@@ -110,7 +164,101 @@ local function hookCoreOnce()
 end
 
 function Reinforce:OnCommReceived(prefix, message, distribution, sender)
-  if prefix ~= (L.addonPrefix or "BBLCAM25") then return end; if not AceSerializer or type(message) ~= "string" then return end; local ok, data = AceSerializer:Deserialize(message); if not ok or type(data) ~= "table" then return end; if data.v ~= 1 or not data.i or not data.z or not data.x or not data.y then return end; local db = L.db and L.db.global and L.db.global.discoveries or nil; if not db then return end; local guid = buildGuid2(tonumber(data.z) or 0, tonumber(data.i) or 0, tonumber(data.x) or 0, tonumber(data.y) or 0); local d = db[guid]; if not d then return end; ensurePerDiscoveryFields(d); d.originator = d.originator or sender or "Unknown"; local op = data.op or "DISC"; local tstamp = tonumber(data.t) or now(); if op == "DISC" then if (tonumber(d.announceCount) or 0) < 1 then d.announceCount = 1 end; if not d.lastAnnouncedTs or tstamp > (tonumber(d.lastAnnouncedTs) or 0) then d.lastAnnouncedTs = tstamp end; recomputeNextDue(d) elseif op == "CONF" then bumpOnAnnouncement(d, tstamp) end
+  if prefix ~= (L.addonPrefix or "BBLCAM25") then return end; if not AceSerializer or type(message) ~= "string" then return end; local ok, data = AceSerializer:Deserialize(message); if not ok or type(data) ~= "table" then return end; if data.v ~= 1 or not data.i or not data.z or not data.x or not data.y then return end; local db = L.db and L.db.global and L.db.global.discoveries or nil; if not db then return end; 
+  
+  -- Detect precision level of incoming data
+  local hasHighPrecision = false
+  if data.x and data.y then
+    local xStr = tostring(data.x)
+    local yStr = tostring(data.y)
+    -- Check if coordinates have high precision (3+ decimal places)
+    if xStr:match("%.%.%d%d%d") or yStr:match("%.%.%d%d%d") then
+      hasHighPrecision = true
+    end
+  end
+  
+  local guid = buildGuid2(tonumber(data.z) or 0, tonumber(data.i) or 0, tonumber(data.x) or 0, tonumber(data.y) or 0); local d = db[guid]; if not d then return end; ensurePerDiscoveryFields(d); 
+  
+  -- Only update coordinates if incoming data has high precision (upgrade-only policy)
+  if hasHighPrecision and d.coords then
+    local incomingX = roundPrecise(tonumber(data.x) or 0)
+    local incomingY = roundPrecise(tonumber(data.y) or 0)
+    local currentX = roundPrecise(d.coords.x or 0)
+    local currentY = roundPrecise(d.coords.y or 0)
+    
+    -- Only update if incoming precision is higher than current
+    local currentPrecision = string.format("%.4f", currentX):match("%.%.%d%d%d%d$") and 4 or 2
+    local incomingPrecision = string.format("%.4f", incomingX):match("%.%.%d%d%d%d$") and 4 or 2
+    
+    -- Debug logging for coordinate comparison
+    local Comm = L:GetModule("Comm", true)
+    if Comm and Comm.verbose then
+      local precisionNote = hasHighPrecision and " (High precision)" or " (Legacy precision)"
+      local updateNote = ""
+      if incomingPrecision > currentPrecision then
+        updateNote = " - UPGRADING coordinates"
+      elseif incomingPrecision == currentPrecision then
+        updateNote = " - Same precision, no update"
+      else
+        updateNote = " - Lower precision, no update (upgrade-only policy)"
+      end
+      
+      print(string.format("|cffffff00[Reinforce DEBUG]|r Incoming %s: Existing (%.4f,%.4f) vs Incoming (%.4f,%.4f)%s%s", 
+        d.itemLink or "item", currentX, currentY, incomingX, incomingY, precisionNote, updateNote))
+    end
+    
+    if incomingPrecision > currentPrecision then
+      d.coords.x = incomingX
+      d.coords.y = incomingY
+      -- Update GUID to reflect new precision
+      local newGuid = buildGuid2(d.zoneID or 0, d.itemID or 0, d.coords.x, d.coords.y)
+      if newGuid ~= guid then
+        L.db.global.discoveries[newGuid] = d
+        L.db.global.discoveries[guid] = nil
+        d.guid = newGuid
+        guid = newGuid  -- Update local guid reference
+        
+        -- Debug logging for GUID update
+        local Comm = L:GetModule("Comm", true)
+        if Comm and Comm.verbose then
+          print(string.format("|cffffff00[Reinforce DEBUG]|r Updated GUID due to precision change: %s -> %s", guid, newGuid))
+        end
+      end
+    end
+  end
+  
+  d.originator = d.originator or sender or "Unknown"; local op = data.op or "DISC"; local tstamp = tonumber(data.t) or now(); 
+  
+  -- Debug logging for reinforcement decisions
+  local Comm = L:GetModule("Comm", true)
+  if Comm and Comm.verbose then
+    local oldCount = tonumber(d.announceCount) or 0
+    local oldLastAnnounced = tonumber(d.lastAnnouncedTs) or 0
+    local oldNextDue = tonumber(d.nextDueTs) or 0
+    
+    if op == "DISC" then 
+      if (tonumber(d.announceCount) or 0) < 1 then d.announceCount = 1 end; 
+      if not d.lastAnnouncedTs or tstamp > (tonumber(d.lastAnnouncedTs) or 0) then d.lastAnnouncedTs = tstamp end; 
+      recomputeNextDue(d) 
+    elseif op == "CONF" then 
+      bumpOnAnnouncement(d, tstamp) 
+    end
+    
+    local newCount = tonumber(d.announceCount) or 0
+    local newLastAnnounced = tonumber(d.lastAnnouncedTs) or 0
+    local newNextDue = tonumber(d.nextDueTs) or 0
+    
+    print(string.format("|cffffff00[Reinforce DEBUG]|r %s %s: Count %d->%d, LastAnnounced %d->%d, NextDue %d->%d", 
+      op, d.itemLink or "item", oldCount, newCount, oldLastAnnounced, newLastAnnounced, oldNextDue, newNextDue))
+  else
+    if op == "DISC" then 
+      if (tonumber(d.announceCount) or 0) < 1 then d.announceCount = 1 end; 
+      if not d.lastAnnouncedTs or tstamp > (tonumber(d.lastAnnouncedTs) or 0) then d.lastAnnouncedTs = tstamp end; 
+      recomputeNextDue(d) 
+    elseif op == "CONF" then 
+      bumpOnAnnouncement(d, tstamp) 
+    end
+  end
 end
 
 local tickerFrame = nil

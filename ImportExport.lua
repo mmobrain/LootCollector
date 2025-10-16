@@ -8,8 +8,6 @@
 local L = LootCollector
 local ImportExport = L:NewModule("ImportExport")
 
-local Core = L:GetModule("Core")
-
 -- Optional libs (safe if missing on Ascension/WotLK)
 local LibSerialize = (LibStub and LibStub("LibSerialize", true)) or nil
 local AceSerializer = (LibStub and LibStub("AceSerializer-3.0", true)) or nil
@@ -112,8 +110,8 @@ local function mergeOne(ex, inc)
 end
 
 function ImportExport:ApplyImport(parsed, mode, withOverlays)
-  if not (L.db and L.db.global) then return nil, "DB not ready" end; local disc = parsed.discoveries or {}; local overlays = parsed.overlays or {}; local g = L.db.global; g.discoveries = g.discoveries or {}; local applied = { added = 0, updated = 0, total = 0, overlays = 0 }; if mode == "OVERRIDE" then g.discoveries = {} end; for guid, d in pairs(disc) do applied.total = applied.total + 1; local ex = g.discoveries[guid]; if not ex then g.discoveries[guid] = d; applied.added = applied.added + 1 else mergeOne(ex, d); applied.updated = applied.updated + 1 end end; if withOverlays and L.db and L.db.char then L.db.char.looted = L.db.char.looted or {}; for guid, ts in pairs(overlays.looted or {}) do L.db.char.looted[guid] = tonumber(ts) or now(); applied.overlays = applied.overlays + 1 end; L.db.char.hidden = L.db.char.hidden or {}; for guid, on in pairs(overlays.hidden or {}) do L.db.char.hidden[guid] = on and true or nil end end; local Map = L:GetModule("Map", true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end; return applied 
-end
+  if not (L.db and L.db.global) then return nil, "DB not ready" end; local disc = parsed.discoveries or {}; local overlays = parsed.overlays or {}; local g = L.db.global; g.discoveries = g.discoveries or {}; local applied = { added = 0, updated = 0, total = 0, overlays = 0 }; if mode == "OVERRIDE" then g.discoveries = {} end; for guid, d in pairs(disc) do applied.total = applied.total + 1; local ex = g.discoveries[guid]; if not ex then g.discoveries[guid] = d; applied.added = applied.added + 1 else mergeOne(ex, d); applied.updated = applied.updated + 1 end end; if withOverlays and L.db and L.db.char then L.db.char.looted = L.db.char.looted or {}; for guid, ts in pairs(overlays.looted or {}) do L.db.char.looted[guid] = tonumber(ts) or now(); applied.overlays = applied.overlays + 1 end; L.db.char.hidden = L.db.char.hidden or {}; for guid, on in pairs(overlays.hidden or {}) do L.db.char.hidden[guid] = on and true or nil end end; local Map = L:GetModule("Map", true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end; return applied
+  end
 
 function ImportExport:ApplyImportString(importString, mode, withOverlays)
     local parsed, errOrStats = self:ParseImportString(importString); if not parsed then print("|cffff7f00LootCollector:|r Import failed: " .. tostring(errOrStats)); return end; local res, err = self:ApplyImport(parsed, mode, withOverlays); if not res then print("|cffff7f00LootCollector:|r Failed to apply import: " .. tostring(err)); return end; print(string.format("|cff00ff00LootCollector:|r Import successful! Merged %d discoveries.", res.total)); local Core = L:GetModule("Core", true); if Core and Core.ScanDatabaseForUncachedItems then Core:ScanDatabaseForUncachedItems() end

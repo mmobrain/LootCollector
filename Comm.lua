@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-global
 -- Comm.lua
 -- Implements sharing logic including delay queue and anonymous mode.
 
@@ -20,10 +21,16 @@ Comm.cooldown         = { CONF = {}, GONE = {} }
 Comm.verbose          = false
 Comm.rateLimit = {}
 Comm.delayQueue = {}
+Comm.normalizeCache = {}
+Comm.normalizeCacheTTL = 5 -- seconds
 
-local function debugPrint(module, message)
-    if not Comm.verbose then return end
-    print(string.format("|cffffff00[%s DEBUG]|r %s", tostring(module), tostring(message)))
+local debugPrint
+if Comm.verbose then
+    function debugPrint(module, message)
+        print(string.format("|cffffff00[%s DEBUG]|r %s", tostring(module), tostring(message)))
+    end
+else
+    function debugPrint(_, _) end -- No-op function
 end
 
 -- Local helpers
@@ -31,17 +38,17 @@ local function now()
   return time()
 end
 
-local function round2(v)
+local function roundPrecise(v)
   v = tonumber(v) or 0
-  return math.floor(v * 100 + 0.5) / 100
+  return math.floor(v * 10000 + 0.5) / 10000
 end
 
 local function guidKey(z, i, x, y)
-  return string.format("%s-%s-%.2f-%.2f", tostring(z or 0), tostring(i or 0), round2(x or 0), round2(y or 0))
+  return string.format("%s-%s-%.4f-%.4f", tostring(z or 0), tostring(i or 0), roundPrecise(x or 0), roundPrecise(y or 0))
 end
 
 local function wireKey(w)
-  return string.format("%s-%s-%.2f-%.2f", tostring(w.z or 0), tostring(w.i or 0), round2(w.x or 0), round2(w.y or 0))
+  return string.format("%s-%s-%.4f-%.4f", tostring(w.z or 0), tostring(w.i or 0), roundPrecise(w.x or 0), roundPrecise(w.y or 0))
 end
 
 function Comm:ClearCaches()
@@ -50,9 +57,10 @@ function Comm:ClearCaches()
         if self.cooldown.CONF then wipe(self.cooldown.CONF) end
         if self.cooldown.GONE then wipe(self.cooldown.GONE) end
     end
+    if self.normalizeCache then wipe(self.normalizeCache) end
     local ZoneResolver = L:GetModule("ZoneResolver", true)
     if ZoneResolver then ZoneResolver:ClearCache() end
-    print("|cff00ff00LootCollector:|r Communication caches (seen/cooldown/zone) have been cleared for this session.")
+    debugPrint("Comm", "Communication caches (seen/cooldown/zone/normalize) have been cleared for this session.")
 end
 
 local function buildWireV1(discovery, op)
@@ -60,11 +68,38 @@ local function buildWireV1(discovery, op)
   local itemID = discovery.itemID or (discovery.itemLink and tonumber(discovery.itemLink:match("item:(%d+)")))
   if not itemID then return nil end
   
-  local _, _, quality = GetItemInfo(discovery.itemLink or itemID)
+  -- Validate required fields for broadcasting
+  if not discovery.worldMapID or discovery.worldMapID == 0 then
+    -- debugPrint("Comm", string.format("Skipping broadcast for item %s - missing worldMapID (%s)", discovery.itemLink or itemID, tostring(discovery.worldMapID)))
+    return nil
+  end
+  
+  local itemName, itemLink, quality = GetItemInfo(discovery.itemLink or itemID)
   
   local senderName = UnitName("player")
   if L.db.profile.sharing.anonymous then
       senderName = "An Unnamed Collector"
+  end
+
+  -- Smart precision handling: Only upgrade, never downgrade
+  -- Check if we have high-precision coordinates (4+ decimal places)
+  local originalX = discovery.coords and discovery.coords.x or 0
+  local originalY = discovery.coords and discovery.coords.y or 0
+  
+  -- Determine if coordinates have high precision (more than 2 decimal places)
+  local hasHighPrecision = false
+  local xStr = tostring(originalX)
+  local yStr = tostring(originalY)
+  
+  -- Check if coordinates have more than 2 decimal places
+  if (xStr:match("%.%.%d%d%d") or yStr:match("%.%.%d%d%d")) then
+    hasHighPrecision = true
+  end
+  
+  local xCoord, yCoord = roundPrecise(originalX), roundPrecise(originalY)
+  
+  if Comm.verbose then
+    debugPrint("Comm", string.format("Broadcasting coordinates with 4-decimal precision: (%.4f,%.4f)", xCoord, yCoord))
   end
 
   return { 
@@ -76,47 +111,104 @@ local function buildWireV1(discovery, op)
       z = discovery.zoneID,
       c = discovery.continentID,
       zn = discovery.zone,
-      x = round2(discovery.coords and discovery.coords.x or 0), 
-      y = round2(discovery.coords and discovery.coords.y or 0), 
+      w = discovery.worldMapID or GetCurrentMapAreaID(), -- Add WorldMapID
+      x = xCoord, 
+      y = yCoord, 
       t = discovery.timestamp or now(),
       s = senderName
   }
 end
 
 local function normalizeIncomingData(tbl, defaultSender)
-    if not (type(tbl) == "table" and tbl.v == 1 and tbl.i and tbl.z and tbl.x and tbl.y) then return nil end
+    if not (type(tbl) == "table" and tbl.v == 1 and tbl.i and tbl.x and tbl.y) then return nil end
     
     local itemID = tonumber(tbl.i)
-    local link = tbl.l or (itemID and select(2, GetItemInfo(itemID))) -- Derive link if not provided, or if ID is valid
-    local itemName = tbl.n or (link and select(1, GetItemInfo(link))) or (itemID and select(1, GetItemInfo(itemID))) -- Get item name from link or ID
+    local zoneName = tbl.zn
+    
+    -- Always store coordinates with 4-decimal precision internally.
+    local x = roundPrecise(tbl.x)
+    local y = roundPrecise(tbl.y)
+    
+    -- Detect precision level of incoming data for debugging/logging, not for storage format
+    local hasHighPrecision = false
+    
+    if tbl.x and tbl.y then
+        local xStr = tostring(tbl.x)
+        local yStr = tostring(tbl.y)
+        
+        if xStr:match("%%.%%.%%d%%d%%d") or yStr:match("%%.%%.%%d%%d%%d") then
+            hasHighPrecision = true
+        elseif xStr:match("%%.%%.%%d%%d$") and yStr:match("%%.%%.%%d%%d$") then
+        end
+    end
+
+    -- Create a simplified key for deduplication in normalizeCache
+    local cacheKey = string.format("NORM-%s-%s-%.4f-%.4f", tostring(itemID or 0), tostring(zoneName or ""), x, y)
+    local tnow = now()
+
+    -- Check normalizeCache to avoid redundant processing
+    if Comm.normalizeCache[cacheKey] and (tnow - Comm.normalizeCache[cacheKey]) < Comm.normalizeCacheTTL then
+        debugPrint("Comm", string.format("Skipping normalization for %s due to normalizeCache deduplication.", cacheKey))
+        return nil
+    end
+    Comm.normalizeCache[cacheKey] = tnow
+    
+    local itemNameFromAPI, itemLinkFromAPI, itemQualityFromAPI
+    if itemID then
+        itemNameFromAPI, itemLinkFromAPI, itemQualityFromAPI = GetItemInfo(itemID)
+    end
+
+    local link = tbl.l or itemLinkFromAPI -- Derive link if not provided, or if ID is valid
+    local itemName = tbl.n or itemNameFromAPI -- Get item name from link or ID
+    local itemQuality = tonumber(tbl.q) or itemQualityFromAPI
     local zoneID = tonumber(tbl.z) or 0
     local continentID = tonumber(tbl.c) or 0
-    local zoneName = tbl.zn
+    local worldMapID = tonumber(tbl.w) or 0
 
-    -- Resolve missing or 0 continentID using zone name
     local ZoneResolver = L:GetModule("ZoneResolver", true)
-    if (continentID == 0 or not continentID) and zoneName and zoneName ~= "" and ZoneResolver then
-        local resolvedContID, resolvedZoneID = ZoneResolver:GetMapZoneNumbers(zoneName)
-        if resolvedContID and resolvedContID > 0 then
+
+    -- Prioritize WorldMapID for resolution
+    if ZoneResolver and worldMapID and worldMapID > 0 then
+        local resolvedContID, resolvedZoneID = ZoneResolver:GetContinentAndZoneFromWorldMapID(worldMapID)
+        if resolvedContID and resolvedZoneID and resolvedContID > 0 and resolvedZoneID > 0 then
             continentID = resolvedContID
-            if zoneID == 0 or not zoneID then
-                zoneID = resolvedZoneID
-            end
+            zoneID = resolvedZoneID
+            debugPrint("Comm", string.format("Resolved via WorldMapID: %d (ContinentID: %d, ZoneID: %d)", worldMapID, continentID, zoneID))
+        else
+            debugPrint("Comm", string.format("Could not resolve ContinentID/ZoneID from WorldMapID: %d. Attempting zone name fallback.", worldMapID))
+            worldMapID = 0 -- Invalidate WorldMapID if it didn't resolve to valid cont/zone, then try zone name
         end
+    end
+
+    -- Fallback to zone name if WorldMapID failed or was not provided
+    if ZoneResolver and worldMapID == 0 and zoneName and zoneName ~= "" then
+        local resolvedContID, resolvedZoneID, resolvedWorldMapIDFromName = ZoneResolver:GetMapZoneNumbers(zoneName)
+        if resolvedContID and resolvedZoneID and resolvedContID > 0 and resolvedZoneID > 0 then
+            continentID = resolvedContID
+            zoneID = resolvedZoneID
+            worldMapID = resolvedWorldMapIDFromName or worldMapID -- Prefer WorldMapID from name if available
+            debugPrint("Comm", string.format("Resolved via ZoneName: '%s' (ContinentID: %d, ZoneID: %d, WorldMapID: %d)", zoneName, continentID, zoneID, worldMapID))
+        else
+            debugPrint("Comm", string.format("Could not resolve continentID/zoneID for zone '%s' - discovery may have positioning issues", zoneName))
+        end
+    elseif worldMapID == 0 and (continentID == 0 or not continentID) and (not zoneName or zoneName == "") then
+        debugPrint("Comm", "Incoming discovery missing all zone identifiers (WorldMapID, continentID, zone name) - cannot resolve position")
     end
 
     return {
         itemLink = link,
         itemName = itemName,
         itemID = itemID,
-        itemQuality = tonumber(tbl.q),
+        itemQuality = itemQuality,
+        worldMapID = worldMapID,
         zoneID = zoneID,
         continentID = continentID,
         zone = zoneName,
-        coords = { x = round2(tbl.x), y = round2(tbl.y) },
+        coords = { x = roundPrecise(tbl.x), y = roundPrecise(tbl.y) },
         foundBy_player = tbl.s or defaultSender or "Unknown",
         timestamp = tonumber(tbl.t) or now(),
-        lastSeen = tonumber(tbl.t) or now()
+        lastSeen = tonumber(tbl.t) or now(),
+        hasHighPrecision = hasHighPrecision     -- Flag for precision upgrade detection
     }
 end
 
@@ -129,11 +221,11 @@ local function pickDistribution()
 end
 
 function Comm:JoinPublicChannel(isManual)
-    if not L.db.profile.sharing.enabled then return end; local delay = isManual and 1.0 or 0.0; if self:IsChannelHealthy() then if self.verbose then print(L.name .. ": Channel healthy.") end; return end; if delay > 0 then if self.verbose then print(L.name .. ": Manual join, waiting " .. delay .. "s") end; local f = CreateFrame("Frame"); local e = 0; f:SetScript("OnUpdate", function(_, el) e = e + el; if e >= delay then f:SetScript("OnUpdate", nil); self:EnsureChannelJoined() end end) else self:EnsureChannelJoined() end
+    if not L.db.profile.sharing.enabled then return end; local delay = isManual and 1.0 or 0.0; if self:IsChannelHealthy() then debugPrint("Comm", L.name .. ": Channel healthy."); return end; if delay > 0 then debugPrint("Comm", L.name .. ": Manual join, waiting " .. delay .. "s"); local f = CreateFrame("Frame"); local e = 0; f:SetScript("OnUpdate", function(_, el) e = e + el; if e >= delay then f:SetScript("OnUpdate", nil); self:EnsureChannelJoined() end end) else self:EnsureChannelJoined() end
 end
 
 function Comm:LeavePublicChannel()
-    if self.verbose then print(L.name .. ": Leaving channel.") end; if self.channelName and self.channelName ~= "" then LeaveChannelByName(self.channelName) end; self.channelId = 0
+    debugPrint("Comm", L.name .. ": Leaving channel."); if self.channelName and self.channelName ~= "" then LeaveChannelByName(self.channelName) end; self.channelId = 0
 end
 
 function Comm:IsChannelHealthy()
@@ -149,11 +241,96 @@ function Comm:SendAceCommPayload(wire)
 end
 
 local function _SendLegacyLC1(discoveryData)
-    if L:IsZoneIgnored() or not Comm:IsChannelHealthy() then return end; local tnow = now(); Comm._lastSendAt = Comm._lastSendAt or 0; if (tnow - Comm._lastSendAt) < Comm.chatMinInterval then return end; local itemName = discoveryData.itemLink and discoveryData.itemLink:match("%[(.+)%]"); local _, _, quality = GetItemInfo(discoveryData.itemLink or discoveryData.itemID); local senderName = L.db.profile.sharing.anonymous and "An Unnamed Collector" or UnitName("player"); local msg = string.format("LC1:%d:%s:%d:%d:%.2f:%.2f:%d:%d:%s\t%s\t%s", 1, "DISC", discoveryData.zoneID or 0, discoveryData.itemID or 0, discoveryData.coords.x or 0, discoveryData.coords.y or 0, discoveryData.timestamp or tnow, quality or 1, senderName, itemName or "", discoveryData.zone or ""); if L.db and L.db.profile and L.db.profile.chatDebug then local Dev = L:GetModule("DevCommands", true); if Dev and Dev.LogMessage then Dev:LogMessage("SEND-LEGACY", msg) end end; SendChatMessage(msg, "CHANNEL", nil, Comm.channelId); Comm._lastSendAt = tnow
+    if L:IsZoneIgnored() then return end
+    if not Comm:IsChannelHealthy() then return end
+
+    local tnow = now()
+    if (tnow - (Comm._lastSendAt or 0)) < Comm.chatMinInterval then return end
+
+    local itemName = discoveryData.itemLink and discoveryData.itemLink:match("%[(.+)%]")
+    local _, _, quality = GetItemInfo(discoveryData.itemLink or discoveryData.itemID)
+    local senderName = L.db.profile.sharing.anonymous and "An Unnamed Collector" or UnitName("player")
+    local msg = string.format(
+        "LC1:%d:%s:%d:%d:%.4f:%.4f:%d:%d:%s\t%s\t%s",
+        1, -- Version
+        "DISC", -- Operation
+        discoveryData.zoneID or 0,
+        discoveryData.itemID or 0,
+        discoveryData.coords.x or 0,
+        discoveryData.coords.y or 0,
+        discoveryData.timestamp or tnow,
+        quality or 1,
+        senderName,
+        itemName or "",
+        discoveryData.zone or ""
+    )
+
+    if L.db and L.db.profile and L.db.profile.chatDebug then
+        local Dev = L:GetModule("DevCommands", true)
+        if Dev and Dev.LogMessage then
+            Dev:LogMessage("SEND-LEGACY", msg)
+        end
+    end
+
+    SendChatMessage(msg, "CHANNEL", nil, Comm.channelId)
+    Comm._lastSendAt = tnow
 end
 
 local function _SendEncodedLC1(discoveryData)
-    if L:IsZoneIgnored() or not Comm:IsChannelHealthy() then return end; if not (AceSerializer and LibDeflate) then local Dev = L:GetModule("DevCommands", true); if L.db.profile.chatDebug and Dev and Dev.LogMessage then Dev:LogMessage("ENCODE-FAIL", "Required library missing: AceSerializer or LibDeflate.") end; return end; local tnow = now(); Comm._lastSendAt = Comm._lastSendAt or 0; if (tnow - Comm._lastSendAt) < Comm.chatMinInterval then return end; local Dev = L:GetModule("DevCommands", true); local function log(prefix, msg) if L.db.profile.chatDebug and Dev and Dev.LogMessage then Dev:LogMessage(prefix, msg) end end; log("ENCODE-STEP", "Starting..."); local wire = buildWireV1(discoveryData, "DISC"); if not wire then log("ENCODE-FAIL", "buildWireV1 returned nil."); return end; local s_ok, serialized = pcall(AceSerializer.Serialize, AceSerializer, wire); if not s_ok or not serialized then log("ENCODE-FAIL", "AceSerializer failed: " .. tostring(serialized)); return end; log("ENCODE-STEP", "Serialized OK (len: " .. #serialized .. ")"); local c_ok, compressed = pcall(LibDeflate.CompressDeflate, LibDeflate, serialized, {level=9}); if not c_ok or not compressed then log("ENCODE-FAIL", "LibDeflate.CompressDeflate failed: " .. tostring(compressed)); return end; log("ENCODE-STEP", "Compressed OK (len: " .. #compressed .. ")"); local e_ok, encoded = pcall(LibDeflate.EncodeForPrint, LibDeflate, compressed); if not e_ok or not encoded then log("ENCODE-FAIL", "LibDeflate.EncodeForPrint failed: " .. tostring(encoded)); return end; log("ENCODE-STEP", "Encoded OK (len: " .. #encoded .. ")"); if #encoded > 240 then log("ENCODE-FAIL", "Payload too long after encoding: " .. #encoded .. " bytes."); return end; local msg = "LC1:" .. encoded; log("SEND-ENCODED", msg); SendChatMessage(msg, "CHANNEL", nil, Comm.channelId); Comm._lastSendAt = tnow
+    if L:IsZoneIgnored() then return end
+    if not Comm:IsChannelHealthy() then return end
+    if not (AceSerializer and LibDeflate) then
+        debugPrint("Comm", "Required library missing: AceSerializer or LibDeflate.")
+        return
+    end
+
+    local tnow = now()
+    if (tnow - (Comm._lastSendAt or 0)) < Comm.chatMinInterval then return end
+
+    local Dev = L:GetModule("DevCommands", true)
+    local function log(prefix, msg)
+        if L.db.profile.chatDebug and Dev and Dev.LogMessage then
+            Dev:LogMessage(prefix, msg)
+        end
+    end
+
+    log("ENCODE-STEP", "Starting...")
+    local wire = buildWireV1(discoveryData, "DISC")
+    if not wire then
+        log("ENCODE-FAIL", "buildWireV1 returned nil.")
+        return
+    end
+
+    local s_ok, serialized = pcall(AceSerializer.Serialize, AceSerializer, wire)
+    if not s_ok or not serialized then
+        log("ENCODE-FAIL", "AceSerializer failed: " .. tostring(serialized))
+        return
+    end
+    log("ENCODE-STEP", "Serialized OK (len: " .. #serialized .. ")")
+
+    local c_ok, compressed = pcall(LibDeflate.CompressDeflate, LibDeflate, serialized, {level=9})
+    if not c_ok or not compressed then
+        log("ENCODE-FAIL", "LibDeflate.CompressDeflate failed: " .. tostring(compressed))
+        return
+    end
+    log("ENCODE-STEP", "Compressed OK (len: " .. #compressed .. ")")
+
+    local e_ok, encoded = pcall(LibDeflate.EncodeForPrint, LibDeflate, compressed)
+    if not e_ok or not encoded then
+        log("ENCODE-FAIL", "LibDeflate.EncodeForPrint failed: " .. tostring(encoded))
+        return
+    end
+    log("ENCODE-STEP", "Encoded OK (len: " .. #encoded .. ")")
+
+    if #encoded > 240 then
+        log("ENCODE-FAIL", "Payload too long after encoding: " .. #encoded .. " bytes.")
+        return
+    end
+
+    local msg = "LC1:" .. encoded
+    log("SEND-ENCODED", msg)
+    SendChatMessage(msg, "CHANNEL", nil, Comm.channelId)
+    Comm._lastSendAt = tnow
 end
 
 function Comm:SendLC1Discovery(d)
@@ -213,7 +390,13 @@ function Comm:HandleIncomingWire(tbl, via, sender)
 
         -- Debug for incoming discovery
         if Comm.verbose then
-            debugPrint("Comm", string.format("Incoming discovery: %s in %s, ContinentID: %d, ZoneID: %d (by %s)", norm.itemLink or name or "Unknown Item", norm.zone or "Unknown Zone", norm.continentID or 0, norm.zoneID or 0, norm.foundBy_player or "Unknown Sender"))
+            local precisionNote = ""
+            if norm.hasHighPrecision then
+                precisionNote = " (High precision - upgraded to 4-decimal)"
+            else
+                precisionNote = " (Standard precision)"
+            end
+            debugPrint("Comm", string.format("Incoming discovery: %s in %s, WorldMapID: %d, ContinentID: %d, ZoneID: %d (by %s)%s", norm.itemLink or name or "Unknown Item", norm.zone or "Unknown Zone", norm.worldMapID or 0, norm.continentID or 0, norm.zoneID or 0, norm.foundBy_player or "Unknown Sender", precisionNote))
         end
 
         Core:AddDiscovery(norm, true)
@@ -244,8 +427,8 @@ local function chatEventHandler(e, ...)
         debugPrint("Comm", "Parsed legacy version '" .. senderVersion .. "' from sender '" .. sender .. "'")
         if L.Version and senderVersion ~= L.Version and L.notifiedNewVersion ~= senderVersion then
             local restart_msg = string.find(senderVersion, "-r$") and "|cffff7f00It REQUIRES a client restart.|r" or "|cff00ff00It does NOT require a restart. Just /reload after updating.|r"
-            print(string.format("|cff00ff00LootCollector:|r A different version was detected from other players: |cffffff00%s|r (you have |cffffff00%s|r).", senderVersion, L.Version))
-            print(string.format("|cff00ff00LootCollector:|r %s", restart_msg))
+            debugPrint("Comm", string.format("A different version was detected from other players: |cffffff00%s|r (you have |cffffff00%s|r).", senderVersion, L.Version))
+            debugPrint("Comm", string.format("%s", restart_msg))
             L.notifiedNewVersion = senderVersion
         end
     end
@@ -255,15 +438,22 @@ local function chatEventHandler(e, ...)
 end
 
 function Comm:OnCommReceived(p, m, d, s)
-    debugPrint("Comm", "OnCommReceived fired. Prefix: " .. tostring(p) .. ", Sender: " .. tostring(s)); if L:IsZoneIgnored() then return end; if p ~= self.addonPrefix or type(m) ~= 'string' then return end; local ok, data = AceSerializer:Deserialize(m); if ok and type(data) == 'table' then if data.av and type(data.av) == "string" and L.Version and data.av ~= L.Version then if L.notifiedNewVersion ~= data.av then local restart_msg = string.find(data.av, "-r$") and "|cffff7f00It REQUIRES a client restart.|r" or "|cff00ff00It does NOT require a restart. Just /reload after updating.|r"; print(string.format("|cff00ff00LootCollector:|r A different version was detected from other players: |cffffff00%s|r (you have |cffffff00%s|r).", data.av, L.Version)); print(string.format("|cff00ff00LootCollector:|r %s", restart_msg)); L.notifiedNewVersion = data.av end end; self:HandleIncomingWire(data, d or "AceComm", s) end
+    debugPrint("Comm", "OnCommReceived fired. Prefix: " .. tostring(p) .. ", Sender: " .. tostring(s)); if L:IsZoneIgnored() then return end; if p ~= self.addonPrefix or type(m) ~= 'string' then return end; local ok, data = AceSerializer:Deserialize(m); if ok and type(data) == 'table' then if data.av and type(data.av) == "string" and L.Version and data.av ~= L.Version then if L.notifiedNewVersion ~= data.av then local restart_msg = string.find(data.av, "-r$") and "|cffff7f00It REQUIRES a client restart.|r" or "|cff00ff00It does NOT require a restart. Just /reload after updating.|r"; debugPrint("Comm", string.format("A different version was detected from other players: |cffffff00%s|r (you have |cffffff00%s|r).", data.av, L.Version)); debugPrint("Comm", string.format("%s", restart_msg)); L.notifiedNewVersion = data.av end end; self:HandleIncomingWire(data, d or "AceComm", s) end
 end
 
 function Comm:BroadcastDiscovery(discoveryData)
-    if L:IsPaused() then table.insert(L.pauseQueue.outgoing, discoveryData); if self.verbose then print(string.format("[%s] Queued outgoing discovery due to paused state.", L.name)) end; return end; if L:IsZoneIgnored() then return end; local profile = L.db.profile; if not (profile and profile.sharing.enabled) then return end; if profile.sharing.delayed then local fireAt = now() + profile.sharing.delaySeconds; table.insert(self.delayQueue, { fireAt = fireAt, data = discoveryData }); if self.verbose then print(string.format("[%s] Queued discovery for delayed broadcast in %d seconds.", L.name, profile.sharing.delaySeconds)) end else self:_BroadcastNow(discoveryData) end
+    if L:IsPaused() then table.insert(L.pauseQueue.outgoing, discoveryData); debugPrint("Comm", string.format("[%s] Queued outgoing discovery due to paused state.", L.name)); return end; if L:IsZoneIgnored() then return end; local profile = L.db.profile; if not (profile and profile.sharing.enabled) then return end; 
+    
+    -- Log continentID status for debugging
+    debugPrint("Comm", string.format("Broadcasting discovery: %s in %s (WorldMapID: %s, ContinentID: %s, ZoneID: %s)", 
+        discoveryData.itemLink or "Unknown Item", discoveryData.zone or "Unknown Zone", 
+        tostring(discoveryData.worldMapID), tostring(discoveryData.continentID), tostring(discoveryData.zoneID)))
+    
+    if profile.sharing.delayed then local fireAt = now() + profile.sharing.delaySeconds; table.insert(self.delayQueue, { fireAt = fireAt, data = discoveryData }); debugPrint("Comm", string.format("[%s] Queued discovery for delayed broadcast in %d seconds.", L.name, profile.sharing.delaySeconds)) else self:_BroadcastNow(discoveryData) end
 end
 
 function Comm:_BroadcastNow(discoveryData)
-    local wire = buildWireV1(discoveryData, "DISC"); if not wire then return end; self:SendAceCommPayload(wire); self:SendLC1Discovery(discoveryData); if self.verbose then print(string.format("[%s] Broadcasted discovery immediately.", L.name)) end
+    local wire = buildWireV1(discoveryData, "DISC"); if not wire then return end; self:SendAceCommPayload(wire); self:SendLC1Discovery(discoveryData); debugPrint("Comm", string.format("[%s] Broadcasted discovery immediately.", L.name))
 end
 
 function Comm:BroadcastReinforcement(discoveryData)

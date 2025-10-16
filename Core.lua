@@ -53,20 +53,46 @@ local function debugPrint(message)
     end
 end
 
--- Round normalized map coordinates to 2 decimals for storage and GUIDs
-local function round2(v)
+-- Round normalized map coordinates to 4 decimals for storage and GUIDs
+function Core:roundPrecise(v)
     v = tonumber(v) or 0
-    return floor(v * 100 + 0.5) / 100
+    return floor(v * 10000 + 0.5) / 10000
 end
 
 -- Build canonical guid string: "zoneID-itemID-x2-y2"
+-- Uses 2-decimal precision for GUID to maintain backward compatibility and prevent duplicates
 local function buildGuid2(zoneID, itemID, x, y)
-    local x2 = round2(x or 0); local y2 = round2(y or 0); return tostring(zoneID or 0) .. "-" .. tostring(itemID or 0) .. "-" .. tostring(x2) .. "-" .. tostring(y2)
+    local x2 = math.floor((x or 0) * 100 + 0.5) / 100
+    local y2 = math.floor((y or 0) * 100 + 0.5) / 100
+    return tostring(zoneID or 0) .. "-" .. tostring(itemID or 0) .. "-" .. tostring(x2) .. "-" .. tostring(y2)
 end
 
--- Find an existing discovery for the same item within a mergeable distance
+-- Determine if a 4-decimal coordinate value is effectively a 2-decimal value
+local function isEffectively2Decimal(v)
+    local roundedTo2 = math.floor((v or 0) * 100 + 0.5) / 100
+    return Core:roundPrecise(roundedTo2) == Core:roundPrecise(v)
+end
+
+-- Find existing discovery using 2-decimal GUID format for consistency
 local function FindNearbyDiscovery(zoneID, itemID, x, y, db)
-    if not db then return nil end; for guid, d in pairs(db) do if d.zoneID == zoneID and d.itemID == itemID then if d.coords then local dx = (d.coords.x or 0) - x; local dy = (d.coords.y or 0) - y; if (dx*dx + dy*dy) < DISCOVERY_MERGE_DISTANCE_SQ then return d end end end end; return nil
+    if not db then return nil end
+    
+    -- Use 2-decimal GUID format for consistent lookups
+    local guid = buildGuid2(zoneID, itemID, x, y)
+    local existing = db[guid]
+    if existing then return existing end
+    
+    -- Fall back to distance-based search for maximum compatibility
+    for guid, d in pairs(db) do 
+        if d.zoneID == zoneID and d.itemID == itemID and d.coords then 
+            local dx = (d.coords.x or 0) - x
+            local dy = (d.coords.y or 0) - y
+            if (dx*dx + dy*dy) < DISCOVERY_MERGE_DISTANCE_SQ then 
+                return d 
+            end 
+        end 
+    end
+    return nil
 end
 
 -- Extract numeric itemID from an itemLink
@@ -76,7 +102,7 @@ end
 
 -- Ensure verification fields exist on a discovery record
 function Core:EnsureVerificationFields(d)
-    if not d then return end; if not d.itemID then d.itemID = extractItemID(d.itemLink) end; d.status = d.status or d.verificationStatus or STATUS_UNCONFIRMED; d.statusTs = tonumber(d.statusTs) or tonumber(d.lastConfirmed) or tonumber(d.lastSeen) or tonumber(d.timestamp) or time(); d.lastSeen = tonumber(d.lastSeen) or tonumber(d.timestamp) or time(); d.verificationStatus = nil; d.lastConfirmed = nil; d.coords = d.coords or { x = 0, y = 0 }; d.coords.x = round2(d.coords.x or 0); d.coords.y = round2(d.coords.y or 0); d.mergeCount = d.mergeCount or 1; d.lootedByMe = nil
+    if not d then return end; if not d.itemID then d.itemID = extractItemID(d.itemLink) end; d.status = d.status or d.verificationStatus or STATUS_UNCONFIRMED; d.statusTs = tonumber(d.statusTs) or tonumber(d.lastConfirmed) or tonumber(d.lastSeen) or tonumber(d.timestamp) or time(); d.lastSeen = tonumber(d.lastSeen) or tonumber(d.timestamp) or time(); d.verificationStatus = nil; d.lastConfirmed = nil; d.coords = d.coords or { x = 0, y = 0 }; d.coords.x = self:roundPrecise(d.coords.x or 0); d.coords.y = self:roundPrecise(d.coords.y or 0); d.mergeCount = d.mergeCount or 1; d.lootedByMe = nil
 end
 
 -- Merge b into a, favoring newer timestamps; returns merged a
@@ -86,7 +112,7 @@ end
 
 -- One-time migrations
 function Core:MigrateDiscoveries()
-    if not (L.db and L.db.profile and L.db.global and L.db.char) then return end; local profile = L.db.profile; local global  = L.db.global; local char = L.db.char; profile._schemaVersion = profile._schemaVersion or 0; global._schemaVersion  = global._schemaVersion or 0; profile.discoveries = profile.discoveries or {}; global.discoveries  = global.discoveries or {}; char.looted = char.looted or {}; char.hidden = char.hidden or {}; if profile._schemaVersion < 1 then for _, d in pairs(profile.discoveries) do if type(d) == "table" then if not d.itemID then d.itemID = extractItemID(d.itemLink) end; self:EnsureVerificationFields(d) end end; profile._schemaVersion = 1 end; if profile._schemaVersion < 2 then local newMap = {}; for _, d in pairs(profile.discoveries) do if type(d) == "table" then self:EnsureVerificationFields(d); local z = d.zoneID or 0; local i = d.itemID or extractItemID(d.itemLink) or 0; local x = d.coords and d.coords.x or 0; local y = d.coords and d.coords.y or 0; local guid2 = buildGuid2(z, i, x, y); d.guid = guid2; if newMap[guid2] then newMap[guid2] = mergeRecords(newMap[guid2], d) else newMap[guid2] = d end end end; profile.discoveries = newMap; profile._schemaVersion = 2 end; if global._schemaVersion < 1 then local moved = 0; if profile.discoveries and next(profile.discoveries) then for guid, d in pairs(profile.discoveries) do if type(d) == "table" then self:EnsureVerificationFields(d); if d.lootedByMe then char.looted[guid] = tonumber(d.statusTs) or tonumber(d.timestamp) or time() end; d.lootedByMe = nil; global.discoveries[guid] = d; moved = moved + 1 end end; profile.discoveries = {} end; global._schemaVersion = 1; if moved > 0 then print(string.format("|cff00ff00LootCollector:|r Promoted %d discoveries to account scope.", moved)) end end; if global._schemaVersion < 2 then local byItemZone = {}; for guid, d in pairs(global.discoveries) do if d and d.zoneID and d.itemID then local key = tostring(d.zoneID) .. ":" .. tostring(d.itemID); if not byItemZone[key] then byItemZone[key] = {} end; table.insert(byItemZone[key], d) end end; local newDb = {}; local numMerged = 0; for key, group in pairs(byItemZone) do while #group > 0 do local cluster = { table.remove(group, 1) }; local i = #group; while i >= 1 do local d2 = group[i]; local isNear = false; for _, d1 in ipairs(cluster) do local dx = ((d1.coords and d1.coords.x) or 0) - ((d2.coords and d2.coords.x) or 0); local dy = ((d1.coords and d1.coords.y) or 0) - ((d2.coords and d2.coords.y) or 0); if (dx*dx + dy*dy) < DISCOVERY_MERGE_DISTANCE_SQ then isNear = true; break end end; if isNear then table.insert(cluster, table.remove(group, i)) end; i = i - 1 end; if #cluster == 1 then local d = cluster[1]; self:EnsureVerificationFields(d); newDb[d.guid] = d; else numMerged = numMerged + #cluster; local sum_x, sum_y = 0, 0; local merged_d = {}; for k,v in pairs(cluster[1]) do merged_d[k] = v end; for _, d_in_cluster in ipairs(cluster) do sum_x = sum_x + ((d_in_cluster.coords and d_in_cluster.coords.x) or 0); sum_y = sum_y + ((d_in_cluster.coords and d_in_cluster.coords.y) or 0); if (d_in_cluster.lastSeen or 0) > (merged_d.lastSeen or 0) then mergeRecords(merged_d, d_in_cluster) end end; merged_d.coords.x = round2(sum_x / #cluster); merged_d.coords.y = round2(sum_y / #cluster); merged_d.mergeCount = #cluster; local newGuid = buildGuid2(merged_d.zoneID, merged_d.itemID, merged_d.coords.x, merged_d.coords.y); merged_d.guid = newGuid; newDb[newGuid] = merged_d end; end end; if numMerged > 0 then print(string.format("|cff00ff00LootCollector:|r Merged %d nearby discoveries into %d more accurate locations.", numMerged, #newDb)) end; global.discoveries = newDb; global._schemaVersion = 2 end
+    if not (L.db and L.db.profile and L.db.global and L.db.char) then return end; local profile = L.db.profile; local global  = L.db.global; local char = L.db.char; profile._schemaVersion = profile._schemaVersion or 0; global._schemaVersion  = global._schemaVersion or 0; profile.discoveries = profile.discoveries or {}; global.discoveries  = global.discoveries or {}; char.looted = char.looted or {}; char.hidden = char.hidden or {}; if profile._schemaVersion < 1 then for _, d in pairs(profile.discoveries) do if type(d) == "table" then if not d.itemID then d.itemID = extractItemID(d.itemLink) end; self:EnsureVerificationFields(d) end end; profile._schemaVersion = 1 end; if profile._schemaVersion < 2 then local newMap = {}; for _, d in pairs(profile.discoveries) do if type(d) == "table" then self:EnsureVerificationFields(d); local z = d.zoneID or 0; local i = d.itemID or extractItemID(d.itemLink) or 0; local x = d.coords and d.coords.x or 0; local y = d.coords and d.coords.y or 0; local guid = buildGuid2(z, i, x, y); d.guid = guid; if newMap[guid] then newMap[guid] = mergeRecords(newMap[guid], d) else newMap[guid] = d end end end; profile.discoveries = newMap; profile._schemaVersion = 2 end; if global._schemaVersion < 1 then local moved = 0; if profile.discoveries and next(profile.discoveries) then for guid, d in pairs(profile.discoveries) do if type(d) == "table" then self:EnsureVerificationFields(d); if d.lootedByMe then char.looted[guid] = tonumber(d.statusTs) or tonumber(d.timestamp) or time() end; d.lootedByMe = nil; global.discoveries[guid] = d; moved = moved + 1 end end; profile.discoveries = {} end; global._schemaVersion = 1; if moved > 0 then print(string.format("|cff00ff00LootCollector:|r Promoted %d discoveries to account scope.", moved)) end end; if global._schemaVersion < 2 then local byItemZone = {}; for guid, d in pairs(global.discoveries) do if d and d.zoneID and d.itemID then local key = tostring(d.zoneID) .. ":" .. tostring(d.itemID); if not byItemZone[key] then byItemZone[key] = {} end; table.insert(byItemZone[key], d) end end; local newDb = {}; local numMerged = 0; for key, group in pairs(byItemZone) do while #group > 0 do local cluster = { table.remove(group, 1) }; local i = #group; while i >= 1 do local d2 = group[i]; local isNear = false; for _, d1 in ipairs(cluster) do local dx = ((d1.coords and d1.coords.x) or 0) - ((d2.coords and d2.coords.x) or 0); local dy = ((d1.coords and d1.coords.y) or 0) - ((d2.coords and d2.coords.y) or 0); if (dx*dx + dy*dy) < DISCOVERY_MERGE_DISTANCE_SQ then isNear = true; break end end; if isNear then table.insert(cluster, table.remove(group, i)) end; i = i - 1 end; if #cluster == 1 then local d = cluster[1]; self:EnsureVerificationFields(d); newDb[d.guid] = d; else numMerged = numMerged + #cluster; local sum_x, sum_y = 0, 0; local merged_d = {}; for k,v in pairs(cluster[1]) do merged_d[k] = v end; for _, d_in_cluster in ipairs(cluster) do sum_x = sum_x + ((d_in_cluster.coords and d_in_cluster.coords.x) or 0); sum_y = sum_y + ((d_in_cluster.coords and d_in_cluster.coords.y) or 0); if (d_in_cluster.lastSeen or 0) > (merged_d.lastSeen or 0) then mergeRecords(merged_d, d_in_cluster) end end; merged_d.coords.x = self:roundPrecise(sum_x / #cluster); merged_d.coords.y = self:roundPrecise(sum_y / #cluster); merged_d.mergeCount = #cluster; local newGuid = buildGuid2(merged_d.zoneID, merged_d.itemID, merged_d.coords.x, merged_d.coords.y); merged_d.guid = newGuid; newDb[newGuid] = merged_d end; end end; if numMerged > 0 then print(string.format("|cff00ff00LootCollector:|r Merged %d nearby discoveries into %d more accurate locations.", numMerged, #newDb)) end; global.discoveries = newDb; global._schemaVersion = 2 end
 end
 
 local PURGE_VERSION = "EmbossedScroll_v1"
@@ -165,17 +191,36 @@ function Core:RunInitialCleanup()
     local cityRemoved = #cityGuidsToRemove; if cityRemoved > 0 then for _, guid in ipairs(cityGuidsToRemove) do L.db.global.discoveries[guid] = nil end end
     local prefixRemoved = self:PurgeByGUIDPrefix()
     local ignoredRemoved = self:PurgeAllIgnoredItems()
+    
+    -- Run zone data update before deduplication
+    local ZoneResolver = L:GetModule("ZoneResolver", true)
+    local zoneDataUpdated = 0
+    if not ZoneResolver then return end -- Early exit if ZoneResolver is not available
+    zoneDataUpdated = ZoneResolver:UpdateAllContinentAndZoneIDs()
+    if zoneDataUpdated > 0 then
+        print(string.format("|cff00ff00LootCollector:|r Updated map data for discoveries."))
+    end
+
     local wfRemoved, msRemoved = self:DeduplicateItems(true)
-    if (cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved) > 0 then
-        print("|cff00ff00LootCollector:|r Initial cleanup complete. Removed: " .. cityRemoved .. " city, " .. prefixRemoved .. " prefix, " .. ignoredRemoved .. " ignored, " .. wfRemoved .. " WF dupes, " .. msRemoved .. " MS dupes.")
+    if (cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved + zoneDataUpdated) > 0 then
+        print("|cff00ff00LootCollector:|r Initial cleanup complete. Removed: " .. cityRemoved .. " city, " .. prefixRemoved .. " prefix, " .. ignoredRemoved .. " ignored, " .. wfRemoved .. " WF dupes, " .. msRemoved .. " MS dupes, " .. zoneDataUpdated .. " zone data updates.")
         local Map = L:GetModule("Map", true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
     end
 end
 
 function Core:RunAutomaticOnLoginCleanup()
+    -- Run zone data update before deduplication
+    local ZoneResolver = L:GetModule("ZoneResolver", true)
+    local zoneDataUpdated = 0
+    if not ZoneResolver then return end -- Early exit if ZoneResolver is not available
+    zoneDataUpdated = ZoneResolver:UpdateAllContinentAndZoneIDs()
+    if zoneDataUpdated > 0 then
+        print(string.format("|cff00ff00LootCollector:|r Updated map data for discoveries."))
+    end
+
     local wfRemoved, msRemoved = self:DeduplicateItems(false)
-    if (wfRemoved + msRemoved) > 0 then
-        print("|cff00ff00LootCollector:|r Routine maintenance complete. Removed: " .. wfRemoved .. " WF dupes, " .. msRemoved .. " MS dupes.")
+    if (wfRemoved + msRemoved + zoneDataUpdated) > 0 then
+        print("|cff00ff00LootCollector:|r Routine maintenance complete. Removed: " .. wfRemoved .. " WF dupes, " .. msRemoved .. " MS dupes, " .. zoneDataUpdated .. " zone data updates.")
         local Map = L:GetModule("Map", true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
     end
 end
@@ -208,28 +253,24 @@ function Core:OnGetItemInfoReceived(event, itemID)
         -- Update itemLinks for discoveries that don't have them yet
         if itemLink then 
             local discoveries = L.db.global.discoveries or {}
-            for guid, d in pairs(discoveries) do 
-                if d and d.itemID == itemID and not d.itemLink then 
-                    d.itemLink = itemLink 
-                end 
-            end 
-        end
-        
-        -- Deferred validation: Check items that were marked as needing validation
-        local Detect = L:GetModule("Detect", true)
-        if Detect then
-            local discoveries = L.db.global.discoveries or {}
             local guidsToRemove = {}
             
             for guid, d in pairs(discoveries) do
-                if d and d.itemID == itemID and d.needsValidation then
-                    -- Now that the item is cached, validate it
-                    if not Detect:Qualifies(d.itemLink or ("item:" .. itemID), "deferred") then
-                        debugPrint(string.format("|cffff0000Deferred validation failed for item %d (%s) - removing invalid discovery.|r", itemID, name))
-                        table.insert(guidsToRemove, guid)
-                    else
-                        debugPrint(string.format("|cff00ff00Deferred validation passed for item %d (%s).|r", itemID, name))
-                        d.needsValidation = nil -- Clear the flag
+                if d.itemID == itemID then
+                    -- Update itemLinks for discoveries that don't have them yet
+                    if not d.itemLink then
+                        d.itemLink = itemLink
+                    end
+
+                    -- Deferred validation: Check items that were marked as needing validation
+                    if d.needsValidation then
+                        if Detect and not Detect:Qualifies(d.itemLink or ("item:" .. itemID), "deferred") then
+                            debugPrint(string.format("|cffff0000Deferred validation failed for item %d (%s) - removing invalid discovery.|r", itemID, name))
+                            table.insert(guidsToRemove, guid)
+                        else
+                            debugPrint(string.format("|cff00ff00Deferred validation passed for item %d (%s).|r", itemID, name))
+                            d.needsValidation = nil -- Clear the flag
+                        end
                     end
                 end
             end
@@ -313,7 +354,7 @@ function Core:Qualifies(linkOrQuality)
 end
 
 function Core:HandleLocalLoot(discovery)
-    if L:IsZoneIgnored() then return end; if not(L.db and L.db.profile and L.db.global and L.db.char)then return end; local itemID=extractItemID(discovery.itemLink); if not itemID then return end; discovery.foundBy_player=UnitName("player"); discovery.coords=discovery.coords or{x=0,y=0}; discovery.coords.x=round2(discovery.coords.x or 0); discovery.coords.y=round2(discovery.coords.y or 0); local x=discovery.coords.x; local y=discovery.coords.y; local nowTs=time(); local db=L.db.global.discoveries; local existing=FindNearbyDiscovery(discovery.zoneID,itemID,x,y,db); if not existing then local guid=buildGuid2(discovery.zoneID,itemID,x,y); discovery.guid=guid; discovery.itemID=itemID; discovery.timestamp=discovery.timestamp or nowTs; discovery.lastSeen=nowTs; discovery.status=STATUS_UNCONFIRMED; discovery.statusTs=nowTs; discovery.lootedByMe=nil; self:EnsureVerificationFields(discovery); db[guid]=discovery; L.db.char.looted[guid]=nowTs; print(string.format("|cff00ff00[%s]:|r New discovery! %s in %s.",L.name,discovery.itemLink or"an item",discovery.zone or"Unknown")); local Map=L:GetModule("Map",true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown()then Map:Update()end; local Comm=L:GetModule("Comm",true); if Comm and Comm.BroadcastDiscovery then Comm:BroadcastDiscovery(discovery)end; return end; self:EnsureVerificationFields(existing); local n=existing.mergeCount or 1; existing.coords.x=(existing.coords.x*n+x)/(n+1); existing.coords.y=(existing.coords.y*n+y)/(n+1); existing.coords.x=round2(existing.coords.x); existing.coords.y=round2(existing.coords.y); existing.mergeCount=n+1; existing.lastSeen=nowTs; if not existing.foundBy_player or existing.foundBy_player=="Unknown"then existing.foundBy_player=UnitName("player")end; L.db.char.looted[existing.guid]=nowTs; local shouldShareConfirmation=(existing.status==STATUS_FADING); if shouldShareConfirmation then if existing.status~=STATUS_UNCONFIRMED then existing.status=STATUS_UNCONFIRMED; existing.statusTs=nowTs else existing.statusTs=nowTs end; local confirmPayload={guid=existing.guid,itemLink=existing.itemLink,itemID=existing.itemID or extractItemID(discovery.itemLink),zone=existing.zone,subZone=existing.subZone,zoneID=existing.zoneID,coords={x=existing.coords.x,y=existing.coords.y},foundBy_player=UnitName("player"),foundBy_class=select(2,UnitClass("player")),timestamp=nowTs,lootedByMe=true,}; local Comm=L:GetModule("Comm",true); if Comm and Comm.BroadcastConfirmation then Comm:BroadcastConfirmation(confirmPayload)end end; local Map=L:GetModule("Map",true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown()then Map:Update()end
+    if L:IsZoneIgnored() then return end; if not(L.db and L.db.profile and L.db.global and L.db.char)then return end; local itemID=extractItemID(discovery.itemLink); if not itemID then return end; discovery.foundBy_player=UnitName("player"); discovery.coords=discovery.coords or{x=0,y=0}; discovery.coords.x=self:roundPrecise(discovery.coords.x or 0); discovery.coords.y=self:roundPrecise(discovery.coords.y or 0); local x=discovery.coords.x; local y=discovery.coords.y; local nowTs=time(); local db=L.db.global.discoveries; local existing=FindNearbyDiscovery(discovery.zoneID,itemID,x,y,db); if not existing then local guid=buildGuid2(discovery.zoneID,itemID,x,y); discovery.guid=guid; discovery.itemID=itemID; discovery.timestamp=discovery.timestamp or nowTs; discovery.lastSeen=nowTs; discovery.status=STATUS_UNCONFIRMED; discovery.statusTs=nowTs; discovery.lootedByMe=nil; self:EnsureVerificationFields(discovery); db[guid]=discovery; L.db.char.looted[guid]=nowTs; print(string.format("|cff00ff00[%s]:|r New discovery! %s in %s.",L.name,discovery.itemLink or"an item",discovery.zone or"Unknown")); local Map=L:GetModule("Map",true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown()then Map:Update()end; local Comm=L:GetModule("Comm",true); if Comm and Comm.BroadcastDiscovery then Comm:BroadcastDiscovery(discovery)end; return end; self:EnsureVerificationFields(existing); local n=existing.mergeCount or 1; existing.coords.x=(existing.coords.x*n+x)/(n+1); existing.coords.y=(existing.coords.y*n+y)/(n+1); existing.coords.x=self:roundPrecise(existing.coords.x); existing.coords.y=self:roundPrecise(existing.coords.y); existing.mergeCount=n+1; existing.lastSeen=nowTs; if not existing.foundBy_player or existing.foundBy_player=="Unknown"then existing.foundBy_player=UnitName("player")end; L.db.char.looted[existing.guid]=nowTs; local shouldShareConfirmation=(existing.status==STATUS_FADING); if shouldShareConfirmation then if existing.status~=STATUS_UNCONFIRMED then existing.status=STATUS_UNCONFIRMED; existing.statusTs=nowTs else existing.statusTs=nowTs end; local confirmPayload={guid=existing.guid,itemLink=existing.itemLink,itemID=existing.itemID or extractItemID(discovery.itemLink),zone=existing.zone,subZone=existing.subZone,zoneID=existing.zoneID,coords={x=existing.coords.x,y=existing.coords.y},foundBy_player=UnitName("player"),foundBy_class=select(2,UnitClass("player")),timestamp=nowTs,lootedByMe=true,}; local Comm=L:GetModule("Comm",true); if Comm and Comm.BroadcastConfirmation then Comm:BroadcastConfirmation(confirmPayload)end end; local Map=L:GetModule("Map",true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown()then Map:Update()end
 end
 
 function Core:OnLootOpened()
@@ -332,39 +373,129 @@ function Core:OnLootOpened()
             px, py = px or 0, py or 0
             SetMapToCurrentZone() -- Ensure map is set to current zone before getting IDs
             
+            local currentZoneText = GetRealZoneText()
+            local currentWorldMapID = GetCurrentMapAreaID()
+            local resolvedContID, resolvedZoneID, resolvedWorldMapID = L:GetModule("ZoneResolver", true):GetMapZoneNumbers(currentZoneText, currentWorldMapID)
+
             local discovery = {
                 itemLink = link,
-                zone     = GetRealZoneText(),
+                zone     = currentZoneText, -- Keep localized name for display/reference if needed elsewhere
                 subZone  = GetSubZoneText(),
-                zoneID   = GetCurrentMapZone() or 0,
-                continentID = GetCurrentMapContinent() or 0,
+                worldMapID = resolvedWorldMapID or 0, -- Prioritize resolved WorldMapID
+                zoneID   = resolvedZoneID or 0, -- Use resolved English zoneID as fallback
+                continentID = resolvedContID or 0, -- Use resolved English continentID as fallback
                 coords   = { x = px, y = py },
                 foundBy_player = UnitName("player"),
                 foundBy_class  = select(2, UnitClass("player")),
                 timestamp = time(),
                 source    = "world_loot",
             }
-            debugPrint(string.format("Item picked up: %s in %s (ZoneID: %d, ContinentID: %d) at (%.2f, %.2f)",
+            debugPrint(string.format("Item picked up: %s in %s (WorldMapID: %d, ZoneID: %d, ContinentID: %d) at (%.4f, %.4f)",
                 discovery.itemLink or "Unknown Item", discovery.zone or "Unknown Zone",
-                discovery.zoneID, discovery.continentID, discovery.coords.x, discovery.coords.y))
+                discovery.worldMapID or 0, discovery.zoneID, discovery.continentID, discovery.coords.x, discovery.coords.y))
             self:HandleLocalLoot(discovery)
         end
     end
 end
-function Core:AddDiscovery(discoveryData,isNetworkDiscovery) if L:IsZoneIgnored()and isNetworkDiscovery then return end; if not(L.db and L.db.global)then return end; if type(discoveryData)~="table"then return end; local itemID=discoveryData.itemID or extractItemID(discoveryData.itemLink); if not itemID then return end; if not self:IsItemCached(itemID)then self:QueueItemForCaching(itemID); if not cacheTicker or cacheTicker:IsCancelled()then self:ProcessCacheQueue()end end; local x=(discoveryData.coords and discoveryData.coords.x)or 0; local y=(discoveryData.coords and discoveryData.coords.y)or 0; x=round2(x); y=round2(y); discoveryData.coords=discoveryData.coords or{}; discoveryData.coords.x=x; discoveryData.coords.y=y; local db=L.db.global.discoveries; local existing=FindNearbyDiscovery(discoveryData.zoneID,itemID,x,y,db); if not existing then local guid=buildGuid2(discoveryData.zoneID,itemID,x,y); discoveryData.guid=guid; discoveryData.itemID=itemID; discoveryData.lootedByMe=nil; self:EnsureVerificationFields(discoveryData); db[guid]=discoveryData; if isNetworkDiscovery then local toast=L:GetModule("Toast",true); if toast and toast.Show then toast:Show(discoveryData)end end; if not isNetworkDiscovery then print(string.format("|cff00ff00[%s]:|r New discovery! %s in %s.",L.name,discoveryData.itemLink or"an item",discoveryData.zone or"Unknown"))end; if WorldMapFrame and WorldMapFrame:IsShown()then local Map=L:GetModule("Map",true); if Map and Map.Update then Map:Update()end end; return end; self:EnsureVerificationFields(existing); local n=existing.mergeCount or 1; existing.coords.x=(existing.coords.x*n+x)/(n+1); existing.coords.y=(existing.coords.y*n+y)/(n+1); existing.coords.x=round2(existing.coords.x); existing.coords.y=round2(existing.coords.y); existing.mergeCount=n+1; local incomingTs=tonumber(discoveryData.statusTs)or tonumber(discoveryData.lastSeen)or tonumber(discoveryData.timestamp)or time(); if incomingTs>(existing.statusTs or 0)and discoveryData.status then existing.status=discoveryData.status; existing.statusTs=incomingTs end; local incomingLastSeen=tonumber(discoveryData.lastSeen)or tonumber(discoveryData.timestamp)or time(); if incomingLastSeen>(existing.lastSeen or 0)then existing.lastSeen=incomingLastSeen end; if not existing.itemLink and discoveryData.itemLink then existing.itemLink=discoveryData.itemLink; existing.itemID=existing.itemID or itemID end;
-    -- Update continentID if the existing one is invalid and incoming is valid
-    if (not existing.continentID or existing.continentID == 0) and 
-       discoveryData.continentID and discoveryData.continentID > 0 then
-        existing.continentID = discoveryData.continentID
-    end
 
-    -- Similarly for zoneID if needed
-    if (not existing.zoneID or existing.zoneID == 0) and 
-       discoveryData.zoneID and discoveryData.zoneID > 0 then
-        existing.zoneID = discoveryData.zoneID
+function Core:AddDiscovery(discoveryData,isNetworkDiscovery)
+    if L:IsZoneIgnored() and isNetworkDiscovery then return end
+    if not (L.db and L.db.global) then return end
+    if type(discoveryData) ~= "table" then return end
+    local itemID = discoveryData.itemID or extractItemID(discoveryData.itemLink)
+    if not itemID then return end
+    if not self:IsItemCached(itemID) then
+        self:QueueItemForCaching(itemID)
+        if not cacheTicker or cacheTicker:IsCancelled() then self:ProcessCacheQueue() end
     end
+    local x = (discoveryData.coords and discoveryData.coords.x) or 0
+    local y = (discoveryData.coords and discoveryData.coords.y) or 0
+    x = self:roundPrecise(x)
+    y = self:roundPrecise(y)
+    discoveryData.coords = discoveryData.coords or {}
+    discoveryData.coords.x = x
+    discoveryData.coords.y = y
+    local db = L.db.global.discoveries
+    local hasHighPrecisionIncoming = discoveryData.hasHighPrecision or false
+    local existing = FindNearbyDiscovery(discoveryData.zoneID, itemID, x, y, db)
+    if not existing then
+        local guid = buildGuid2(discoveryData.zoneID, itemID, x, y)
+        discoveryData.guid = guid
+        discoveryData.itemID = itemID
+        discoveryData.lootedByMe = nil
+        self:EnsureVerificationFields(discoveryData)
+        db[guid] = discoveryData
+        if isNetworkDiscovery then
+            local toast = L:GetModule("Toast", true)
+            if toast and toast.Show then toast:Show(discoveryData) end
+        end
+        if not isNetworkDiscovery then
+            print(string.format("|cff00ff00[%s]:|r New discovery! %s in %s.", L.name, discoveryData.itemLink or "an item", discoveryData.zone or "Unknown"))
+            local Map = L:GetModule("Map", true)
+            if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
+        end
+        local Comm = L:GetModule("Comm", true)
+        if Comm and Comm.BroadcastDiscovery then Comm:BroadcastDiscovery(discoveryData) end
+        return
+    end
+    self:EnsureVerificationFields(existing)
+    local n = existing.mergeCount or 1
 
-    local Map=L:GetModule("Map",true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown()then Map:Update()end
+    -- Determine if existing coordinates are effectively 2-decimal (legacy precision)
+    local existingX = (existing.coords and existing.coords.x) or 0
+    local existingY = (existing.coords and existing.coords.y) or 0
+    local existingIsEffectively2Decimal = isEffectively2Decimal(existingX) and isEffectively2Decimal(existingY)
+
+    -- Only update existing coordinates if incoming data has higher precision,
+    -- or if existing data is effectively 2-decimal.
+    if hasHighPrecisionIncoming or existingIsEffectively2Decimal then
+        existing.coords.x = (existingX * n + x) / (n + 1)
+        existing.coords.y = (existingY * n + y) / (n + 1)
+        existing.coords.x = self:roundPrecise(existing.coords.x)
+        existing.coords.y = self:roundPrecise(existing.coords.y)
+        existing.mergeCount = n + 1
+    else
+        debugPrint(string.format("Skipping coordinate update for %s due to lower incoming precision. Existing: (%.4f, %.4f), Incoming: (%.4f, %.4f)",
+            discoveryData.itemLink or "item", existingX, existingY, x, y))
+    end
+    
+    local incomingTs = tonumber(discoveryData.statusTs) or tonumber(discoveryData.lastSeen) or tonumber(discoveryData.timestamp) or time()
+    if incomingTs > (existing.statusTs or 0) and discoveryData.status then
+        existing.status = discoveryData.status
+        existing.statusTs = incomingTs
+    end
+    local incomingLastSeen = tonumber(discoveryData.lastSeen) or tonumber(discoveryData.timestamp) or time()
+    if incomingLastSeen > (existing.lastSeen or 0) then
+        existing.lastSeen = incomingLastSeen
+    end
+    if not existing.itemLink and discoveryData.itemLink then
+        existing.itemLink = discoveryData.itemLink
+        existing.itemID = existing.itemID or itemID
+    end
+    
+    -- Update worldMapID, continentID, and zoneID, preferring incoming worldMapID
+    if discoveryData.worldMapID and discoveryData.worldMapID > 0 then
+        existing.worldMapID = discoveryData.worldMapID
+        -- Also update continentID and zoneID if they are missing or invalid in existing and present in incoming
+        if (not existing.continentID or existing.continentID == 0) and discoveryData.continentID and discoveryData.continentID > 0 then
+            existing.continentID = discoveryData.continentID
+        end
+        if (not existing.zoneID or existing.zoneID == 0) and discoveryData.zoneID and discoveryData.zoneID > 0 then
+            existing.zoneID = discoveryData.zoneID
+        end
+    else -- Fallback to update continentID and zoneID if worldMapID is not provided in incoming
+        if (not existing.continentID or existing.continentID == 0) and 
+           discoveryData.continentID and discoveryData.continentID > 0 then
+            existing.continentID = discoveryData.continentID
+        end
+
+        if (not existing.zoneID or existing.zoneID == 0) and 
+           discoveryData.zoneID and discoveryData.zoneID > 0 then
+            existing.zoneID = discoveryData.zoneID
+        end
+    end
+    local Map = L:GetModule("Map", true)
+    if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
 end
 
 function Core:ClearDiscoveries()
@@ -400,7 +531,7 @@ SLASH_LootCollectorUPDATECONTINENTS1 = "/lcupdatecontinents"
 SlashCmdList["LootCollectorUPDATECONTINENTS"] = function()
     local ZoneResolver = L:GetModule("ZoneResolver", true)
     if ZoneResolver then
-        local updated = ZoneResolver:UpdateMissingContinentIDs()
+        local updated = ZoneResolver:UpdateAllContinentAndZoneIDs()
         if updated == 0 then
             print("|cff00ff00LootCollector:|r No discoveries found with missing continentID values.")
         end

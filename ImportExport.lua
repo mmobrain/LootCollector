@@ -8,6 +8,8 @@
 local L = LootCollector
 local ImportExport = L:NewModule("ImportExport")
 
+local Core = L:GetModule("Core")
+
 -- Optional libs (safe if missing on Ascension/WotLK)
 local LibSerialize = (LibStub and LibStub("LibSerialize", true)) or nil
 local AceSerializer = (LibStub and LibStub("AceSerializer-3.0", true)) or nil
@@ -40,7 +42,7 @@ local function cleanRecord(d)
     guid = d.guid,
     itemID = d.itemID,
     zoneID = d.zoneID,
-    coords = d.coords and {x = tonumber(d.coords.x) or 0, y = tonumber(d.coords.y) or 0} or {x = 0, y = 0},
+    coords = d.coords and {x = Core.roundPrecise(d.coords.x) or 0, y = Core.roundPrecise(d.coords.y) or 0} or {x = 0, y = 0},
     status = d.status or STATUS_UNCONFIRMED,
     statusTs = tonumber(d.statusTs) or tonumber(d.lastSeen) or tonumber(d.timestamp) or now(),
     lastSeen = tonumber(d.lastSeen) or tonumber(d.timestamp) or now(),
@@ -106,11 +108,16 @@ function ImportExport:ParseImportString(s)
 end
 
 local function mergeOne(ex, inc)
-  ex.statusTs = math.max(tonumber(ex.statusTs) or 0, tonumber(inc.statusTs) or 0); ex.lastSeen = math.max(tonumber(ex.lastSeen) or 0, tonumber(inc.lastSeen) or 0); if inc.status and (tonumber(inc.statusTs) or 0) >= (tonumber(ex.statusTs) or 0) then ex.status = inc.status end; if not ex.itemLink and inc.itemLink then ex.itemLink = inc.itemLink end; if not ex.zone and inc.zone then ex.zone = inc.zone end; if not ex.subZone and inc.subZone then ex.subZone = inc.subZone end
+  ex.statusTs = math.max(tonumber(ex.statusTs) or 0, tonumber(inc.statusTs) or 0); ex.lastSeen = math.max(tonumber(ex.lastSeen) or 0, tonumber(inc.lastSeen) or 0); if inc.status and (tonumber(inc.statusTs) or 0) >= (tonumber(ex.statusTs) or 0) then ex.status = inc.status end; if not ex.itemLink and inc.itemLink then ex.itemLink = inc.itemLink end; if not ex.zone and inc.zone then ex.zone = inc.zone end; if not ex.subZone and inc.subZone then ex.subZone = inc.subZone end; 
+  if inc.coords and inc.coords.x and inc.coords.y then
+      ex.coords = ex.coords or {x = 0, y = 0}
+      ex.coords.x = Core.roundPrecise(inc.coords.x)
+      ex.coords.y = Core.roundPrecise(inc.coords.y)
+  end
 end
 
 function ImportExport:ApplyImport(parsed, mode, withOverlays)
-  if not (L.db and L.db.global) then return nil, "DB not ready" end; local disc = parsed.discoveries or {}; local overlays = parsed.overlays or {}; local g = L.db.global; g.discoveries = g.discoveries or {}; local applied = { added = 0, updated = 0, total = 0, overlays = 0 }; if mode == "OVERRIDE" then g.discoveries = {} end; for guid, d in pairs(disc) do applied.total = applied.total + 1; local ex = g.discoveries[guid]; if not ex then g.discoveries[guid] = d; applied.added = applied.added + 1 else mergeOne(ex, d); applied.updated = applied.updated + 1 end end; if withOverlays and L.db and L.db.char then L.db.char.looted = L.db.char.looted or {}; for guid, ts in pairs(overlays.looted or {}) do L.db.char.looted[guid] = tonumber(ts) or now(); applied.overlays = applied.overlays + 1 end; L.db.char.hidden = L.db.char.hidden or {}; for guid, on in pairs(overlays.hidden or {}) do L.db.char.hidden[guid] = on and true or nil end end; local Map = L:GetModule("Map", true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end; return applied
+  if not (L.db and L.db.global) then return nil, "DB not ready" end; local disc = parsed.discoveries or {}; local overlays = parsed.overlays or {}; local g = L.db.global; g.discoveries = g.discoveries or {}; local applied = { added = 0, updated = 0, total = 0, overlays = 0 }; if mode == "OVERRIDE" then g.discoveries = {} end; for guid, d in pairs(disc) do applied.total = applied.total + 1; local ex = g.discoveries[guid]; if not ex then if d.coords then d.coords.x = Core.roundPrecise(d.coords.x); d.coords.y = Core.roundPrecise(d.coords.y) end; g.discoveries[guid] = d; applied.added = applied.added + 1 else mergeOne(ex, d); applied.updated = applied.updated + 1 end end; if withOverlays and L.db and L.db.char then L.db.char.looted = L.db.char.looted or {}; for guid, ts in pairs(overlays.looted or {}) do L.db.char.looted[guid] = tonumber(ts) or now(); applied.overlays = applied.overlays + 1 end; L.db.char.hidden = L.db.char.hidden or {}; for guid, on in pairs(overlays.hidden or {}) do L.db.char.hidden[guid] = on and true or nil end end; local Map = L:GetModule("Map", true); if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end; return applied
 end
 
 function ImportExport:ApplyImportString(importString, mode, withOverlays)

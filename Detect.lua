@@ -163,15 +163,20 @@ function Detect:OnChatMsgLoot(event, msg)
   px, py = px or 0, py or 0
   SetMapToCurrentZone() -- Ensure map is set to current zone before getting IDs
   
+  local currentZoneText = GetRealZoneText()
+  local currentWorldMapID = GetCurrentMapAreaID()
+  local resolvedContID, resolvedZoneID, resolvedWorldMapID = L:GetModule("ZoneResolver", true):GetMapZoneNumbers(currentZoneText, currentWorldMapID)
+
   local discovery = {
     itemLink = link,
-    zone     = GetRealZoneText(),
+    zone     = currentZoneText,
     subZone  = GetSubZoneText(),
-    zoneID   = GetCurrentMapZone() or 0,
-    continentID = GetCurrentMapContinent() or 0,
+    worldMapID = resolvedWorldMapID or 0, -- Prioritize resolved WorldMapID
+    zoneID   = resolvedZoneID or 0,
+    continentID = resolvedContID or 0,
     coords   = { x = px, y = py },
-    foundByplayer = UnitName("player"),
-    foundByclass  = select(2, UnitClass("player")),
+    foundBy_player = UnitName("player"),
+    foundBy_class  = select(2, UnitClass("player")),
     timestamp = now,
     source    = src,
   }

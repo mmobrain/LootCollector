@@ -52,7 +52,7 @@ local function DeserializePayload(message)
 end
 
 local function scaleCoord(v)
-    if not v or v ~= v then return 0 end; local x = v * 1000; if x >= 0 then return math.floor(x + 0.5) else return -math.floor(-x + 0.5) end
+    if not v or v ~= v then return 0 end; local x = v * 100; if x >= 0 then return math.floor(x + 0.5) else return -math.floor(-x + 0.5) end
 end
 
 local function getItemID(d)
@@ -76,7 +76,7 @@ local function getLastSeen(d)
 end
 
 local function packRecord(d, nameCache)
-    local z, i, x3, y3 = guidParts(d); local s  = STATUS[(d.status or "UNCONFIRMED"):upper()] or STATUS.UNCONFIRMED; local st = getStatusTs(d); local ls = getLastSeen(d); local ac = d.announceCount or 0; local originator = d.originator or "Unknown"; local foundBy = d.foundBy_player or originator; nameCache.map[originator] = (nameCache.map[originator] or #nameCache.list + 1); if nameCache.map[originator] > #nameCache.list then table.insert(nameCache.list, originator) end; nameCache.map[foundBy] = (nameCache.map[foundBy] or #nameCache.list + 1); if nameCache.map[foundBy] > #nameCache.list then table.insert(nameCache.list, foundBy) end; local oIdx = nameCache.map[originator]; local fIdx = nameCache.map[foundBy]; return { z or 0, i or 0, x3 or 0, y3 or 0, s or 0, st or 0, ls or 0, ac or 0, oIdx, fIdx }
+    local z, i, x3, y3 = guidParts(d); local s  = STATUS[(d.status or "UNCONFIRMED"):upper()] or STATUS.UNCONFIRMED; local st = getStatusTs(d); local ls = getLastSeen(d); local ac = d.announceCount or 0; local originator = d.originator or "Unknown"; local foundBy = d.foundBy_player or originator; nameCache.map[originator] = (nameCache.map[originator] or #nameCache.list + 1); if nameCache.map[originator] > #nameCache.list then table.insert(nameCache.list, originator) end; nameCache.map[foundBy] = (nameCache.map[foundBy] or #nameCache.list + 1); if nameCache.map[foundBy] > #nameCache.list then table.insert(nameCache.list, foundBy) end; local oIdx = nameCache.map[originator]; local fIdx = nameCache.map[foundBy]; return { z or 0, i or 0, (d.coords and d.coords.x and math.floor(d.coords.x * 10000 + 0.5)) or 0, (d.coords and d.coords.y and math.floor(d.coords.y * 10000 + 0.5)) or 0, s or 0, st or 0, ls or 0, ac or 0, oIdx, fIdx }
 end
 
 local function unpackRecord(rec)
@@ -84,7 +84,7 @@ local function unpackRecord(rec)
 end
 
 function DBSync:ApplyRecord(z, i, x3, y3, s, st, ls, ac, originator, foundBy)
-    if not (L.db and L.db.global and L.db.global.discoveries) then return end; local guid = buildGuid(z, i, x3, y3); local existing = L.db.global.discoveries[guid]; local now = time(); local _, itemLink = GetItemInfo(i); if not existing then local newRecord = { guid = guid, zoneID = z, itemID = i, itemLink = itemLink, coords = { x = x3 / 1000, y = y3 / 1000 }, status = STATUS_REV[s] or "UNCONFIRMED", statusTs = st, lastSeen = ls, timestamp = ls, announceCount = ac, originator = originator, foundBy_player = foundBy, }; local nextIdx = math.min((ac or 0) + 1, MAX_STEPS); if nextIdx <= MAX_STEPS then newRecord.nextDueTs = now + (OFFSETS[nextIdx] or 3600) end; L.db.global.discoveries[guid] = newRecord; return end; if not existing.itemLink and itemLink then existing.itemLink = itemLink end; local localSt = getStatusTs(existing); if st > localSt then existing.status = STATUS_REV[s] or "UNCONFIRMED"; existing.statusTs = st; existing.announceCount = ac; existing.originator = originator; existing.foundBy_player = foundBy; local nextIdx = math.min((ac or 0) + 1, MAX_STEPS); if nextIdx <= MAX_STEPS then existing.nextDueTs = now + (OFFSETS[nextIdx] or 3600) end end; if ls > (existing.lastSeen or 0) then existing.lastSeen = ls end; if not existing.itemID or existing.itemID == 0 then existing.itemID = i end
+    if not (L.db and L.db.global and L.db.global.discoveries) then return end; local guid = buildGuid(z, i, x3, y3); local existing = L.db.global.discoveries[guid]; local now = time(); local _, itemLink = GetItemInfo(i); if not existing then local newRecord = { guid = guid, zoneID = z, itemID = i, itemLink = itemLink, coords = { x = x3 / 10000, y = y3 / 10000 }, status = STATUS_REV[s] or "UNCONFIRMED", statusTs = st, lastSeen = ls, timestamp = ls, announceCount = ac, originator = originator, foundBy_player = foundBy, }; local nextIdx = math.min((ac or 0) + 1, MAX_STEPS); if nextIdx <= MAX_STEPS then newRecord.nextDueTs = now + (OFFSETS[nextIdx] or 3600) end; L.db.global.discoveries[guid] = newRecord; return end; if not existing.itemLink and itemLink then existing.itemLink = itemLink end; local localSt = getStatusTs(existing); if st > localSt then existing.status = STATUS_REV[s] or "UNCONFIRMED"; existing.statusTs = st; existing.announceCount = ac; existing.originator = originator; existing.foundBy_player = foundBy; local nextIdx = math.min((ac or 0) + 1, MAX_STEPS); if nextIdx <= MAX_STEPS then existing.nextDueTs = now + (OFFSETS[nextIdx] or 3600) end end; if ls > (existing.lastSeen or 0) then existing.lastSeen = ls end; if not existing.itemID or existing.itemID == 0 then existing.itemID = i end
 end
 
 function DBSync:SendPacket(distribution, target, seq, records, nameCache)

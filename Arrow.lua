@@ -219,6 +219,7 @@ function Arrow:FindBestTarget()
 
   local px, py = self:GetPlayerPos()
   if not px or not py or (px == 0 and py == 0) then self.currentTarget = nil; return end
+  local currentWorldMapID = GetCurrentMapAreaID()
   local currentZoneID = self:GetPlayerZoneIdNormalized()
   local currentContinentID = GetCurrentMapContinent()
   local bestTarget, minDist = nil, -1
@@ -226,8 +227,16 @@ function Arrow:FindBestTarget()
   for _, d in pairs(db) do
     repeat
       if not d or not d.coords then break end
-      if d.zoneID ~= currentZoneID then break end
-      if d.continentID ~= currentContinentID then break end
+
+      -- Prioritize WorldMapID for filtering
+      if d.worldMapID and d.worldMapID > 0 then
+          if d.worldMapID ~= currentWorldMapID then break end
+      -- Fallback to continentID and zoneID for filtering
+      elseif d.continentID and d.continentID > 0 and d.zoneID and d.zoneID > 0 then
+          if d.continentID ~= currentContinentID or d.zoneID ~= currentZoneID then break end
+      else
+          break -- No valid zone identifier found
+      end
       if d.lootedByMe or not passesFilters(d) then break end
       
       local tx, ty = d.coords.x or 0, d.coords.y or 0
@@ -279,6 +288,20 @@ function Arrow:UpdateArrow(forceUpdate)
         local x = d.coords and d.coords.x or 0
         local y = d.coords and d.coords.y or 0
         local itemName = (d.itemLink and d.itemLink:match("%[(.+)%]")) or "Discovery"
+
+        -- Prioritize WorldMapID to get mapC and mapZ
+        if d.worldMapID and d.worldMapID > 0 then
+            local ZoneResolver = L:GetModule("ZoneResolver", true)
+            if ZoneResolver then
+                local resolvedContID, resolvedZoneID = ZoneResolver:GetContinentAndZoneFromWorldMapID(d.worldMapID)
+                if resolvedContID and resolvedZoneID and resolvedContID > 0 and resolvedZoneID > 0 then
+                    mapC = resolvedContID
+                    mapZ = resolvedZoneID
+                else
+                    L:GetModule("Comm", true):DebugPrint("Arrow", string.format("Could not resolve ContID/ZoneID from WorldMapID %d for TomTom. Falling back to discovery data.", d.worldMapID))
+                end
+            end
+        end
 
         self.tomtomUID = TT_AddZWaypoint(mapC, mapZ, x, y, itemName)
         if self.tomtomUID then TT_SetCrazyArrow(self.tomtomUID, itemName) end

@@ -138,9 +138,26 @@ local nameCache = {}
 
 -- Build name cache on initialization
 function MapData:OnInitialize()
+	-- First, add all English zone names from the zones table
 	for continentID, continentZones in pairs(zones) do
 		for zoneID, zoneData in pairs(continentZones) do
 			nameCache[zoneData[1]] = { continentID, zoneID }
+		end
+	end
+	
+	-- Then, add translated zone names if translation data is available
+	if LootCollector_Translation and LootCollector_Translation.nonEnglishToEnglish then
+		local nonEnglishToEnglish = LootCollector_Translation.nonEnglishToEnglish
+		for nonEnglishName, englishName in pairs(nonEnglishToEnglish) do
+			-- Find the English name in our zones table and add the non-English name
+			for continentID, continentZones in pairs(zones) do
+				for zoneID, zoneData in pairs(continentZones) do
+					if zoneData[1] == englishName then
+						nameCache[nonEnglishName] = { continentID, zoneID }
+						break
+					end
+				end
+			end
 		end
 	end
 end

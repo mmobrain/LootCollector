@@ -23,6 +23,7 @@ libs\LibBabble-Zone-3.0\lib.xml
 DBopt\db.lua
 
 LootCollector.lua
+Translation.lua
 Core.lua
 ZoneResolver.lua
 Detect.lua

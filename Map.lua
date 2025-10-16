@@ -202,10 +202,13 @@ function Map:ShowDiscoveryTooltip(pin)
   tooltip:SetOwner(pin, "ANCHOR_RIGHT"); tooltip:ClearLines(); if self._pinnedPin == pin and d.itemLink then if not itemInfoTooltip then itemInfoTooltip = CreateFrame("GameTooltip", "LootCollectorItemInfoTooltip", UIParent, "GameTooltipTemplate") end; itemInfoTooltip:SetOwner(UIParent, "ANCHOR_NONE"); if ItemRefTooltip then ItemRefTooltip:SetFrameStrata("TOOLTIP"); ItemRefTooltip:SetFrameLevel(ItemRefTooltip:GetFrameLevel() + 10); end; itemInfoTooltip:SetHyperlink(d.itemLink); for i = 1, itemInfoTooltip:NumLines() do local line = _G["LootCollectorItemInfoTooltipTextLeft" .. i]; local r, g, b; if line and line:GetText() then r, g, b = line:GetTextColor(); tooltip:AddLine(line:GetText(), r, g, b) end end; itemInfoTooltip:Hide(); tooltip:AddLine(" ") else local name, _, quality, _, _, itemType, itemSubType = GetCachedItemInfo(d.itemLink or d.itemID or ""); local header = d.itemLink or name or "Discovery"; if quality then local r,g,b = GetQualityColor(quality); header = string.format("|cff%02x%02x%02x%s|r", r*255, g*255, b*255, header); end; tooltip:AddLine(header, 1, 1, 1, true); if itemType == "Armor" and itemSubType and itemSubType ~= "" then tooltip:AddLine(itemSubType, 1, 1, 1, true) end end; tooltip:AddLine(string.format("Found by: %s", d.foundBy_player or "Unknown"), 0.6, 0.8, 1, true); local ts = tonumber(d.timestamp) or time(); tooltip:AddDoubleLine("Date", date("%Y-%m-%d %H:%M", ts), 0.8, 0.8, 0.8, 1, 1, 1); local status = GetStatus(d); local ls = tonumber(d.lastSeen) or ts; tooltip:AddDoubleLine("Status", status, 0.8, 0.8, 0.8, 1, 1, 1); tooltip:AddDoubleLine("Last seen", date("%Y-%m-%d %H:%M", ls), 0.8, 0.8, 0.8, 1, 1, 1); 
 
     local zoneText = d.zone or "Unknown Zone"
-    if d.continentID and d.zoneID then
-        zoneText = zoneText .. string.format(" (%d,%d)", d.continentID, d.zoneID)
+    if d.worldMapID and d.worldMapID > 0 then
+        local ZoneResolver = L:GetModule("ZoneResolver", true)
+        if ZoneResolver then
+            zoneText = ZoneResolver:GetZoneNameByWorldMapID(d.worldMapID) or zoneText
+        end
     end
-  tooltip:AddDoubleLine("Zone", zoneText, 0.8, 0.8, 0.8, 1, 1, 1); 
+  tooltip:AddDoubleLine("Zone", string.format("%s (ID: %d)", zoneText, d.worldMapID or 0), 0.8, 0.8, 0.8, 1, 1, 1); 
     local seenCount = (d.mergeCount or 0) + 1
   tooltip:AddDoubleLine("Seen", tostring(seenCount) .. " times", 0.8, 0.8, 0.8, 1, 1, 1);
   if d.source then local sourceText = SOURCE_TEXT_MAP[d.source] or d.source; tooltip:AddDoubleLine("Source", sourceText, 0.8, 0.8, 0.8, 1, 1, 1) end; if d.coords then tooltip:AddDoubleLine("Location", string.format("%.1f, %.1f", (d.coords.x or 0) * 100, (d.coords.y or 0) * 100), 0.8, 0.8, 0.8, 1, 1, 1) end; if self._pinnedPin == pin and (d.itemLink or d.itemID) then self:EnsureHoverButton(); self._hoverBtnItemLink = d.itemLink or d.itemID; local icon = self:GetDiscoveryIcon(d); self._hoverBtn.tex:SetTexture(icon or PIN_FALLBACK_TEXTURE); tooltip:Show(); self._hoverBtn:ClearAllPoints(); if _G[tooltip:GetName().."TextLeft1"] then self._hoverBtn:SetPoint("LEFT", _G[tooltip:GetName().."TextLeft1"], "RIGHT", 4, 0) else self._hoverBtn:SetPoint("TOPRIGHT", tooltip, "TOPRIGHT", -6, -6) end; self._hoverBtn:Show() else if self._hoverBtn then self._hoverBtn:Hide() end; self._hoverBtnItemLink = nil; tooltip:Show() end
@@ -278,8 +281,15 @@ function Map:UpdateMinimap()
 
   local function PointToYards(x, y, zoneName_local)
     local MapData_local = L:GetModule("MapData", true)
-    if not MapData_local then return 0, 0 end
-    local width, height = MapData_local:GetZoneDimensionsByName(zoneName_local)
+    local ZoneResolver_local = L:GetModule("ZoneResolver", true)
+    if not MapData_local or not ZoneResolver_local then return 0, 0 end
+
+    -- Resolve localized zone name to English IDs first
+    local resolvedContID, resolvedZoneID = ZoneResolver_local:GetMapZoneNumbers(zoneName_local)
+    if not resolvedContID or not resolvedZoneID or resolvedContID == 0 or resolvedZoneID == 0 then return 0, 0 end
+
+    -- Then get dimensions using the resolved IDs
+    local width, height = MapData_local:GetZoneDimensionsByIDs(resolvedContID, resolvedZoneID)
     return width * x, height * y
   end
 
@@ -301,17 +311,31 @@ function Map:UpdateMinimap()
 
   for _, d in pairs(L.db.global.discoveries or {}) do  repeat  
 
-      if not d or not d.coords or not d.zoneID or d.zoneID == 0 then 
-          break 
+      if not d or not d.coords or not d.worldMapID or d.worldMapID == 0 then 
+          -- Fallback to zoneID and continentID for older data
+          -- if not d.zoneID or d.zoneID == 0 or not d.continentID or d.continentID == 0 then
+              break 
+          -- end
       end; 
       
-      if d.zoneID ~= mapID then
-          break
-      end;
+      local currentWorldMapID = GetCurrentMapAreaID()
+      -- local currentContinentID = GetCurrentMapContinent()
+      -- local currentZoneID = GetCurrentMapZone()
 
-      local discoveryContinentID = d.continentID or 0
-      if discoveryContinentID ~= 0 and currentContinentID ~= 0 and discoveryContinentID ~= currentContinentID then 
-          break 
+      -- Prioritize WorldMapID for filtering
+      if d.worldMapID and d.worldMapID > 0 then
+          if d.worldMapID ~= currentWorldMapID then
+              break
+          end
+      -- Fallback to continentID and zoneID for filtering
+      --[[
+      elseif d.continentID and d.continentID > 0 and d.zoneID and d.zoneID > 0 then
+          if d.continentID ~= currentContinentID or d.zoneID ~= currentZoneID then
+              break
+          end
+      ]]
+      else
+          break -- No valid zone identifier found
       end
 
       local passes = passesFilters(d);
@@ -354,7 +378,16 @@ function Map:UpdateMinimap()
           if mmY >= 0 then cornerIndex = cornerIndex + 1 end;
           isRound = minimapShape[cornerIndex];
       end;
-      local dist; if isRound then  dist = math.sqrt(mmX * mmX + mmY * mmY)  else  dist = math.max(math.abs(mmX),  math.abs(mmY))  end; if dist > radius then  local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale  end; count = count + 1;  local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint(  "CENTER", Minimap, "CENTER", mmX, mmY);  local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or  PIN_FALLBACK_TEXTURE); pin:Show();   pin:SetSize(Map._mmSize, Map._mmSize)  until true  end; for i = count + 1, #self._mmPins do  self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil  end;
+      local dist; if isRound then  dist = math.sqrt(mmX * mmX + mmY * mmY)  else  dist = math.max(math.abs(mmX),  math.abs(mmY))  end; if dist > radius then  local scale = radius / dist; mmX = mmX * scale; mmY = mmY * scale  end; count = count + 1;  local pin = EnsureMmPin(count); pin.discovery = d; pin:ClearAllPoints(); pin:SetPoint(  "CENTER", Minimap, "CENTER", mmX, mmY);  local icon = self:GetDiscoveryIcon(d); pin.tex:SetTexture(icon or  PIN_FALLBACK_TEXTURE); 
+  local isLooted = isLootedByChar(d.guid)
+  if isLooted then
+    pin.tex:SetVertexColor(0.4, 0.4, 0.4)
+    pin.tex:SetAlpha(0.6)
+  else
+    pin.tex:SetVertexColor(1, 1, 1)
+    pin.tex:SetAlpha(1.0)
+  end
+  pin:Show();   pin:SetSize(Map._mmSize, Map._mmSize)  until true  end; for i = count + 1, #self._mmPins do  self._mmPins[i]:Hide(); self._mmPins[i].discovery = nil  end;
 end
 
 function Map:EnsureMinimapTicker()
@@ -413,26 +446,62 @@ function Map:Update()
 
   for _, discovery in pairs(L.db.global.discoveries) do 
     repeat 
-      local discoveryContinentID = discovery.continentID or 0
-      local discoveryZoneID = discovery.zoneID or 0
+      local discoveryWorldMapID = discovery.worldMapID or 0
+      -- local discoveryContinentID = discovery.continentID or 0
+      -- local discoveryZoneID = discovery.zoneID or 0
 
       -- Attempt to get correct map info for old data (continentID 0)
-      if discoveryContinentID == 0 and discovery.zone then
-        if ZoneResolver then
+      --[[
+      if discoveryWorldMapID == 0 and discoveryContinentID == 0 and discovery.zone then
+        if ZoneResolver and ZoneResolver.isReady then -- Check if ZoneResolver is ready
           local tempContID, tempZoneID = ZoneResolver:GetMapZoneNumbers(discovery.zone)
           if tempContID and tempZoneID then
-            discoveryContinentID = tempContID
-            discoveryZoneID = tempZoneID
+            -- discoveryContinentID = tempContID
+            -- discoveryZoneID = tempZoneID
+            -- Attempt to get WorldMapID from resolved continentID and zoneID using the optimized reverse lookup table
+            local reverseLookup = ZoneResolver.ContinentZoneToWorldMapID
+            if reverseLookup then
+                local resolvedWorldMapID_from_ContZone = reverseLookup[tempContID .. "-" .. tempZoneID]
+                if resolvedWorldMapID_from_ContZone and resolvedWorldMapID_from_ContZone > 0 then
+                    discoveryWorldMapID = resolvedWorldMapID_from_ContZone
+                else
+                    L:GetModule("Comm", true):DebugPrint("Map", string.format("Could not obtain WorldMapID from ContID/ZoneID %d-%d via reverse lookup. Falling back to AreaID_Lookup iteration.", tempContID, tempZoneID))
+                    -- Fallback to iterating AreaID_Lookup if reverse lookup fails or is not available
+                    for wmID, data in pairs(ZoneResolver.AreaID_Lookup or {}) do
+                        if data.continent == tempContID and data.zoneIndex == tempZoneID then
+                            discoveryWorldMapID = wmID
+                            break
+                        end
+                    end
+                end
+            else
+                L:GetModule("Comm", true):DebugPrint("Map", string.format("ZoneResolver.ContinentZoneToWorldMapID is not available. Falling back to AreaID_Lookup iteration for ContID/ZoneID %d-%d.", tempContID, tempZoneID))
+                -- Fallback to iterating AreaID_Lookup if reverse lookup table is not available
+                for wmID, data in pairs(ZoneResolver.AreaID_Lookup or {}) do
+                    if data.continent == tempContID and data.zoneIndex == tempZoneID then
+                        discoveryWorldMapID = wmID
+                        break
+                    end
+                end
+            end
           end
         end
       end
+      ]]
 
-      if not discovery or not discovery.coords or discoveryZoneID == 0 or 
-          (discoveryContinentID ~= 0 and discoveryContinentID ~= currentContinentID) or 
-          (discoveryZoneID ~= mapID and not (discoveryContinentID == 0 and discoveryZoneID == 0)) or 
-          (discoveryZoneID == 0 or discoveryZoneID == 41) then break end;
+      -- Prioritize WorldMapID for filtering
+      if discoveryWorldMapID and discoveryWorldMapID > 0 then
+          if discoveryWorldMapID ~= GetCurrentMapAreaID() then break end
+      -- Fallback to continentID and zoneID for filtering
+      --[[
+      elseif discoveryContinentID and discoveryContinentID > 0 and discoveryZoneID and discoveryZoneID > 0 then
+          if discoveryContinentID ~= currentContinentID or discoveryZoneID ~= mapID then break end
+      ]]
+      else
+          break -- No valid zone identifier found
+      end
       if not passesFilters(discovery) then break end; 
-      local pin = self.pins[pinIndex] or self:BuildPin(); pinIndex = pinIndex + 1; pin.discovery = discovery; local pinSize=(L.db.profile.mapFilters.pinSize)or 16;pin:SetSize(pinSize,pinSize);local isLooted=isLootedByChar(discovery.guid);local icon=self:GetDiscoveryIcon(discovery);local isFallbackTexture=(icon==PIN_FALLBACK_TEXTURE or not icon);pin.texture:SetTexture(icon);if isFallbackTexture then if pin.border then pin.border:Hide()end;if pin.unlootedOutline then pin.unlootedOutline:Hide()end;pin.texture:SetVertexColor(1,1,1)else if pin.border then pin.border:Show()end;if isLooted then if pin.unlootedOutline then pin.unlootedOutline:Hide()end;pin.texture:SetVertexColor(0.7,0.7,0.7)else if pin.unlootedOutline then pin.unlootedOutline:Show()end;pin.texture:SetVertexColor(1,1,1);local _,_,quality=GetCachedItemInfo(discovery.itemLink or discovery.itemID);local r,g,b=GetQualityColor(quality);pin.unlootedOutline:SetVertexColor(r,g,b)end end;pin:SetAlpha(AlphaForStatus(GetStatus(discovery)));local pinX_relative=(discovery.coords.x or 0)*mapWidth;local pinY_relative=(discovery.coords.y or 0)*mapHeight;local finalX=offsetX+pinX_relative;local finalY=offsetY-pinY_relative;pin:ClearAllPoints();pin:SetPoint("CENTER",WorldMapButton,"TOPLEFT",finalX,finalY);pin:Show();if self._pinnedPin==pin then stillPinned=true;self:ShowDiscoveryTooltip(pin)end 
+      local pin = self.pins[pinIndex] or self:BuildPin(); pinIndex = pinIndex + 1; pin.discovery = discovery; local pinSize=(L.db.profile.mapFilters.pinSize)or 16;pin:SetSize(pinSize,pinSize);local isLooted=isLootedByChar(discovery.guid);local icon=self:GetDiscoveryIcon(discovery);local isFallbackTexture=(icon==PIN_FALLBACK_TEXTURE or not icon);pin.texture:SetTexture(icon);if isFallbackTexture then if pin.border then pin.border:Hide()end;if pin.unlootedOutline then pin.unlootedOutline:Hide()end;pin.texture:SetVertexColor(1,1,1)else if pin.border then pin.border:Show()end;if isLooted then if pin.unlootedOutline then pin.unlootedOutline:Hide()end;pin.texture:SetVertexColor(0.4,0.4,0.4);pin.texture:SetAlpha(0.6)else if pin.unlootedOutline then pin.unlootedOutline:Show()end;local _,_,quality=GetCachedItemInfo(discovery.itemLink or discovery.itemID);local r,g,b=GetQualityColor(quality);pin.unlootedOutline:SetVertexColor(r,g,b);pin.texture:SetVertexColor(1,1,1);pin.texture:SetAlpha(1.0)end end;pin:SetAlpha(AlphaForStatus(GetStatus(discovery)));local pinX_relative=(discovery.coords.x or 0)*mapWidth;local pinY_relative=(discovery.coords.y or 0)*mapHeight;local finalX=offsetX+pinX_relative;local finalY=offsetY-pinY_relative;pin:ClearAllPoints();pin:SetPoint("CENTER",WorldMapButton,"TOPLEFT",finalX,finalY);pin:Show();if self._pinnedPin==pin then stillPinned=true;self:ShowDiscoveryTooltip(pin)end 
     until true
   end;
   for i = pinIndex, #self.pins do self.pins[i]:Hide(); self.pins[i].discovery = nil end; if self._pinnedPin and not stillPinned then self._pinnedPin = nil; self:HideDiscoveryTooltip() end

@@ -191,8 +191,16 @@ local function normalizeIncomingData(tbl, defaultSender)
         else
             debugPrint("Comm", string.format("Could not resolve continentID/zoneID for zone '%s' - discovery may have positioning issues", zoneName))
         end
-    elseif worldMapID == 0 and (continentID == 0 or not continentID) and (not zoneName or zoneName == "") then
-        debugPrint("Comm", "Incoming discovery missing all zone identifiers (WorldMapID, continentID, zone name) - cannot resolve position")
+    end
+    
+    -- Accept discoveries only with valid WorldMapID OR valid zoneName
+    if worldMapID == 0 or not worldMapID then
+        if zoneName and zoneName ~= "" then
+            debugPrint("Comm", string.format("ACCEPTING discovery with zoneName only (WorldMapID resolution failed for '%s')", zoneName))
+        else
+            debugPrint("Comm", string.format("REJECTING discovery - missing both WorldMapID and zoneName (zoneID: %d, continentID: %d)", zoneID, continentID))
+            return nil
+        end
     end
 
     return {

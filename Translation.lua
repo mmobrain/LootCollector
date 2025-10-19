@@ -45,6 +45,7 @@ LootCollector_Translation.nonEnglishToEnglish = {
   ["Dunkelküste"] = "Darkshore",
   ["Gebirgspass der Totenwinde"] = "Deadwind Pass",
   ["Tiefenheim"] = "Deepholm",
+  ["Erforscht Desolace"] = "Desolace",
   ["Die Tiefenbahn"] = "Deeprun Tram",
   ["Düsterbruch"] = "Dire Maul",
   ["Düsterbruch (Ost)"] = "Dire Maul (East)",
@@ -1662,4 +1663,6 @@ LootCollector_Translation.nonEnglishToEnglish = {
   ["祖爾德拉克"] = "Zul'Drak",
   ["祖爾法拉克"] = "Zul'Farrak",
   ["祖爾格拉布"] = "Zul'Gurub",
+  -- etc.
+  ["Ogrimmar"] = "Orgrimmar",
 }

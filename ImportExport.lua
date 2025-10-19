@@ -53,6 +53,7 @@ local function cleanRecord(d)
     originator = d.originator,
     source = d.source,
     mergeCount = d.mergeCount,
+    worldMapID = d.worldMapID,
   }
 end
 
@@ -106,7 +107,7 @@ function ImportExport:ParseImportString(s)
 end
 
 local function mergeOne(ex, inc)
-  ex.statusTs = math.max(tonumber(ex.statusTs) or 0, tonumber(inc.statusTs) or 0); ex.lastSeen = math.max(tonumber(ex.lastSeen) or 0, tonumber(inc.lastSeen) or 0); if inc.status and (tonumber(inc.statusTs) or 0) >= (tonumber(ex.statusTs) or 0) then ex.status = inc.status end; if not ex.itemLink and inc.itemLink then ex.itemLink = inc.itemLink end; if not ex.zone and inc.zone then ex.zone = inc.zone end; if not ex.subZone and inc.subZone then ex.subZone = inc.subZone end
+  ex.statusTs = math.max(tonumber(ex.statusTs) or 0, tonumber(inc.statusTs) or 0); ex.lastSeen = math.max(tonumber(ex.lastSeen) or 0, tonumber(inc.lastSeen) or 0); if inc.status and (tonumber(inc.statusTs) or 0) >= (tonumber(ex.statusTs) or 0) then ex.status = inc.status end; if not ex.itemLink and inc.itemLink then ex.itemLink = inc.itemLink end; if not ex.zone and inc.zone then ex.zone = inc.zone end; if not ex.subZone and inc.subZone then ex.subZone = inc.subZone end; if inc.worldMapID and inc.worldMapID > 0 then ex.worldMapID = inc.worldMapID end
 end
 
 function ImportExport:ApplyImport(parsed, mode, withOverlays)

@@ -15,6 +15,7 @@ local HEADER_HEIGHT = 25
 local BUTTON_HEIGHT = 22
 local BUTTON_WIDTH = 120
 local CONTEXT_MENU_WIDTH = 200
+local FRAME_LEVEL = 5
 
 -- Grid layout constants
 local GRID_LAYOUT = {
@@ -582,7 +583,7 @@ local function CreateContextMenu(anchor, title, buttons, options)
     end
 
     -- Creates the context menu frame.
-    local contextMenu = CreateFrame("Frame", "LootCollectorViewerContextMenu", UIParent)
+    local contextMenu = CreateFrame("Frame", "LootCollectorViewerContextMenu", Viewer.window)
     contextMenu:SetSize(menuWidth, menuHeight)
 
     -- Positions the context menu at the mouse cursor or anchor.
@@ -627,6 +628,7 @@ local function CreateContextMenu(anchor, title, buttons, options)
     for i, buttonData in ipairs(buttons) do
         local btn = CreateFrame("Button", nil, contextMenu, "UIPanelButtonTemplate")
         btn:SetSize(menuWidth - 20, 20) -- Uses full menu width minus padding.
+        btn:SetFrameLevel(contextMenu:GetFrameLevel() + 5)
         if lastButton then
             btn:SetPoint("TOPLEFT", lastButton, "BOTTOMLEFT", 0, -5)
         else
@@ -845,7 +847,7 @@ local function ShowColumnFilterDropdown(column, anchor, values)
     end
 
     -- Creates the dropdown menu using the standard WoW UI system.
-    local dropdown = CreateFrame("Frame", "LootCollectorViewerFilterDropdown", UIParent, "UIDropDownMenuTemplate")
+    local dropdown = CreateFrame("Frame", "LootCollectorViewerFilterDropdown", Viewer.window, "UIDropDownMenuTemplate")
 
     -- Initializes the dropdown menu.
     UIDropDownMenu_Initialize(dropdown, function(self, level)
@@ -1540,6 +1542,29 @@ function Viewer:GetTotalPages()
     return math.ceil(self.totalItems / self.itemsPerPage)
 end
 
+-- Helper function to temporarily remove window from UISpecialFrames
+local function removeFromSpecialFrames(windowName)
+    for i = #UISpecialFrames, 1, -1 do
+        if UISpecialFrames[i] == windowName then
+            table.remove(UISpecialFrames, i)
+            return true
+        end
+    end
+    return false
+end
+
+-- Helper function to add window back to UISpecialFrames
+local function addToSpecialFrames(windowName)
+    -- Check if already in the list
+    for i = 1, #UISpecialFrames do
+        if UISpecialFrames[i] == windowName then
+            return false -- Already in list
+        end
+    end
+    table.insert(UISpecialFrames, windowName)
+    return true
+end
+
 -- UI Creation functions
 function Viewer:CreateWindow()
     if self.window then return end
@@ -1550,7 +1575,8 @@ function Viewer:CreateWindow()
     local window = CreateFrame("Frame", "LootCollectorViewerWindow", UIParent)
     window:SetSize(WINDOW_WIDTH, WINDOW_HEIGHT)
     window:SetPoint("CENTER")
-    window:SetFrameStrata("DIALOG")
+    window:SetFrameStrata("LOW")
+    window:SetFrameLevel(FRAME_LEVEL)
     window:SetMovable(true)
     window:EnableMouse(true)
     window:RegisterForDrag("LeftButton")
@@ -1558,7 +1584,7 @@ function Viewer:CreateWindow()
     window:SetScript("OnDragStop", window.StopMovingOrSizing)
 
     -- Creates a hidden button for ESC handling
-    local hiddenCloseBtn = CreateFrame("Button", "LootCollectorViewerHiddenClose", UIParent)
+    local hiddenCloseBtn = CreateFrame("Button", "LootCollectorViewerHiddenClose", window)
     hiddenCloseBtn:SetScript("OnClick", function()
         -- Closes the context menu or dropdown first if they're open.
         if Viewer.contextMenu then
@@ -1571,6 +1597,7 @@ function Viewer:CreateWindow()
             return
         else
             -- Closes the main window.
+            Viewer.allowManualClose = true
             window:Hide()
         end
     end)
@@ -1586,16 +1613,47 @@ function Viewer:CreateWindow()
     end)
 
     window:SetScript("OnHide", function(self)
-        -- Remove from UISpecialFrames when hidden
+        -- Prevent closing during map operations unless manually closed
+        if Viewer.inMapOperation and not Viewer.allowManualClose then
+            if Viewer.window and not Viewer.window:IsShown() then
+                Viewer.window:Show()
+            end
+            return
+        end
+        
+        -- Check if this is an unwanted close during map operation
+        if Viewer.restoreToSpecialFrames and Viewer.windowNameToRestore and not Viewer.allowManualClose then
+            C_Timer.After(0.01, function()
+                if Viewer.window and not Viewer.window:IsShown() then
+                    Viewer.window:Show()
+                end
+            end)
+            return
+        end
+        
+        -- Normal close - remove from UISpecialFrames when hidden
         for i = #UISpecialFrames, 1, -1 do
             if UISpecialFrames[i] == self:GetName() then
                 table.remove(UISpecialFrames, i)
                 break
             end
         end
+        
+        -- Clear the manual close flag after successful close
+        Viewer.allowManualClose = false
     end)
 
-    window:Hide()
+    -- Override the window's Hide method to prevent unwanted closes
+    local originalHide = window.Hide
+    window.Hide = function(self)
+        if Viewer.inMapOperation and not Viewer.allowManualClose then
+            return -- Don't actually hide during map operations unless manually closed
+        end
+        originalHide(self)
+    end
+
+    -- Hide the window initially (this will work since inMapOperation is not set yet)
+    originalHide(window)
 
     -- Sets the background.
     window:SetBackdrop({
@@ -1616,7 +1674,10 @@ function Viewer:CreateWindow()
     -- Sets the close button
     local closeBtn = CreateFrame("Button", nil, window, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", -5, -5)
-    closeBtn:SetScript("OnClick", function() window:Hide() end)
+    closeBtn:SetScript("OnClick", function()
+        Viewer.allowManualClose = true
+        window:Hide()
+    end)
 
     -- Sets up filter buttons.
     local equipmentBtn = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
@@ -1682,10 +1743,10 @@ function Viewer:CreateWindow()
         end
 
         -- Creates the dropdown frame for auto-completion.
-        autocompleteDropdown = CreateFrame("Frame", "LootCollectorSearchAutocomplete", UIParent)
+        autocompleteDropdown = CreateFrame("Frame", "LootCollectorSearchAutocomplete", Viewer.window)
         autocompleteDropdown:SetSize(200, 20)
         autocompleteDropdown:SetFrameStrata("TOOLTIP")
-        autocompleteDropdown:SetFrameLevel(1000) -- Ensures high frame level for visibility.
+        autocompleteDropdown:SetFrameLevel(FRAME_LEVEL)
         autocompleteDropdown:Hide()
 
         -- Sets the background for the auto-complete dropdown.
@@ -1703,7 +1764,7 @@ function Viewer:CreateWindow()
         local content = CreateFrame("Frame", nil, autocompleteDropdown)
         content:SetPoint("TOPLEFT", 5, -5)
         content:SetPoint("BOTTOMRIGHT", -5, 5)
-        content:SetFrameLevel(autocompleteDropdown:GetFrameLevel() + 1)
+        content:SetFrameLevel(autocompleteDropdown:GetFrameLevel() + 5)
 
         autocompleteDropdown.content = content
         autocompleteDropdown.buttons = {}
@@ -1807,7 +1868,7 @@ function Viewer:CreateWindow()
             local button = CreateFrame("Button", nil, content)
             button:SetSize(190, buttonHeight)
             button:SetPoint("TOPLEFT", 5, -(i - 1) * buttonHeight)
-            button:SetFrameLevel(content:GetFrameLevel() + 1)
+            button:SetFrameLevel(content:GetFrameLevel() + 5)
 
             -- Sets button text.
             local text = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -2053,6 +2114,7 @@ function Viewer:CreateWindow()
     local headerFrame = CreateFrame("Frame", nil, window)
     headerFrame:SetSize(WINDOW_WIDTH - 40, HEADER_HEIGHT)
     headerFrame:SetPoint("TOPLEFT", searchLabel, "BOTTOMLEFT", 0, -15)
+    headerFrame:SetFrameLevel(FRAME_LEVEL)
 
     -- Background for table headers.
     headerFrame:SetBackdrop({
@@ -2498,6 +2560,7 @@ function Viewer:CreateWindow()
     local scrollFrame = CreateFrame("ScrollFrame", nil, window, "FauxScrollFrameTemplate")
     scrollFrame:SetSize(WINDOW_WIDTH - 40, WINDOW_HEIGHT - 200)
     scrollFrame:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -5)
+    scrollFrame:SetFrameLevel(FRAME_LEVEL)
     scrollFrame:SetScript("OnVerticalScroll", function(self, offset)
         FauxScrollFrame_OnVerticalScroll(self, offset, ROW_HEIGHT, function() Viewer:UpdateRows() end)
     end)
@@ -2544,12 +2607,11 @@ end
 function Viewer:CreateRows()
     local visibleRows = math.floor((WINDOW_HEIGHT - 200) / ROW_HEIGHT)
 
-
-
     for i = 1, visibleRows do
         local row = CreateFrame("Frame", nil, self.scrollFrame:GetParent())
         row:SetSize(WINDOW_WIDTH - 40, ROW_HEIGHT)
         row:SetPoint("TOPLEFT", self.scrollFrame, "TOPLEFT", 0, -(i - 1) * ROW_HEIGHT)
+        row:SetFrameLevel(FRAME_LEVEL)
 
         -- Name column, with tooltip support.
         local nameFrame = CreateFrame("Frame", nil, row)
@@ -2735,19 +2797,76 @@ function Viewer:CreateRows()
 
         -- Adds new click action methods to nameFrame.
         nameFrame.LinkItemToChat = function(self)
-            if not self.discoveryData or not self.discoveryData.discovery.itemLink then return end
+            if not self.discoveryData or not self.discoveryData.discovery then return end
 
-            local itemLink = self.discoveryData.discovery.itemLink
+            local discovery = self.discoveryData.discovery
+            local itemID = discovery.itemID
+            local itemLink = discovery.itemLink
 
-            -- Uses ChatEdit_InsertLink for WoW 3.3.5 compatibility.
-            if ChatEdit_InsertLink then
-                ChatEdit_InsertLink(itemLink)
-            elseif ChatFrame1EditBox:IsVisible() then
-                ChatFrame1EditBox:Insert(itemLink)
-            else
-                -- Opens chat with the item link.
-                ChatFrame_OpenChat(itemLink)
+            -- Validate itemID exists
+            if not itemID then
+                -- Try to extract from itemLink if available
+                if itemLink and type(itemLink) == "string" then
+                    itemID = itemLink:match("item:(%d+)")
+                    itemID = itemID and tonumber(itemID)
+                end
             end
+
+            if not itemID then return end
+
+            -- Send item link reliably (tries cache first, primes if needed)
+            local function SendItemLinkReliable(itemID, chatType, language)
+                chatType = chatType or "SAY"
+                language = language or nil
+                local name, link = GetItemInfo(itemID)
+                if link then
+                    if ChatEdit_InsertLink then
+                        ChatEdit_InsertLink(link)
+                    elseif ChatFrame1EditBox:IsVisible() then
+                        ChatFrame1EditBox:Insert(link)
+                    else
+                        ChatFrame_OpenChat(link)
+                    end
+                    return
+                end
+                -- prime cache
+                GameTooltip:Hide()
+                GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+                GameTooltip:SetHyperlink("item:"..tostring(itemID))
+                local start = GetTime()
+                local f = CreateFrame("Frame")
+                f:SetScript("OnUpdate", function(self)
+                    local n, l = GetItemInfo(itemID)
+                    if l then
+                        if ChatEdit_InsertLink then
+                            ChatEdit_InsertLink(l)
+                        elseif ChatFrame1EditBox:IsVisible() then
+                            ChatFrame1EditBox:Insert(l)
+                        else
+                            ChatFrame_OpenChat(l)
+                        end
+                        self:SetScript("OnUpdate", nil)
+                        self:Hide()
+                        return
+                    end
+                    if GetTime() - start > 3 then
+                        -- fallback to safe constructed link (no error)
+                        local fallback = "|cffffffff|Hitem:"..itemID..":0:0:0:0:0:0:0|h["..(n or ("Item:"..itemID)).."]|h|r"
+                        if ChatEdit_InsertLink then
+                            ChatEdit_InsertLink(fallback)
+                        elseif ChatFrame1EditBox:IsVisible() then
+                            ChatFrame1EditBox:Insert(fallback)
+                        else
+                            ChatFrame_OpenChat(fallback)
+                        end
+                        self:SetScript("OnUpdate", nil)
+                        self:Hide()
+                    end
+                end)
+            end
+
+            -- Use the reliable function
+            SendItemLinkReliable(itemID)
         end
 
         nameFrame.PasteLocationToChat = function(self)
@@ -3430,16 +3549,27 @@ function Viewer:ShowOnMap(discoveryData)
         return
     end
 
+    -- Temporarily remove window from UISpecialFrames to prevent auto-closing when World Map opens
+    local windowName = self.window and self.window:GetName()
+    local wasInSpecialFrames = false
+    if windowName then
+        wasInSpecialFrames = removeFromSpecialFrames(windowName)
+    end
+
     -- Clears any existing overlay pin before displaying a new one.
     if WorldMapFrame.viewerOverlayPin then
         WorldMapFrame.viewerOverlayPin:Hide()
     end
-
+    Viewer.currentOverlayTarget = nil
 
     -- Opens the World Map to the correct area.
     local success, errorMsg = self:OpenWorldMapToArea(discovery.worldMapID)
     if not success then
         print(string.format("LootCollector Viewer: Failed to open map - %s", errorMsg or "unknown error"))
+        -- Restore window to UISpecialFrames if map opening failed
+        if wasInSpecialFrames and windowName then
+            addToSpecialFrames(windowName)
+        end
         return
     end
 
@@ -3475,6 +3605,10 @@ function Viewer:ShowOnMap(discoveryData)
 
                 -- Disables mouse events to allow the original pin to handle tooltips.
                 WorldMapFrame.viewerOverlayPin:EnableMouse(false)
+            else
+                -- Reparent the overlay to the new target pin
+                WorldMapFrame.viewerOverlayPin:SetParent(targetPin)
+                WorldMapFrame.viewerOverlayPin:SetFrameLevel(targetPin:GetFrameLevel() + 10)
             end
 
             -- Positions the overlay centered on the existing pin.
@@ -3482,8 +3616,9 @@ function Viewer:ShowOnMap(discoveryData)
             WorldMapFrame.viewerOverlayPin:SetPoint("CENTER", targetPin, "CENTER", 0, 0)
             WorldMapFrame.viewerOverlayPin:Show()
 
-            -- Stores discovery data for the tooltip.
+            -- Stores discovery data for the tooltip and tracks current overlay target.
             WorldMapFrame.viewerOverlayPin.discoveryData = discoveryData
+            Viewer.currentOverlayTarget = discovery.guid
         else
             -- Fallback: retries after a short delay in case pins haven't loaded yet.
             C_Timer.After(0.5, function()
@@ -3516,6 +3651,10 @@ function Viewer:ShowOnMap(discoveryData)
 
                         -- Disables mouse events to allow the original pin to handle tooltips.
                         WorldMapFrame.viewerOverlayPin:EnableMouse(false)
+                    else
+                        -- Change the overlay to the new target pin
+                        WorldMapFrame.viewerOverlayPin:SetParent(targetPin)
+                        WorldMapFrame.viewerOverlayPin:SetFrameLevel(targetPin:GetFrameLevel() + 10)
                     end
 
                     -- Positions the overlay centered on the existing pin.
@@ -3523,8 +3662,9 @@ function Viewer:ShowOnMap(discoveryData)
                     WorldMapFrame.viewerOverlayPin:SetPoint("CENTER", targetPin, "CENTER", 0, 0)
                     WorldMapFrame.viewerOverlayPin:Show()
 
-                    -- Stores discovery data for the tooltip.
+                    -- Stores discovery data for the tooltip and tracks current overlay target.
                     WorldMapFrame.viewerOverlayPin.discoveryData = discoveryData
+                    Viewer.currentOverlayTarget = discovery.guid
                 else
                     -- If no pin is found after retry, hides the overlay.
                     if WorldMapFrame.viewerOverlayPin then
@@ -3541,13 +3681,18 @@ function Viewer:ShowOnMap(discoveryData)
     if ZoneResolver then
         zoneName = ZoneResolver:GetZoneNameByWorldMapID(discovery.worldMapID) or "Unknown Zone"
     end
+
+    -- Store the restoration state for the World Map hooks
+    if wasInSpecialFrames and windowName then
+        self.restoreToSpecialFrames = true
+        self.windowNameToRestore = windowName
+        self.inMapOperation = true -- Persistent flag for window protection
+    end
 end
 
 -- Helper function to open the world map to a specific areaID.
 function Viewer:OpenWorldMapToArea(areaID)
     if not areaID or areaID == 0 then return false, "invalid areaID" end
-
-
 
     -- Stores the areaID to be set when the map frame becomes available.
     Viewer.pendingMapAreaID = areaID
@@ -3570,8 +3715,11 @@ function Viewer:OpenWorldMapToArea(areaID)
                 f:UnregisterEvent("PLAYER_REGEN_ENABLED")
             end
         end)
+        return true, "deferred due to combat"
     else
+        -- Opens the WorldMapFrame.
         ShowUIPanel(WorldMapFrame)
+        return true, "map opened"
     end
 
     return true, "map setting deferred to WorldMapFrame OnShow"
@@ -3648,7 +3796,7 @@ function Viewer:OnInitialize()
         end)
     end
 
-    -- Hooks WorldMapFrame OnHide to clear the pending map ID and overlay pin.
+    -- Hooks WorldMapFrame OnHide to restore Viewer to UISpecialFrames after map closes.
     if WorldMapFrame then
         WorldMapFrame:HookScript("OnHide", function()
             Viewer.pendingMapAreaID = nil
@@ -3656,9 +3804,38 @@ function Viewer:OnInitialize()
             if WorldMapFrame.viewerOverlayPin then
                 WorldMapFrame.viewerOverlayPin:Hide()
             end
+            Viewer.currentOverlayTarget = nil
+            
+            -- Restore window to UISpecialFrames after map closes
+            if Viewer.restoreToSpecialFrames and Viewer.windowNameToRestore then
+                -- Small delay to ensure map is fully closed before restoration
+                C_Timer.After(0.1, function()
+                    -- Restore to UISpecialFrames for ESC functionality
+                    if Viewer.window and Viewer.window:IsShown() then
+                        addToSpecialFrames(Viewer.windowNameToRestore)
+                    end
+                    -- Clear restoration state
+                    Viewer.restoreToSpecialFrames = false
+                    Viewer.windowNameToRestore = nil
+                    Viewer.inMapOperation = false -- Clear persistent flag
+                end)
+            end
         end)
+    end
 
-        -- No need for complex repositioning hooks since the overlay attaches directly to the pin.
+    -- Create a cleanup frame to handle map changes and pin updates
+    if not Viewer.mapCleanupFrame then
+        Viewer.mapCleanupFrame = CreateFrame("Frame")
+        Viewer.mapCleanupFrame:RegisterEvent("WORLD_MAP_UPDATE")
+        Viewer.mapCleanupFrame:SetScript("OnEvent", function(self, event)
+            if event == "WORLD_MAP_UPDATE" then
+                -- Hide overlay when map changes zones
+                if WorldMapFrame.viewerOverlayPin then
+                    WorldMapFrame.viewerOverlayPin:Hide()
+                end
+                Viewer.currentOverlayTarget = nil
+            end
+        end)
     end
 
     -- Initializes the Clear All button state.

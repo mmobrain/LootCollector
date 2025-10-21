@@ -23,6 +23,10 @@ local function ensureDefaults()
     
     if p.autoCache == nil then p.autoCache = true end
     if p.sharing.rateLimitInterval == nil then p.sharing.rateLimitInterval = 5 end
+    
+    -- Map filter defaults
+    if not p.mapFilters then p.mapFilters = {} end
+    if p.mapFilters.maxMinimapDistance == nil then p.mapFilters.maxMinimapDistance = 500 end
 end
 
 local function refreshUI()

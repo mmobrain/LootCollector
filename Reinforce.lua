@@ -52,6 +52,14 @@ local function round2(v)
   return math.floor(v * 100 + 0.5) / 100
 end
 
+-- Detect if a value has more than 2 decimal places of actual precision
+local function hasHighPrecision(v)
+  v = tonumber(v) or 0
+  local roundedTo2 = math.floor(v * 100 + 0.5) / 100
+  local roundedTo4 = math.floor(v * 10000 + 0.5) / 10000
+  return roundedTo2 ~= roundedTo4
+end
+
 local function buildGuid2(zoneID, itemID, x, y)
   return tostring(zoneID or 0) .. "-" .. tostring(itemID or 0) .. "-"
     .. string.format("%.2f", round2(x or 0)) .. "-"
@@ -106,24 +114,25 @@ local function scanAndEnqueue()
   local db = L.db and L.db.global and L.db.global.discoveries or nil; if not db then return 0 end; local addedToQueue = 0; local ENQUEUE_LIMIT = 10; for guid, d in pairs(db) do repeat if addedToQueue >= ENQUEUE_LIMIT then break end; if not d or not d.zoneID or not d.coords then break end; d.guid = d.guid or guid; ensurePerDiscoveryFields(d); if (tonumber(d.announceCount) or 0) >= MAX_STEPS then break end; if shouldEnqueue(d) then enqueue(d, tonumber(d.nextDueTs) or now()); addedToQueue = addedToQueue + 1 end until true end; return addedToQueue
 end
 
-function Reinforce:BumpFromWire(z, i, x, y, tstamp, op, hasHighPrecision)
+function Reinforce:BumpFromWire(z, i, x, y, tstamp, op, incomingHasHighPrecision)
   if not (L and L.db and L.db.global and L.db.global.discoveries) then return end; local guid = buildGuid2(tonumber(z) or 0, tonumber(i) or 0, tonumber(x) or 0, tonumber(y) or 0); local d = L.db.global.discoveries[guid]; if not d then return end; ensurePerDiscoveryFields(d); 
   
   -- Only update coordinates if incoming data has high precision (upgrade-only policy)
-  if hasHighPrecision and d.coords then
+  if incomingHasHighPrecision and d.coords then
     local incomingX = roundPrecise(tonumber(x) or 0)
     local incomingY = roundPrecise(tonumber(y) or 0)
     local currentX = roundPrecise(d.coords.x or 0)
     local currentY = roundPrecise(d.coords.y or 0)
     
-    -- Only update if incoming precision is higher than current
-    local currentPrecision = string.format("%.4f", currentX):match("%.%.%d%d%d%d$") and 4 or 2
-    local incomingPrecision = string.format("%.4f", incomingX):match("%.%.%d%d%d%d$") and 4 or 2
+    -- Check if current and incoming coordinates have high precision
+    local currentHasHighPrecision = hasHighPrecision(currentX) or hasHighPrecision(currentY)
+    local currentPrecision = currentHasHighPrecision and 4 or 2
+    local incomingPrecision = incomingHasHighPrecision and 4 or 2
     
     -- Debug logging for coordinate comparison in BumpFromWire
     local Comm = L:GetModule("Comm", true)
     if Comm and Comm.verbose then
-      local precisionNote = hasHighPrecision and " (High precision)" or " (Legacy precision)"
+      local precisionNote = incomingHasHighPrecision and " [HIGH-PRECISION]" or " [LEGACY 2-DECIMAL]"
       local updateNote = ""
       if incomingPrecision > currentPrecision then
         updateNote = " - UPGRADING coordinates"
@@ -147,11 +156,21 @@ function Reinforce:BumpFromWire(z, i, x, y, tstamp, op, hasHighPrecision)
         L.db.global.discoveries[guid] = nil
         d.guid = newGuid
         
+        -- Transfer looted status to new GUID
+        if L.db and L.db.char and L.db.char.looted and L.db.char.looted[guid] then
+          L.db.char.looted[newGuid] = L.db.char.looted[guid]
+          L.db.char.looted[guid] = nil
+        end
+        
         -- Debug logging for GUID update in BumpFromWire
         local Comm = L:GetModule("Comm", true)
         if Comm and Comm.verbose then
           print(string.format("|cffffff00[Reinforce DEBUG]|r BumpFromWire updated GUID due to precision change: %s -> %s", guid, newGuid))
         end
+        
+        -- Notify other modules about the GUID change (remove old, add new)
+        L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
+        L:SendMessage("LootCollector_DiscoveriesUpdated", "add", newGuid, d)
       end
     end
   end
@@ -164,36 +183,31 @@ local function hookCoreOnce()
 end
 
 function Reinforce:OnCommReceived(prefix, message, distribution, sender)
-  if prefix ~= (L.addonPrefix or "BBLCAM25") then return end; if not AceSerializer or type(message) ~= "string" then return end; local ok, data = AceSerializer:Deserialize(message); if not ok or type(data) ~= "table" then return end; if data.v ~= 1 or not data.i or not data.z or not data.x or not data.y then return end; local db = L.db and L.db.global and L.db.global.discoveries or nil; if not db then return end; 
+  if prefix ~= (L.addonPrefix or "BBLCAM25") then return end; if not AceSerializer or type(message) ~= "string" then return end; local ok, data = AceSerializer:Deserialize(message); if not ok or type(data) ~= "table" then return end; if data.v ~= 2 or not data.i or not data.z or not data.x or not data.y then return end; local db = L.db and L.db.global and L.db.global.discoveries or nil; if not db then return end; 
   
   -- Detect precision level of incoming data
-  local hasHighPrecision = false
-  if data.x and data.y then
-    local xStr = tostring(data.x)
-    local yStr = tostring(data.y)
-    -- Check if coordinates have high precision (3+ decimal places)
-    if xStr:match("%.%.%d%d%d") or yStr:match("%.%.%d%d%d") then
-      hasHighPrecision = true
-    end
-  end
+  local hasPrecisionX = hasHighPrecision(data.x or 0)
+  local hasPrecisionY = hasHighPrecision(data.y or 0)
+  local incomingHasHighPrecision = hasPrecisionX or hasPrecisionY
   
   local guid = buildGuid2(tonumber(data.z) or 0, tonumber(data.i) or 0, tonumber(data.x) or 0, tonumber(data.y) or 0); local d = db[guid]; if not d then return end; ensurePerDiscoveryFields(d); 
   
   -- Only update coordinates if incoming data has high precision (upgrade-only policy)
-  if hasHighPrecision and d.coords then
+  if incomingHasHighPrecision and d.coords then
     local incomingX = roundPrecise(tonumber(data.x) or 0)
     local incomingY = roundPrecise(tonumber(data.y) or 0)
     local currentX = roundPrecise(d.coords.x or 0)
     local currentY = roundPrecise(d.coords.y or 0)
     
-    -- Only update if incoming precision is higher than current
-    local currentPrecision = string.format("%.4f", currentX):match("%.%.%d%d%d%d$") and 4 or 2
-    local incomingPrecision = string.format("%.4f", incomingX):match("%.%.%d%d%d%d$") and 4 or 2
+    -- Check if current and incoming coordinates have high precision
+    local currentHasHighPrecision = hasHighPrecision(currentX) or hasHighPrecision(currentY)
+    local currentPrecision = currentHasHighPrecision and 4 or 2
+    local incomingPrecision = incomingHasHighPrecision and 4 or 2
     
     -- Debug logging for coordinate comparison
     local Comm = L:GetModule("Comm", true)
     if Comm and Comm.verbose then
-      local precisionNote = hasHighPrecision and " (High precision)" or " (Legacy precision)"
+      local precisionNote = incomingHasHighPrecision and " [HIGH-PRECISION]" or " [LEGACY 2-DECIMAL]"
       local updateNote = ""
       if incomingPrecision > currentPrecision then
         updateNote = " - UPGRADING coordinates"
@@ -216,13 +230,24 @@ function Reinforce:OnCommReceived(prefix, message, distribution, sender)
         L.db.global.discoveries[newGuid] = d
         L.db.global.discoveries[guid] = nil
         d.guid = newGuid
-        guid = newGuid  -- Update local guid reference
+        
+        -- Transfer looted status to new GUID
+        if L.db and L.db.char and L.db.char.looted and L.db.char.looted[guid] then
+          L.db.char.looted[newGuid] = L.db.char.looted[guid]
+          L.db.char.looted[guid] = nil
+        end
         
         -- Debug logging for GUID update
         local Comm = L:GetModule("Comm", true)
         if Comm and Comm.verbose then
           print(string.format("|cffffff00[Reinforce DEBUG]|r Updated GUID due to precision change: %s -> %s", guid, newGuid))
         end
+        
+        -- Notify other modules about the GUID change (remove old, add new)
+        L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
+        L:SendMessage("LootCollector_DiscoveriesUpdated", "add", newGuid, d)
+        
+        guid = newGuid  -- Update local guid reference after all operations
       end
     end
   end

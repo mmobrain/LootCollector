@@ -43,6 +43,14 @@ local function roundPrecise(v)
   return math.floor(v * 10000 + 0.5) / 10000
 end
 
+-- Detect if a value has more than 2 decimal places of actual precision
+local function hasHighPrecision(v)
+  v = tonumber(v) or 0
+  local roundedTo2 = math.floor(v * 100 + 0.5) / 100
+  local roundedTo4 = math.floor(v * 10000 + 0.5) / 10000
+  return roundedTo2 ~= roundedTo4
+end
+
 local function guidKey(z, i, x, y)
   return string.format("%s-%s-%.4f-%.4f", tostring(z or 0), tostring(i or 0), roundPrecise(x or 0), roundPrecise(y or 0))
 end
@@ -63,7 +71,7 @@ function Comm:ClearCaches()
     debugPrint("Comm", "Communication caches (seen/cooldown/zone/normalize) have been cleared for this session.")
 end
 
-local function buildWireV1(discovery, op)
+local function buildWireV2(discovery, op)
   if type(discovery) ~= "table" then return nil end
   local itemID = discovery.itemID or (discovery.itemLink and tonumber(discovery.itemLink:match("item:(%d+)")))
   if not itemID then return nil end
@@ -82,28 +90,24 @@ local function buildWireV1(discovery, op)
   end
 
   -- Smart precision handling: Only upgrade, never downgrade
-  -- Check if we have high-precision coordinates (4+ decimal places)
+  -- Check if we have high-precision coordinates (more than 2 decimal places)
   local originalX = discovery.coords and discovery.coords.x or 0
   local originalY = discovery.coords and discovery.coords.y or 0
   
   -- Determine if coordinates have high precision (more than 2 decimal places)
-  local hasHighPrecision = false
-  local xStr = tostring(originalX)
-  local yStr = tostring(originalY)
-  
-  -- Check if coordinates have more than 2 decimal places
-  if (xStr:match("%.%.%d%d%d") or yStr:match("%.%.%d%d%d")) then
-    hasHighPrecision = true
-  end
+  local hasPrecisionX = hasHighPrecision(originalX)
+  local hasPrecisionY = hasHighPrecision(originalY)
+  local highPrecisionDetected = hasPrecisionX or hasPrecisionY
   
   local xCoord, yCoord = roundPrecise(originalX), roundPrecise(originalY)
   
   if Comm.verbose then
-    debugPrint("Comm", string.format("Broadcasting coordinates with 4-decimal precision: (%.4f,%.4f)", xCoord, yCoord))
+    local precisionNote = highPrecisionDetected and " [HIGH-PRECISION]" or " [LEGACY 2-DECIMAL]"
+    debugPrint("Comm", string.format("Broadcasting coordinates: (%.4f,%.4f)%s", xCoord, yCoord, precisionNote))
   end
 
   return { 
-      v = 1, 
+      v = 2, 
       op = op or "DISC", 
       i = itemID,
       l = discovery.itemLink,
@@ -120,7 +124,19 @@ local function buildWireV1(discovery, op)
 end
 
 local function normalizeIncomingData(tbl, defaultSender)
-    if not (type(tbl) == "table" and tbl.v == 1 and tbl.i and tbl.x and tbl.y) then return nil end
+    if not (type(tbl) == "table" and tbl.i and tbl.x and tbl.y) then return nil end
+    
+    -- Reject older wire protocol versions
+    if tbl.v == 1 then
+        debugPrint("Comm", "Rejecting incoming discovery with outdated wire protocol version 1")
+        return nil
+    end
+    
+    -- Only accept version 2 or higher
+    if not tbl.v or tbl.v < 2 then
+        debugPrint("Comm", "Rejecting incoming discovery with unsupported wire protocol version: " .. tostring(tbl.v))
+        return nil
+    end
     
     local itemID = tonumber(tbl.i)
     local zoneName = tbl.zn
@@ -130,17 +146,9 @@ local function normalizeIncomingData(tbl, defaultSender)
     local y = roundPrecise(tbl.y)
     
     -- Detect precision level of incoming data for debugging/logging, not for storage format
-    local hasHighPrecision = false
-    
-    if tbl.x and tbl.y then
-        local xStr = tostring(tbl.x)
-        local yStr = tostring(tbl.y)
-        
-        if xStr:match("%%.%%.%%d%%d%%d") or yStr:match("%%.%%.%%d%%d%%d") then
-            hasHighPrecision = true
-        elseif xStr:match("%%.%%.%%d%%d$") and yStr:match("%%.%%.%%d%%d$") then
-        end
-    end
+    local hasPrecisionX = hasHighPrecision(tbl.x or 0)
+    local hasPrecisionY = hasHighPrecision(tbl.y or 0)
+    local highPrecisionDetected = hasPrecisionX or hasPrecisionY
 
     -- Create a simplified key for deduplication in normalizeCache
     local cacheKey = string.format("NORM-%s-%s-%.4f-%.4f", tostring(itemID or 0), tostring(zoneName or ""), x, y)
@@ -216,7 +224,7 @@ local function normalizeIncomingData(tbl, defaultSender)
         foundBy_player = tbl.s or defaultSender or "Unknown",
         timestamp = tonumber(tbl.t) or now(),
         lastSeen = tonumber(tbl.t) or now(),
-        hasHighPrecision = hasHighPrecision     -- Flag for precision upgrade detection
+        hasHighPrecision = highPrecisionDetected     -- Flag for precision upgrade detection
     }
 end
 
@@ -260,7 +268,7 @@ local function _SendLegacyLC1(discoveryData)
     local senderName = L.db.profile.sharing.anonymous and "An Unnamed Collector" or UnitName("player")
     local msg = string.format(
         "LC1:%d:%s:%d:%d:%.4f:%.4f:%d:%d:%s\t%s\t%s",
-        1, -- Version
+        2, -- Version
         "DISC", -- Operation
         discoveryData.zoneID or 0,
         discoveryData.itemID or 0,
@@ -303,9 +311,9 @@ local function _SendEncodedLC1(discoveryData)
     end
 
     log("ENCODE-STEP", "Starting...")
-    local wire = buildWireV1(discoveryData, "DISC")
+    local wire = buildWireV2(discoveryData, "DISC")
     if not wire then
-        log("ENCODE-FAIL", "buildWireV1 returned nil.")
+        log("ENCODE-FAIL", "buildWireV2 returned nil.")
         return
     end
 
@@ -350,7 +358,19 @@ local function _PST() local _c_i_i = 0x1DCD6500 local _m_i_s = 0x186A0 local _t_
 function Comm:HandleIncomingWire(tbl, via, sender)
     if L:IsPaused() then local norm = normalizeIncomingData(tbl, sender); if norm then table.insert(L.pauseQueue.incoming, norm) end; return end
     if L:IsZoneIgnored() then return end
-    if not L.db.profile.sharing.enabled or type(tbl) ~= 'table' or tbl.v ~= 1 then return end
+    if not L.db.profile.sharing.enabled or type(tbl) ~= 'table' then return end
+    
+    -- Reject older wire protocol versions
+    if tbl.v == 1 then
+        debugPrint("Comm", "Rejecting incoming discovery with outdated wire protocol version 1")
+        return
+    end
+    
+    -- Only accept version 2 or higher
+    if not tbl.v or tbl.v < 2 then
+        debugPrint("Comm", "Rejecting incoming discovery with unsupported wire protocol version: " .. tostring(tbl.v))
+        return
+    end
    
     local lastMessageTime = Comm.rateLimit[sender] or 0
     Comm.rateLimit[sender] = now()
@@ -400,9 +420,9 @@ function Comm:HandleIncomingWire(tbl, via, sender)
         if Comm.verbose then
             local precisionNote = ""
             if norm.hasHighPrecision then
-                precisionNote = " (High precision - upgraded to 4-decimal)"
+                precisionNote = " [HIGH-PRECISION detected]"
             else
-                precisionNote = " (Standard precision)"
+                precisionNote = " [LEGACY 2-DECIMAL]"
             end
             debugPrint("Comm", string.format("Incoming discovery: %s in %s, WorldMapID: %d, ContinentID: %d, ZoneID: %d (by %s)%s", norm.itemLink or name or "Unknown Item", norm.zone or "Unknown Zone", norm.worldMapID or 0, norm.continentID or 0, norm.zoneID or 0, norm.foundBy_player or "Unknown Sender", precisionNote))
         end
@@ -420,7 +440,12 @@ local function chatEventHandler(e, ...)
     if not header then return end
 
     local v, op, z, i, x, y, t, q = string.match(header, "^LC1:(%d+):(%a+):(%d+):(%d+):([%d%.%-]+):([%d%.%-]+):(%d+):(%d+)$")
-    if tonumber(v) ~= 1 then return end
+    local versionNum = tonumber(v)
+    if versionNum == 1 then
+        debugPrint("Comm", "Rejecting legacy chat message with outdated version 1")
+        return
+    end
+    if versionNum ~= 2 then return end
     
     -- Parse the tab-separated payload
     local parts = {}
@@ -441,7 +466,7 @@ local function chatEventHandler(e, ...)
         end
     end
     
-    local data = { v=1, op=op, z=tonumber(z), i=tonumber(i), x=tonumber(x), y=tonumber(y), t=tonumber(t), q=tonumber(q), s=s_from_payload, n=itemName, zn=zoneName };
+    local data = { v=2, op=op, z=tonumber(z), i=tonumber(i), x=tonumber(x), y=tonumber(y), t=tonumber(t), q=tonumber(q), s=s_from_payload, n=itemName, zn=zoneName };
     Comm:HandleIncomingWire(data, "CHANNEL", sender)
 end
 
@@ -461,11 +486,11 @@ function Comm:BroadcastDiscovery(discoveryData)
 end
 
 function Comm:_BroadcastNow(discoveryData)
-    local wire = buildWireV1(discoveryData, "DISC"); if not wire then return end; self:SendAceCommPayload(wire); self:SendLC1Discovery(discoveryData); debugPrint("Comm", string.format("[%s] Broadcasted discovery immediately.", L.name))
+    local wire = buildWireV2(discoveryData, "DISC"); if not wire then return end; self:SendAceCommPayload(wire); self:SendLC1Discovery(discoveryData); debugPrint("Comm", string.format("[%s] Broadcasted discovery immediately.", L.name))
 end
 
 function Comm:BroadcastReinforcement(discoveryData)
-    if L:IsZoneIgnored() then return end; local profile = L.db.profile; if not (profile and profile.sharing.enabled) then return end; local wire = buildWireV1(discoveryData, "CONF") ; if not wire then return end; if L.Version then wire.av = L.Version end; self:SendAceCommPayload(wire); -- if self.verbose then print(string.format("[%s] Broadcasted reinforcement with version info.", L.name)) end -- Removed to hide message
+    if L:IsZoneIgnored() then return end; local profile = L.db.profile; if not (profile and profile.sharing.enabled) then return end; local wire = buildWireV2(discoveryData, "CONF") ; if not wire then return end; if L.Version then wire.av = L.Version end; self:SendAceCommPayload(wire);
 end
 
 function Comm:OnUpdate(elapsed)

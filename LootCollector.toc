@@ -18,7 +18,6 @@ libs\AceSerializer-3.0\AceSerializer-3.0.lua
 libs\LibBase64-1.0\lib.xml
 libs\Ace3\AceComm-3.0\AceComm-3.0.xml
 libs\LibDeflate\lib.xml
-libs\LibBabble-Zone-3.0\lib.xml
 
 DBopt\db.lua
 
@@ -37,3 +36,4 @@ MapData.lua
 Arrow.lua
 Toast.lua
 ImportExport.lua
+Viewer.lua

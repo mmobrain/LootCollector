@@ -249,6 +249,7 @@ function ZoneResolver:UpdateAllContinentAndZoneIDs()
             -- Remove discoveries without zone names - they cannot be resolved
             discoveries[guid] = nil
             removed = removed + 1
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
         else
             local oldContinentID = discovery.continentID or 0
             local oldZoneID = discovery.zoneID or 0

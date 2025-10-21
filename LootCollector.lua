@@ -81,10 +81,10 @@ local dbDefaults = {
         ignoreZones = {},
         decay = { fadeAfterDays  = 30, staleAfterDays = 90, },
         discoveries = nil,
-        _schemaVersion = 0,
+        _schemaVersion = 3,
     },
     char = { looted = {}, hidden = {}, },
-    global = { discoveries = {}, _schemaVersion = 0, },
+    global = { discoveries = {}, _schemaVersion = 3, },
 }
 
 function LootCollector:OnInitialize()

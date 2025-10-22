@@ -36,4 +36,5 @@ MapData.lua
 Arrow.lua
 Toast.lua
 ImportExport.lua
+MinimapButton.lua
 Viewer.lua

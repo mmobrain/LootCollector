@@ -122,6 +122,28 @@ function LootCollector:OnInitialize()
             print("|cffff7f00LootCollector:|r ZoneResolver module not available.") 
         end
     end
+
+    SLASH_LootCollectorOPTIONS1 = "/lc"
+    SLASH_LootCollectorOPTIONS2 = "/lootcollector"
+    SlashCmdList["LootCollectorOPTIONS"] = function()
+        InterfaceOptionsFrame_OpenToCategory("LootCollector")
+        InterfaceOptionsFrame_OpenToCategory("LootCollector")
+    end
+
+    SLASH_LootCollectorMINIMAP1 = "/lcminimap"
+    SlashCmdList["LootCollectorMINIMAP"] = function()
+        local MinimapButton = self:GetModule("MinimapButton", true)
+        if MinimapButton and MinimapButton.Toggle then 
+            MinimapButton:Toggle() 
+            if MinimapButton:IsShown() then
+                print("|cff00ff00LootCollector:|r Minimap button shown.")
+            else
+                print("|cff00ff00LootCollector:|r Minimap button hidden.")
+            end
+        else 
+            print("|cffff7f00LootCollector:|r MinimapButton module not available.") 
+        end
+    end
 end
 
 function LootCollector:IsPaused()

@@ -5,7 +5,7 @@ local L = LootCollector
 local Viewer = L:NewModule("Viewer")
 
 -- Upvalues
-local time = time
+local time = time or os.time
 
 -- Window layout constants
 local WINDOW_WIDTH = 900
@@ -15,7 +15,8 @@ local HEADER_HEIGHT = 25
 local BUTTON_HEIGHT = 22
 local BUTTON_WIDTH = 120
 local CONTEXT_MENU_WIDTH = 200
-local FRAME_LEVEL = 5
+local FRAME_LEVEL = 1
+local FRAME_STRATA = "MEDIUM"
 
 -- Grid layout constants
 local GRID_LAYOUT = {
@@ -62,6 +63,17 @@ Viewer.columnFilters = {
 local _next = next
 local _getmt, _setmt = getmetatable, setmetatable
 local _rawlen = rawlen or function(x) return #x end
+local _tinsert = table.insert
+local _tremove = table.remove
+local _tsort = table.sort
+local _tconcat = table.concat
+local _strlower = string.lower
+local _strfind = string.find
+local _strmatch = string.match
+local _strgsub = string.gsub
+
+-- Timer management
+local activeTimers = {} -- Track active timers for cleanup
 
 -- Creates a shallow copy of a table, preserving its metatable if present.
 local function copy(t)
@@ -70,6 +82,33 @@ local function copy(t)
     local mt = _getmt(t)
     if mt then _setmt(out, mt) end
     return out
+end
+
+-- Timer management for cleanup
+local function createTimer(delay, callback)
+    local timer = C_Timer.After(delay, callback)
+    _tinsert(activeTimers, timer)
+    return timer
+end
+
+local function clearAllTimers()
+    for i = #activeTimers, 1, -1 do
+        _tremove(activeTimers, i)
+    end
+end
+
+-- Memory-efficient string concatenation for large operations
+local function concatStrings(...)
+    local args = { ... }
+    local result = {}
+    local count = 0
+    for i = 1, #args do
+        if args[i] then
+            count = count + 1
+            result[count] = tostring(args[i])
+        end
+    end
+    return _tconcat(result)
 end
 
 -- Returns the number of elements in a table.
@@ -104,22 +143,19 @@ local function values(t)
     return out
 end
 
--- Filters an array in-place based on a predicate function.
--- NOTE: Mutates the input array and assumes a dense 1..n sequence.
+-- Filter function
 local function filter(array, predicate)
-    local a = array
-    local p = predicate
-    local n = _rawlen(a)
+    local n = _rawlen(array)
     local wi = 1
     for i = 1, n do
-        local v = a[i]
-        if p(v, i) then
-            if wi ~= i then a[wi] = v end
+        local v = array[i]
+        if predicate(v, i) then
+            if wi ~= i then array[wi] = v end
             wi = wi + 1
         end
     end
-    for i = wi, n do a[i] = nil end
-    return a
+    for i = wi, n do array[i] = nil end
+    return array
 end
 
 -- Forward declarations for cascading filter functions
@@ -159,6 +195,9 @@ local Cache = {
 
     -- Cache for tracking duplicate itemIDs
     duplicateItems = {},
+
+    -- Cleanup tracking
+    _cleanupRequired = false,
 }
 
 -- Retrieves item information safely, utilizing a unified cache.
@@ -273,10 +312,10 @@ GetFilteredDatasetForUniqueValues = function(context)
 
         -- Applies the search term filter to item names and localized zone names.
         if context.searchTerm and context.searchTerm ~= "" then
-            local searchLower = string.lower(context.searchTerm)
-            local nameMatch = string.find(string.lower(data.itemName or ""), searchLower, 1, true)
+            local searchLower = _strlower(context.searchTerm)
+            local nameMatch = _strfind(_strlower(data.itemName or ""), searchLower, 1, true)
             local zoneName = GetLocalizedZoneName(data.discovery)
-            local zoneMatch = string.find(string.lower(zoneName), searchLower, 1, true)
+            local zoneMatch = _strfind(_strlower(zoneName), searchLower, 1, true)
             if not (nameMatch or zoneMatch) then return false end
         end
 
@@ -379,15 +418,15 @@ GetUniqueValues = function(column)
     for filterType, filters in pairs(context.activeFilters) do
         if filterType == "duplicates" then
             -- Handles the duplicates filter as a special case.
-            table.insert(filterKeys, filterType .. "=enabled")
+            _tinsert(filterKeys, filterType .. "=enabled")
         else
             local sortedKeys = keys(filters)
-            table.sort(sortedKeys)
-            table.insert(filterKeys, filterType .. "=" .. table.concat(sortedKeys, ","))
+            _tsort(sortedKeys)
+            _tinsert(filterKeys, filterType .. "=" .. _tconcat(sortedKeys, ","))
         end
     end
     if size(filterKeys) > 0 then
-        cacheKey = cacheKey .. ":" .. table.concat(filterKeys, "|")
+        cacheKey = cacheKey .. ":" .. _tconcat(filterKeys, "|")
     end
 
     -- Checks if cached values exist for the current context.
@@ -428,7 +467,7 @@ GetUniqueValues = function(column)
 
             if localizedZoneName and localizedZoneName ~= "" and not seen[localizedZoneName] then
                 seen[localizedZoneName] = true
-                table.insert(values, localizedZoneName)
+                _tinsert(values, localizedZoneName)
             end
         end
     else
@@ -484,7 +523,7 @@ GetUniqueValues = function(column)
                 local value = extractor(data)
                 if value and value ~= "" and not seen[value] then
                     seen[value] = true
-                    table.insert(values, value)
+                    _tinsert(values, value)
                 end
             end
         end
@@ -505,14 +544,14 @@ GetUniqueValues = function(column)
             ["Unknown"] = -1
         }
 
-        table.sort(values, function(a, b)
+        _tsort(values, function(a, b)
             local aOrder = qualityOrder[a] or 999
             local bOrder = qualityOrder[b] or 999
             return aOrder > bOrder -- Higher rarity first
         end)
     else
         -- Default alphabetical sorting for other columns.
-        table.sort(values)
+        _tsort(values)
     end
 
     -- Caches the results with a context key.
@@ -537,7 +576,6 @@ local scanQueue = {}
 local scanCursor = 0
 local scanProgressCallback = nil
 
-
 -- Status constants (matching Core.lua).
 local STATUS_UNCONFIRMED = "UNCONFIRMED"
 local STATUS_CONFIRMED = "CONFIRMED"
@@ -549,24 +587,24 @@ local function HasDataChanged()
     if not L.db or not L.db.global or not L.db.global.discoveries then
         return false
     end
-    
+
     -- Count the number of discoveries as a simple change detection mechanism
     local currentCount = 0
     for _ in pairs(L.db.global.discoveries) do
         currentCount = currentCount + 1
     end
-    
+
     -- Store the count in the cache for comparison
     if not Cache.lastDiscoveryCount then
         Cache.lastDiscoveryCount = currentCount
         return true -- First time, consider it changed
     end
-    
+
     local hasChanged = Cache.lastDiscoveryCount ~= currentCount
     if hasChanged then
         Cache.lastDiscoveryCount = currentCount
     end
-    
+
     return hasChanged
 end
 
@@ -628,7 +666,7 @@ local function CreateContextMenu(anchor, title, buttons, options)
     for i, buttonData in ipairs(buttons) do
         local btn = CreateFrame("Button", nil, contextMenu, "UIPanelButtonTemplate")
         btn:SetSize(menuWidth - 20, 20) -- Uses full menu width minus padding.
-        btn:SetFrameLevel(contextMenu:GetFrameLevel() + 5)
+        btn:SetFrameLevel(FRAME_LEVEL)
         if lastButton then
             btn:SetPoint("TOPLEFT", lastButton, "BOTTOMLEFT", 0, -5)
         else
@@ -648,7 +686,7 @@ local function CreateContextMenu(anchor, title, buttons, options)
     -- Adds a mouse leave event to close the context menu with a slight delay.
     contextMenu:SetScript("OnLeave", function(self)
         -- Small delay to prevent accidental closing when moving between buttons.
-        C_Timer.After(0.1, function()
+        createTimer(0.1, function()
             if Viewer.contextMenu and Viewer.contextMenu:IsShown() then
                 local contextMenuMouseOver = Viewer.contextMenu:IsMouseOver()
                 local anchorMouseOver = anchor:IsMouseOver()
@@ -814,7 +852,7 @@ local function ShowColumnFilterDropdown(column, anchor, values)
                     local localizedZoneName = GetLocalizedZoneName({ worldMapID = worldMapID, zone = zoneData.rawZone })
                     if localizedZoneName and localizedZoneName ~= "" and not seen[localizedZoneName] then
                         seen[localizedZoneName] = true
-                        table.insert(fallbackValues, localizedZoneName)
+                        _tinsert(fallbackValues, localizedZoneName)
                     end
                 end
             else
@@ -830,12 +868,12 @@ local function ShowColumnFilterDropdown(column, anchor, values)
                         local value = extractor(data)
                         if value and value ~= "" and not seen[value] then
                             seen[value] = true
-                            table.insert(fallbackValues, value)
+                            _tinsert(fallbackValues, value)
                         end
                     end
                 end
             end
-            table.sort(fallbackValues)
+            _tsort(fallbackValues)
         end
 
         values = fallbackValues
@@ -978,7 +1016,7 @@ local function ShowColumnFilterDropdown(column, anchor, values)
     if dropdownList then
         dropdownList:SetScript("OnLeave", function(self)
             -- Small delay to prevent accidental closing.
-            C_Timer.After(0.1, function()
+            createTimer(0.1, function()
                 if dropdownList and dropdownList:IsShown() then
                     local dropdownMouseOver = dropdownList:IsMouseOver()
                     local anchorMouseOver = anchor:IsMouseOver()
@@ -1024,7 +1062,7 @@ end
 
 -- Checks if an item name corresponds to a "Mystic Scroll".
 local function IsMysticScroll(itemName)
-    return itemName and string.find(itemName, "Mystic Scroll", 1, true) ~= nil
+    return itemName and _strfind(itemName, "Mystic Scroll", 1, true) ~= nil
 end
 
 -- Detects the character class required for an item, utilizing a unified cache.
@@ -1043,7 +1081,7 @@ local function GetItemCharacterClass(itemLink, itemID)
     -- Checks the second line of the tooltip by referencing the global text frame.
     local line2Text = _G["LootCollectorClassScanTooltipTextLeft2"]:GetText()
     if line2Text then
-        characterClass = string.gsub(line2Text, "^%s*(.-)%s*$", "%1") -- Trims whitespace.
+        characterClass = _strgsub(line2Text, "^%s*(.-)%s*$", "%1") -- Trims whitespace.
     end
 
     -- Caches the result in the unified cache.
@@ -1072,7 +1110,7 @@ local function IsWorldforged(itemLink)
         for i = 2, 5 do
             local fs = _G["LootCollectorCoreScanTipTextLeft" .. i]
             local text = fs and fs:GetText()
-            if text and string.find(string.lower(text), "worldforged", 1, true) then
+            if text and _strfind(_strlower(text), "worldforged", 1, true) then
                 isWorldforged = true
                 break
             end
@@ -1091,7 +1129,7 @@ local function IsWorldforged(itemLink)
         for i = 2, 5 do
             local fs = _G["LootCollectorViewerScanTipTextLeft" .. i]
             local text = fs and fs:GetText()
-            if text and string.find(string.lower(text), "worldforged", 1, true) then
+            if text and _strfind(_strlower(text), "worldforged", 1, true) then
                 isWorldforged = true
                 break
             end
@@ -1120,7 +1158,7 @@ function Viewer:UpdateAllDiscoveriesCache(onCompleteCallback)
 
     -- Populates the scanQueue with all discoveries from the global database.
     for guid, discovery in pairs(L.db.global.discoveries or {}) do
-        table.insert(scanQueue, { guid = guid, discovery = discovery })
+        _tinsert(scanQueue, { guid = guid, discovery = discovery })
     end
 
     -- Updates pagination to show loading state immediately
@@ -1135,12 +1173,16 @@ function Viewer:ProcessScanQueueBatch()
     if not Cache.discoveriesBuilding or scanCursor >= #scanQueue then
         Cache.discoveriesBuilding = false
         Cache.discoveriesBuilt = true
-        
+
+        -- Clear scan queue to free memory
+        scanQueue = {}
+        scanCursor = 0
+
         -- Updates pagination to show normal state when cache building completes
         if self.window and self.window:IsShown() then
             self:UpdatePagination()
         end
-        
+
         if scanProgressCallback then
             scanProgressCallback()
             scanProgressCallback = nil
@@ -1172,7 +1214,7 @@ function Viewer:ProcessScanQueueBatch()
                 local name, _, _, _, _, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.itemLink,
                     discovery.itemID)
 
-                table.insert(Cache.discoveries, {
+                _tinsert(Cache.discoveries, {
                     guid = guid,
                     discovery = discovery,
                     itemName = itemName,
@@ -1200,7 +1242,7 @@ function Viewer:ProcessScanQueueBatch()
 
     -- Defers next batch processing to prevent UI freezing.
     if scanCursor < #scanQueue then
-        C_Timer.After(0.01, function() Viewer:ProcessScanQueueBatch() end)
+        createTimer(0.01, function() Viewer:ProcessScanQueueBatch() end)
     else
         self:ProcessScanQueueBatch() -- Final call to complete processing.
     end
@@ -1234,7 +1276,7 @@ function Viewer:UpdateAllDiscoveriesCacheSync()
                 local name, _, _, _, _, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.itemLink,
                     discovery.itemID)
 
-                table.insert(Cache.discoveries, {
+                _tinsert(Cache.discoveries, {
                     guid = guid,
                     discovery = discovery,
                     itemName = itemName,
@@ -1258,7 +1300,7 @@ function Viewer:UpdateAllDiscoveriesCacheSync()
 
     Cache.discoveriesBuilt = true
     Cache.discoveriesBuilding = false
-    
+
     -- Updates pagination to show normal state when cache building completes
     if self.window and self.window:IsShown() then
         self:UpdatePagination()
@@ -1310,12 +1352,12 @@ function Viewer:GetFilteredDiscoveries()
         searchFilter = function(data)
             if self.searchTerm == "" then return true end
 
-            local searchLower = string.lower(self.searchTerm)
-            local nameMatch = string.find(string.lower(data.itemName or ""), searchLower, 1, true)
+            local searchLower = _strlower(self.searchTerm)
+            local nameMatch = _strfind(_strlower(data.itemName or ""), searchLower, 1, true)
 
             -- Retrieves localized zone name for search.
             local zoneName = GetLocalizedZoneName(data.discovery)
-            local zoneMatch = string.find(string.lower(zoneName), searchLower, 1, true)
+            local zoneMatch = _strfind(_strlower(zoneName), searchLower, 1, true)
 
             return nameMatch or zoneMatch
         end,
@@ -1436,7 +1478,7 @@ function Viewer:GetFilteredDiscoveries()
     end)
 
     -- Sorts filtered discoveries.
-    table.sort(currentFiltered, function(a, b)
+    _tsort(currentFiltered, function(a, b)
         if not a or not b then return false end
         if not a.discovery or not b.discovery then return false end
 
@@ -1499,20 +1541,20 @@ function Viewer:GetFilterStateHash()
             for column, values in pairs(filters) do
                 if type(values) == "table" and size(values) > 0 then
                     local sortedValues = keys(values)
-                    table.sort(sortedValues)
-                    table.insert(filterEntries, filterType .. ":" .. column .. ":" .. table.concat(sortedValues, ","))
+                    _tsort(sortedValues)
+                    _tinsert(filterEntries, concatStrings(filterType, ":", column, ":", _tconcat(sortedValues, ",")))
                 end
             end
         elseif filterType == "duplicates" and filters then
             -- Handles the duplicates filter as a special case.
-            table.insert(filterEntries, "duplicates:true")
+            _tinsert(filterEntries, "duplicates:true")
         end
     end
 
     -- Combines all hash parts.
-    local hash = table.concat(hashParts, "|")
+    local hash = _tconcat(hashParts, "|")
     if size(filterEntries) > 0 then
-        hash = hash .. "|" .. table.concat(filterEntries, "|")
+        hash = concatStrings(hash, "|", _tconcat(filterEntries, "|"))
     end
 
     return hash
@@ -1529,9 +1571,12 @@ function Viewer:GetPaginatedDiscoveries()
     local endIndex = math.min(startIndex + self.itemsPerPage - 1, self.totalItems)
 
     local pageDiscoveries = {}
+    -- Pre-allocate array size for efficiency
+    pageDiscoveries[math.min(self.itemsPerPage, self.totalItems)] = nil
+
     for i = startIndex, endIndex do
         if allDiscoveries[i] then
-            table.insert(pageDiscoveries, allDiscoveries[i])
+            _tinsert(pageDiscoveries, allDiscoveries[i])
         end
     end
 
@@ -1546,7 +1591,7 @@ end
 local function removeFromSpecialFrames(windowName)
     for i = #UISpecialFrames, 1, -1 do
         if UISpecialFrames[i] == windowName then
-            table.remove(UISpecialFrames, i)
+            _tremove(UISpecialFrames, i)
             return true
         end
     end
@@ -1561,7 +1606,7 @@ local function addToSpecialFrames(windowName)
             return false -- Already in list
         end
     end
-    table.insert(UISpecialFrames, windowName)
+    _tinsert(UISpecialFrames, windowName)
     return true
 end
 
@@ -1575,7 +1620,7 @@ function Viewer:CreateWindow()
     local window = CreateFrame("Frame", "LootCollectorViewerWindow", UIParent)
     window:SetSize(WINDOW_WIDTH, WINDOW_HEIGHT)
     window:SetPoint("CENTER")
-    window:SetFrameStrata("LOW")
+    window:SetFrameStrata(FRAME_STRATA)
     window:SetFrameLevel(FRAME_LEVEL)
     window:SetMovable(true)
     window:EnableMouse(true)
@@ -1609,7 +1654,7 @@ function Viewer:CreateWindow()
     -- Show/hide handlers for ESC key handling
     window:SetScript("OnShow", function(self)
         -- Adds the frame to UISpecialFrames so ESC key works
-        table.insert(UISpecialFrames, self:GetName())
+        _tinsert(UISpecialFrames, self:GetName())
     end)
 
     window:SetScript("OnHide", function(self)
@@ -1620,25 +1665,25 @@ function Viewer:CreateWindow()
             end
             return
         end
-        
+
         -- Check if this is an unwanted close during map operation
         if Viewer.restoreToSpecialFrames and Viewer.windowNameToRestore and not Viewer.allowManualClose then
-            C_Timer.After(0.01, function()
+            createTimer(0.01, function()
                 if Viewer.window and not Viewer.window:IsShown() then
                     Viewer.window:Show()
                 end
             end)
             return
         end
-        
+
         -- Normal close - remove from UISpecialFrames when hidden
         for i = #UISpecialFrames, 1, -1 do
             if UISpecialFrames[i] == self:GetName() then
-                table.remove(UISpecialFrames, i)
+                _tremove(UISpecialFrames, i)
                 break
             end
         end
-        
+
         -- Clear the manual close flag after successful close
         Viewer.allowManualClose = false
     end)
@@ -1764,7 +1809,7 @@ function Viewer:CreateWindow()
         local content = CreateFrame("Frame", nil, autocompleteDropdown)
         content:SetPoint("TOPLEFT", 5, -5)
         content:SetPoint("BOTTOMRIGHT", -5, 5)
-        content:SetFrameLevel(autocompleteDropdown:GetFrameLevel() + 5)
+        content:SetFrameLevel(autocompleteDropdown:GetFrameLevel())
 
         autocompleteDropdown.content = content
         autocompleteDropdown.buttons = {}
@@ -1782,18 +1827,20 @@ function Viewer:CreateWindow()
     local function getSearchCandidates(text)
         if not text or text == "" then return {} end
 
-        local textLower = string.lower(text)
+        local textLower = _strlower(text)
+        -- Pre-allocate candidates array for efficiency
         local candidates = {}
+        candidates[math.min(#Cache.discoveries, 100)] = nil -- Limit to 100 candidates max
         local seen = {}
 
         if Cache.discoveriesBuilt then
             for _, data in ipairs(Cache.discoveries) do
                 -- Adds item names.
                 if data.itemName then
-                    local nameLower = string.lower(data.itemName)
+                    local nameLower = _strlower(data.itemName)
                     if string.sub(nameLower, 1, string.len(textLower)) == textLower then
                         if not seen[data.itemName] then
-                            table.insert(candidates, data.itemName)
+                            _tinsert(candidates, data.itemName)
                             seen[data.itemName] = true
                         end
                     end
@@ -1802,10 +1849,10 @@ function Viewer:CreateWindow()
                 -- Adds zone names.
                 local zoneName = GetLocalizedZoneName(data.discovery)
                 if zoneName then
-                    local zoneLower = string.lower(zoneName)
+                    local zoneLower = _strlower(zoneName)
                     if string.sub(zoneLower, 1, string.len(textLower)) == textLower then
                         if not seen[zoneName] then
-                            table.insert(candidates, zoneName)
+                            _tinsert(candidates, zoneName)
                             seen[zoneName] = true
                         end
                     end
@@ -1814,12 +1861,12 @@ function Viewer:CreateWindow()
         end
 
         -- Sorts candidates alphabetically.
-        table.sort(candidates)
+        _tsort(candidates)
 
         -- Limits suggestions to 10.
         local limitedCandidates = {}
         for i = 1, math.min(10, #candidates) do
-            table.insert(limitedCandidates, candidates[i])
+            _tinsert(limitedCandidates, candidates[i])
         end
 
         return limitedCandidates
@@ -1856,6 +1903,8 @@ function Viewer:CreateWindow()
             button:Hide()
         end
         dropdown.buttons = {}
+        -- Pre-allocate buttons array for efficiency
+        dropdown.buttons[math.min(#candidates, 20)] = nil -- Limit to 20 buttons max
 
         -- Creates suggestion buttons.
         local buttonHeight = 16
@@ -1868,7 +1917,7 @@ function Viewer:CreateWindow()
             local button = CreateFrame("Button", nil, content)
             button:SetSize(190, buttonHeight)
             button:SetPoint("TOPLEFT", 5, -(i - 1) * buttonHeight)
-            button:SetFrameLevel(content:GetFrameLevel() + 5)
+            button:SetFrameLevel(FRAME_LEVEL)
 
             -- Sets button text.
             local text = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1900,7 +1949,7 @@ function Viewer:CreateWindow()
             end)
 
             button:Show()
-            table.insert(dropdown.buttons, button)
+            _tinsert(dropdown.buttons, button)
         end
 
         -- Positions dropdown below search box.
@@ -2027,7 +2076,7 @@ function Viewer:CreateWindow()
     end)
     searchBox:SetScript("OnEditFocusLost", function(self)
         -- Hides dropdown when search box loses focus.
-        C_Timer.After(0.1, function()
+        createTimer(0.1, function()
             if not searchBox:HasFocus() then
                 hideAutocompleteDropdown()
             end
@@ -2037,6 +2086,8 @@ function Viewer:CreateWindow()
     -- Group frame for additional filters, positioned to the right of the Mystic Scrolls button.
     local additionalFiltersFrame = CreateFrame("Frame", nil, window)
     additionalFiltersFrame:SetSize(430, 30)
+    additionalFiltersFrame:SetFrameStrata(FRAME_STRATA)
+    additionalFiltersFrame:SetFrameLevel(FRAME_LEVEL)
     additionalFiltersFrame:SetPoint("TOPLEFT", mysticBtn, "TOPRIGHT", 20, 0)
 
     -- Background for the additional filters group.
@@ -2060,6 +2111,8 @@ function Viewer:CreateWindow()
     sourceFilterBtn:SetSize(80, BUTTON_HEIGHT)
     sourceFilterBtn:SetPoint("LEFT", filtersLabel, "RIGHT", 10, 0)
     sourceFilterBtn:SetText("Source")
+    sourceFilterBtn:SetFrameStrata(FRAME_STRATA)
+    sourceFilterBtn:SetFrameLevel(FRAME_LEVEL)
     sourceFilterBtn:SetScript("OnClick", function(self, button)
         -- Activates filtering for the 'source' column.
         local values = GetUniqueValues("source")
@@ -2072,6 +2125,8 @@ function Viewer:CreateWindow()
     qualityFilterBtn:SetSize(80, BUTTON_HEIGHT)
     qualityFilterBtn:SetPoint("LEFT", sourceFilterBtn, "RIGHT", 10, 0)
     qualityFilterBtn:SetText("Quality")
+    qualityFilterBtn:SetFrameStrata(FRAME_STRATA)
+    qualityFilterBtn:SetFrameLevel(FRAME_LEVEL)
     qualityFilterBtn:SetScript("OnClick", function(self, button)
         -- Activates filtering for the 'quality' column.
         local values = GetUniqueValues("quality")
@@ -2084,6 +2139,8 @@ function Viewer:CreateWindow()
     lootedFilterBtn:SetSize(80, BUTTON_HEIGHT)
     lootedFilterBtn:SetPoint("LEFT", qualityFilterBtn, "RIGHT", 10, 0)
     lootedFilterBtn:SetText("Looted")
+    lootedFilterBtn:SetFrameStrata(FRAME_STRATA)
+    lootedFilterBtn:SetFrameLevel(FRAME_LEVEL)
     lootedFilterBtn:SetScript("OnClick", function(self, button)
         -- Activates filtering for the 'looted' column.
         local values = GetUniqueValues("looted")
@@ -2096,6 +2153,8 @@ function Viewer:CreateWindow()
     duplicatesFilterBtn:SetSize(90, BUTTON_HEIGHT)
     duplicatesFilterBtn:SetPoint("LEFT", lootedFilterBtn, "RIGHT", 10, 0)
     duplicatesFilterBtn:SetText("Duplicates")
+    duplicatesFilterBtn:SetFrameStrata(FRAME_STRATA)
+    duplicatesFilterBtn:SetFrameLevel(FRAME_LEVEL)
     duplicatesFilterBtn:SetScript("OnClick", function(self, button)
         Viewer.columnFilters.duplicates = not Viewer.columnFilters.duplicates
         Viewer.currentPage = 1
@@ -2115,6 +2174,7 @@ function Viewer:CreateWindow()
     headerFrame:SetSize(WINDOW_WIDTH - 40, HEADER_HEIGHT)
     headerFrame:SetPoint("TOPLEFT", searchLabel, "BOTTOMLEFT", 0, -15)
     headerFrame:SetFrameLevel(FRAME_LEVEL)
+    headerFrame:SetFrameStrata(FRAME_STRATA)
 
     -- Background for table headers.
     headerFrame:SetBackdrop({
@@ -2462,6 +2522,8 @@ function Viewer:CreateWindow()
     local paginationFrame = CreateFrame("Frame", nil, window)
     paginationFrame:SetSize(WINDOW_WIDTH - 32, 32)
     paginationFrame:SetPoint("BOTTOM", 0, 20)
+    paginationFrame:SetFrameStrata(FRAME_STRATA)
+    paginationFrame:SetFrameLevel(FRAME_LEVEL)
 
     -- Adds background to the pagination section for visual separation.
     paginationFrame:SetBackdrop({
@@ -2484,6 +2546,8 @@ function Viewer:CreateWindow()
     prevBtn:SetSize(80, BUTTON_HEIGHT)
     prevBtn:SetPoint("LEFT", 5, 0)
     prevBtn:SetText("Previous")
+    prevBtn:SetFrameStrata(FRAME_STRATA)
+    prevBtn:SetFrameLevel(FRAME_LEVEL + 1)
     prevBtn:SetScript("OnClick", function()
         if self.currentPage > 1 then
             self.currentPage = self.currentPage - 1
@@ -2497,6 +2561,8 @@ function Viewer:CreateWindow()
     nextBtn:SetSize(80, BUTTON_HEIGHT)
     nextBtn:SetPoint("RIGHT", -10, 0)
     nextBtn:SetText("Next")
+    nextBtn:SetFrameStrata(FRAME_STRATA)
+    nextBtn:SetFrameLevel(FRAME_LEVEL + 1)
     nextBtn:SetScript("OnClick", function()
         local totalPages = self:GetTotalPages()
         if self.currentPage < totalPages then
@@ -2515,6 +2581,8 @@ function Viewer:CreateWindow()
     items25Btn:SetSize(30, BUTTON_HEIGHT)
     items25Btn:SetPoint("LEFT", itemsLabel, "RIGHT", 5, 0)
     items25Btn:SetText("25")
+    items25Btn:SetFrameStrata(FRAME_STRATA)
+    items25Btn:SetFrameLevel(FRAME_LEVEL + 1)
     items25Btn:SetScript("OnClick", function()
         local oldItemsPerPage = Viewer.itemsPerPage
         Viewer.itemsPerPage = 25
@@ -2530,6 +2598,8 @@ function Viewer:CreateWindow()
     items50Btn:SetSize(30, BUTTON_HEIGHT)
     items50Btn:SetPoint("LEFT", items25Btn, "RIGHT", 2, 0)
     items50Btn:SetText("50")
+    items50Btn:SetFrameStrata(FRAME_STRATA)
+    items50Btn:SetFrameLevel(FRAME_LEVEL + 1)
     items50Btn:SetScript("OnClick", function()
         local oldItemsPerPage = Viewer.itemsPerPage
         Viewer.itemsPerPage = 50
@@ -2545,6 +2615,8 @@ function Viewer:CreateWindow()
     items100Btn:SetSize(35, BUTTON_HEIGHT)
     items100Btn:SetPoint("LEFT", items50Btn, "RIGHT", 2, 0)
     items100Btn:SetText("100")
+    items100Btn:SetFrameStrata(FRAME_STRATA)
+    items100Btn:SetFrameLevel(FRAME_LEVEL + 1)
     items100Btn:SetScript("OnClick", function()
         local oldItemsPerPage = Viewer.itemsPerPage
         Viewer.itemsPerPage = 100
@@ -2561,6 +2633,7 @@ function Viewer:CreateWindow()
     scrollFrame:SetSize(WINDOW_WIDTH - 40, WINDOW_HEIGHT - 200)
     scrollFrame:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -5)
     scrollFrame:SetFrameLevel(FRAME_LEVEL)
+    scrollFrame:SetFrameStrata(FRAME_STRATA)
     scrollFrame:SetScript("OnVerticalScroll", function(self, offset)
         FauxScrollFrame_OnVerticalScroll(self, offset, ROW_HEIGHT, function() Viewer:UpdateRows() end)
     end)
@@ -2612,6 +2685,7 @@ function Viewer:CreateRows()
         row:SetSize(WINDOW_WIDTH - 40, ROW_HEIGHT)
         row:SetPoint("TOPLEFT", self.scrollFrame, "TOPLEFT", 0, -(i - 1) * ROW_HEIGHT)
         row:SetFrameLevel(FRAME_LEVEL)
+        row:SetFrameStrata(FRAME_STRATA)
 
         -- Name column, with tooltip support.
         local nameFrame = CreateFrame("Frame", nil, row)
@@ -2832,7 +2906,7 @@ function Viewer:CreateRows()
                 -- prime cache
                 GameTooltip:Hide()
                 GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
-                GameTooltip:SetHyperlink("item:"..tostring(itemID))
+                GameTooltip:SetHyperlink("item:" .. tostring(itemID))
                 local start = GetTime()
                 local f = CreateFrame("Frame")
                 f:SetScript("OnUpdate", function(self)
@@ -2851,7 +2925,8 @@ function Viewer:CreateRows()
                     end
                     if GetTime() - start > 3 then
                         -- fallback to safe constructed link (no error)
-                        local fallback = "|cffffffff|Hitem:"..itemID..":0:0:0:0:0:0:0|h["..(n or ("Item:"..itemID)).."]|h|r"
+                        local fallback = "|cffffffff|Hitem:" ..
+                        itemID .. ":0:0:0:0:0:0:0|h[" .. (n or ("Item:" .. itemID)) .. "]|h|r"
                         if ChatEdit_InsertLink then
                             ChatEdit_InsertLink(fallback)
                         elseif ChatFrame1EditBox:IsVisible() then
@@ -2914,7 +2989,14 @@ function Viewer:CreateRows()
         row.showBtn = showBtn
         row.deleteBtn = deleteBtn
 
-        table.insert(self.rows, row)
+        _tinsert(self.rows, row)
+        -- Limit rows to prevent memory leaks
+        if #self.rows > 100 then
+            local oldRow = _tremove(self.rows, 1)
+            if oldRow and oldRow.Hide then
+                oldRow:Hide()
+            end
+        end
     end
 end
 
@@ -3075,7 +3157,8 @@ function Viewer:UpdatePagination()
         if Cache.discoveriesBuilding then
             self.pageInfo:SetText("Loading...")
         else
-            self.pageInfo:SetText(string.format("Page %d of %d (%d total items)", self.currentPage, totalPages, totalItems))
+            self.pageInfo:SetText(string.format("Page %d of %d (%d total items)", self.currentPage, totalPages,
+                totalItems))
         end
     end
 
@@ -3099,8 +3182,6 @@ function Viewer:UpdateItemsPerPageButtons()
         end
     end
 
-
-
     -- Resets all button text colors.
     if self.items25Btn then setButtonTextColor(self.items25Btn, 1, 1, 1) end
     if self.items50Btn then setButtonTextColor(self.items50Btn, 1, 1, 1) end
@@ -3121,8 +3202,6 @@ function Viewer:UpdateRows()
     local numDiscoveries = #discoveries
     local numRows = #self.rows
 
-
-
     -- Updates pagination information.
     self:UpdatePagination()
 
@@ -3131,6 +3210,16 @@ function Viewer:UpdateRows()
 
     -- Updates the scroll frame.
     FauxScrollFrame_Update(self.scrollFrame, numDiscoveries, numRows, ROW_HEIGHT)
+
+    -- Set strata and level for scroll bar buttons
+    if self.scrollFrame.ScrollBar and self.scrollFrame.ScrollBar.ScrollUpButton then
+        self.scrollFrame.ScrollBar.ScrollUpButton:SetFrameStrata(FRAME_STRATA)
+        self.scrollFrame.ScrollBar.ScrollUpButton:SetFrameLevel(FRAME_LEVEL)
+    end
+    if self.scrollFrame.ScrollBar and self.scrollFrame.ScrollBar.ScrollDownButton then
+        self.scrollFrame.ScrollBar.ScrollDownButton:SetFrameStrata(FRAME_STRATA)
+        self.scrollFrame.ScrollBar.ScrollDownButton:SetFrameLevel(FRAME_LEVEL)
+    end
 
     -- Shows rows for the current page with scrolling support.
     for i = 1, numRows do
@@ -3293,6 +3382,9 @@ end
 
 -- Clears all internal caches and resets filter states.
 function Viewer:ClearCaches()
+    -- Clear all active timers first
+    clearAllTimers()
+
     -- Iterates through cache keys to reset relevant data structures.
     local cacheKeys = keys(Cache)
     for _, key in ipairs(cacheKeys) do
@@ -3334,12 +3426,84 @@ function Viewer:ClearCaches()
 
     -- Clears the duplicate items cache.
     Cache.duplicateItems = {}
-    
+
     -- Resets data change tracking
     Cache.lastDiscoveryCount = nil
 
     -- Maintains backward compatibility for item info cache.
     L.itemInfoCache = {}
+
+    -- Mark cleanup as required
+    Cache._cleanupRequired = true
+end
+
+-- Comprehensive cleanup function for addon disable/unload
+function Viewer:OnDisable()
+    -- Clear all timers
+    clearAllTimers()
+
+    -- Clear all caches
+    self:ClearCaches()
+
+    -- Hide and cleanup UI elements
+    if self.window then
+        self.window:Hide()
+        -- Clear all scripts to prevent memory leaks
+        self.window:SetScript("OnShow", nil)
+        self.window:SetScript("OnHide", nil)
+        self.window:SetScript("OnDragStart", nil)
+        self.window:SetScript("OnDragStop", nil)
+    end
+
+    -- Clear context menu
+    if self.contextMenu then
+        self.contextMenu:Hide()
+        self.contextMenu = nil
+    end
+
+    -- Clear filter dropdown
+    if self.filterDropdown then
+        self.filterDropdown:Hide()
+        self.filterDropdown = nil
+    end
+
+    -- Clear autocomplete dropdown
+    if self.autocompleteDropdown then
+        self.autocompleteDropdown:Hide()
+        self.autocompleteDropdown = nil
+    end
+
+    -- Clear map cleanup frame
+    if self.mapCleanupFrame then
+        self.mapCleanupFrame:UnregisterAllEvents()
+        self.mapCleanupFrame:SetScript("OnEvent", nil)
+        self.mapCleanupFrame = nil
+    end
+
+    -- Clear tooltips
+    if localClassScanTip then
+        localClassScanTip:Hide()
+    end
+    if localWorldforgedScanTip then
+        localWorldforgedScanTip:Hide()
+    end
+
+    -- Clear scan queue
+    scanQueue = {}
+    scanCursor = 0
+    scanProgressCallback = nil
+
+    -- Clear UI state
+    self.window = nil
+    self.scrollFrame = nil
+    self.rows = {}
+    self.currentFilter = "equipment"
+    self.searchTerm = ""
+    self.sortColumn = "name"
+    self.sortAscending = true
+    self.pendingMapAreaID = nil
+    self.currentPage = 1
+    self.totalItems = 0
 end
 
 -- Manages a single discovery within the cache, either adding a new one or updating an existing entry.
@@ -3393,7 +3557,7 @@ function Viewer:AddDiscoveryToCache(guid, discovery)
     local name, _, _, _, _, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.itemLink,
         discovery.itemID)
 
-    table.insert(Cache.discoveries, {
+    _tinsert(Cache.discoveries, {
         guid = guid,
         discovery = discovery,
         itemName = itemName,
@@ -3404,6 +3568,12 @@ function Viewer:AddDiscoveryToCache(guid, discovery)
         equipLoc = equipLocVal,
         characterClass = characterClass,
     })
+
+    -- Limit cache size to prevent memory leaks
+    if #Cache.discoveries > 10000 then
+        print("TEST: Cache size: " .. #Cache.discoveries)
+        _tremove(Cache.discoveries, 1)
+    end
 
     -- Invalidates the filtered cache to force a refresh.
     Cache.filteredResults = {}
@@ -3445,7 +3615,6 @@ function Viewer:RemoveDiscoveryFromCache(guid)
     return false
 end
 
-
 function Viewer:ConfirmDelete(discoveryData)
     local itemName = discoveryData.itemName
     local zone = discoveryData.discovery.zone or "Unknown Zone"
@@ -3477,7 +3646,7 @@ function Viewer:FindDiscoveriesByPlayer(playerName)
     -- Searches through the global database to find matching discoveries.
     for guid, discovery in pairs(L.db.global.discoveries or {}) do
         if discovery and discovery.foundBy_player == playerName then
-            table.insert(discoveriesByPlayer, {
+            _tinsert(discoveriesByPlayer, {
                 guid = guid,
                 discovery = discovery
             })
@@ -3508,7 +3677,7 @@ function Viewer:DeleteAllFromPlayer(playerName)
     if deletedCount > 0 then
         print(string.format("|cff00ff00LootCollector:|r Deleted %d discoveries from player '%s'.", deletedCount,
             playerName))
-        
+
         -- Rebuilds the cache and refreshes the UI.
         if self.window and self.window:IsShown() then
             self:UpdateAllDiscoveriesCache(function()
@@ -3540,6 +3709,54 @@ function Viewer:ConfirmDeleteAllFromPlayer(playerName)
         nil,
         { playerName = playerName, viewer = self, count = count }
     )
+end
+
+-- Creates and configures the ViewerOverlayPin with glow effect and item icon.
+local function CreateViewerOverlayPin(targetPin)
+    if not WorldMapFrame.viewerOverlayPin then
+        WorldMapFrame.viewerOverlayPin = CreateFrame("Frame", "LootCollectorViewerOverlayPin", targetPin)
+        WorldMapFrame.viewerOverlayPin:SetSize(32, 32)
+        WorldMapFrame.viewerOverlayPin:SetFrameStrata("TOOLTIP")
+        WorldMapFrame.viewerOverlayPin:SetFrameLevel(targetPin:GetFrameLevel() + 10)
+
+        -- Creates glowing border using built-in texture.
+        WorldMapFrame.viewerOverlayPin.glowTexture = WorldMapFrame.viewerOverlayPin:CreateTexture(nil, "OVERLAY")
+        WorldMapFrame.viewerOverlayPin.glowTexture:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+        WorldMapFrame.viewerOverlayPin.glowTexture:SetBlendMode("ADD")
+        WorldMapFrame.viewerOverlayPin.glowTexture:SetVertexColor(1, 0.8, 0.3, 1)
+        WorldMapFrame.viewerOverlayPin.glowTexture:SetSize(46, 46)
+        WorldMapFrame.viewerOverlayPin.glowTexture:SetPoint("CENTER", WorldMapFrame.viewerOverlayPin, "CENTER", 0, 0)
+
+        -- Creates item icon that fills inside the border.
+        WorldMapFrame.viewerOverlayPin.itemTexture = WorldMapFrame.viewerOverlayPin:CreateTexture(nil, "ARTWORK")
+        WorldMapFrame.viewerOverlayPin.itemTexture:SetSize(24, 24)
+        WorldMapFrame.viewerOverlayPin.itemTexture:SetPoint("CENTER", WorldMapFrame.viewerOverlayPin, "CENTER", 0, 0)
+
+        -- Animation variables for pulsing glow.
+        WorldMapFrame.viewerOverlayPin.glowTime = 0
+
+        -- Sets up pulsing animation with smooth transitions.
+        WorldMapFrame.viewerOverlayPin:SetScript("OnUpdate", function(self, delta)
+            self.glowTime = self.glowTime + delta
+            if self.glowTime > 1.0 then
+                self.glowTime = 0
+            end
+
+            local progress = self.glowTime / 1.0
+            local alpha = 0.5 + 0.5 * math.sin(progress * math.pi)
+            local scale = 0.9 + 0.3 * math.sin(progress * math.pi)
+
+            self.glowTexture:SetAlpha(alpha)
+            self:SetScale(scale)
+        end)
+
+        -- Disables mouse events to allow the original pin to handle tooltips.
+        WorldMapFrame.viewerOverlayPin:EnableMouse(false)
+    else
+        -- Reparent the overlay to the new target pin
+        WorldMapFrame.viewerOverlayPin:SetParent(targetPin)
+        WorldMapFrame.viewerOverlayPin:SetFrameLevel(targetPin:GetFrameLevel() + 10)
+    end
 end
 
 function Viewer:ShowOnMap(discoveryData)
@@ -3590,26 +3807,7 @@ function Viewer:ShowOnMap(discoveryData)
 
         if targetPin and targetPin:IsShown() then
             -- Creates an overlay frame attached to the existing pin.
-            if not WorldMapFrame.viewerOverlayPin then
-                WorldMapFrame.viewerOverlayPin = CreateFrame("Frame", "LootCollectorViewerOverlayPin", targetPin)
-                WorldMapFrame.viewerOverlayPin:SetSize(32, 32)
-                WorldMapFrame.viewerOverlayPin:SetFrameStrata("TOOLTIP")
-                WorldMapFrame.viewerOverlayPin:SetFrameLevel(targetPin:GetFrameLevel() + 10)
-
-                -- Creates a red square background.
-                WorldMapFrame.viewerOverlayPin.backgroundTexture = WorldMapFrame.viewerOverlayPin:CreateTexture(nil,
-                    "BACKGROUND")
-                WorldMapFrame.viewerOverlayPin.backgroundTexture:SetAllPoints()
-                WorldMapFrame.viewerOverlayPin.backgroundTexture:SetTexture("Interface\\Buttons\\WHITE8X8")
-                WorldMapFrame.viewerOverlayPin.backgroundTexture:SetVertexColor(1, 0, 0, 0.8)
-
-                -- Disables mouse events to allow the original pin to handle tooltips.
-                WorldMapFrame.viewerOverlayPin:EnableMouse(false)
-            else
-                -- Reparent the overlay to the new target pin
-                WorldMapFrame.viewerOverlayPin:SetParent(targetPin)
-                WorldMapFrame.viewerOverlayPin:SetFrameLevel(targetPin:GetFrameLevel() + 10)
-            end
+            CreateViewerOverlayPin(targetPin)
 
             -- Positions the overlay centered on the existing pin.
             WorldMapFrame.viewerOverlayPin:ClearAllPoints()
@@ -3619,9 +3817,18 @@ function Viewer:ShowOnMap(discoveryData)
             -- Stores discovery data for the tooltip and tracks current overlay target.
             WorldMapFrame.viewerOverlayPin.discoveryData = discoveryData
             Viewer.currentOverlayTarget = discovery.guid
+
+            -- Sets the item icon texture.
+            local Map = L:GetModule("Map", true)
+            if Map and Map.GetDiscoveryIcon then
+                local itemIcon = Map:GetDiscoveryIcon(discovery)
+                if itemIcon then
+                    WorldMapFrame.viewerOverlayPin.itemTexture:SetTexture(itemIcon)
+                end
+            end
         else
             -- Fallback: retries after a short delay in case pins haven't loaded yet.
-            C_Timer.After(0.5, function()
+            createTimer(0.5, function()
                 local Map = L:GetModule("Map", true)
                 local targetPin = nil
 
@@ -3636,26 +3843,7 @@ function Viewer:ShowOnMap(discoveryData)
 
                 if targetPin and targetPin:IsShown() then
                     -- Creates an overlay frame attached to the existing pin.
-                    if not WorldMapFrame.viewerOverlayPin then
-                        WorldMapFrame.viewerOverlayPin = CreateFrame("Frame", "LootCollectorViewerOverlayPin", targetPin)
-                        WorldMapFrame.viewerOverlayPin:SetSize(32, 32)
-                        WorldMapFrame.viewerOverlayPin:SetFrameStrata("TOOLTIP")
-                        WorldMapFrame.viewerOverlayPin:SetFrameLevel(targetPin:GetFrameLevel() + 10)
-
-                        -- Creates a red square background.
-                        WorldMapFrame.viewerOverlayPin.backgroundTexture = WorldMapFrame.viewerOverlayPin:CreateTexture(
-                            nil, "BACKGROUND")
-                        WorldMapFrame.viewerOverlayPin.backgroundTexture:SetAllPoints()
-                        WorldMapFrame.viewerOverlayPin.backgroundTexture:SetTexture("Interface\\Buttons\\WHITE8X8")
-                        WorldMapFrame.viewerOverlayPin.backgroundTexture:SetVertexColor(1, 0, 0, 0.8)
-
-                        -- Disables mouse events to allow the original pin to handle tooltips.
-                        WorldMapFrame.viewerOverlayPin:EnableMouse(false)
-                    else
-                        -- Change the overlay to the new target pin
-                        WorldMapFrame.viewerOverlayPin:SetParent(targetPin)
-                        WorldMapFrame.viewerOverlayPin:SetFrameLevel(targetPin:GetFrameLevel() + 10)
-                    end
+                    CreateViewerOverlayPin(targetPin)
 
                     -- Positions the overlay centered on the existing pin.
                     WorldMapFrame.viewerOverlayPin:ClearAllPoints()
@@ -3665,6 +3853,15 @@ function Viewer:ShowOnMap(discoveryData)
                     -- Stores discovery data for the tooltip and tracks current overlay target.
                     WorldMapFrame.viewerOverlayPin.discoveryData = discoveryData
                     Viewer.currentOverlayTarget = discovery.guid
+
+                    -- Sets the item icon texture.
+                    local Map = L:GetModule("Map", true)
+                    if Map and Map.GetDiscoveryIcon then
+                        local itemIcon = Map:GetDiscoveryIcon(discovery)
+                        if itemIcon then
+                            WorldMapFrame.viewerOverlayPin.itemTexture:SetTexture(itemIcon)
+                        end
+                    end
                 else
                     -- If no pin is found after retry, hides the overlay.
                     if WorldMapFrame.viewerOverlayPin then
@@ -3728,7 +3925,6 @@ end
 function Viewer:OnInitialize()
     self:CreateWindow()
     L:RegisterMessage("LootCollector_DiscoveriesUpdated", function(event, action, guid, discoveryData)
-        
         -- Handles incremental cache updates based on the action.
         if action == "add" and guid and discoveryData then
             -- Adds a new discovery to the cache.
@@ -3805,11 +4001,11 @@ function Viewer:OnInitialize()
                 WorldMapFrame.viewerOverlayPin:Hide()
             end
             Viewer.currentOverlayTarget = nil
-            
+
             -- Restore window to UISpecialFrames after map closes
             if Viewer.restoreToSpecialFrames and Viewer.windowNameToRestore then
                 -- Small delay to ensure map is fully closed before restoration
-                C_Timer.After(0.1, function()
+                createTimer(0.1, function()
                     -- Restore to UISpecialFrames for ESC functionality
                     if Viewer.window and Viewer.window:IsShown() then
                         addToSpecialFrames(Viewer.windowNameToRestore)

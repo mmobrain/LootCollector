@@ -405,6 +405,8 @@ function Core:PurgeAllIgnoredItems()
     if removedCount > 0 then
         for _, guid in ipairs(guidsToRemove) do
             discoveries[guid] = nil
+            -- Notifies Viewer of removed discovery
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
         end
     end
     return removedCount
@@ -426,7 +428,11 @@ function Core:PurgeByGUIDPrefix()
             end
         end
     end
-    for _, g in ipairs(toDel) do discoveries[g] = nil end
+    for _, g in ipairs(toDel) do 
+        discoveries[g] = nil
+        -- Notifies Viewer of removed discovery
+        L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", g, nil)
+    end
     return #toDel
 end
 
@@ -554,6 +560,8 @@ function Core:DeduplicateItems(mysticScrollsKeepOldest)
     if #guidsToRemove > 0 then
         for _, guid in ipairs(guidsToRemove) do
             L.db.global.discoveries[guid] = nil
+            -- Notifies Viewer of removed discovery
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
         end
     end
     return wfRemoved, msRemoved
@@ -574,6 +582,8 @@ function Core:RunManualDatabaseCleanup()
     if cityRemoved > 0 then
         for _, guid in ipairs(cityGuidsToRemove) do
             L.db.global.discoveries[guid] = nil
+            -- Notifies Viewer of removed discovery
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
         end
         print(string.format("|cff00ff00LootCollector:|r Purged %d entries found in city zones.", cityRemoved))
     end
@@ -622,6 +632,8 @@ function Core:RunInitialCleanup()
     if cityRemoved > 0 then
         for _, guid in ipairs(cityGuidsToRemove) do
             L.db.global.discoveries[guid] = nil
+            -- Notifies Viewer of removed discovery
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
         end
     end
 
@@ -1130,12 +1142,18 @@ function Core:HandleLocalLoot(discovery)
             s_flag = s_flag,
         }
         db[guid] = rec
+        
+        -- Notifies Viewer of new discovery
+        L:SendMessage("LootCollector_DiscoveriesUpdated", "add", guid, rec)
     else
         
         rec.ls = max(tonumber(rec.ls) or 0, t0)
         if not rec.src and discovery.src then
             rec.src = discovery.src
         end
+        
+        -- Notifies Viewer of updated discovery
+        L:SendMessage("LootCollector_DiscoveriesUpdated", "update", guid, rec)
     end
     
     
@@ -1499,6 +1517,9 @@ function Core:AddDiscovery(discoveryData, options)
             }
             db[guid] = newRecord
             
+            -- Notifies Viewer of new discovery
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "add", guid, newRecord)
+            
             local toast = L:GetModule("Toast", true)
             if toast and toast.Show then toast:Show(newRecord, false, options) end
         else
@@ -1536,6 +1557,9 @@ function Core:AddDiscovery(discoveryData, options)
                     self:UpdateCoordinatesByConsensus(existing)
                 end
             end
+            
+            -- Notifies Viewer of updated discovery
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "update", guid, existing)
         end
 
     elseif op == "CONF" or op == "SHOW" then
@@ -1560,6 +1584,10 @@ function Core:AddDiscovery(discoveryData, options)
                 adc = 0, ack_votes = {},
             }
             db[guid] = newRecord
+            
+            -- Notifies Viewer of new discovery
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "add", guid, newRecord)
+            
             local toast = L:GetModule("Toast", true)
             if toast and toast.Show then toast:Show(newRecord, false, options) end
         end
@@ -1567,9 +1595,24 @@ function Core:AddDiscovery(discoveryData, options)
     
     
     if existing then
-        if not existing.il then existing.il = discoveryData.il end
-        if not existing.mid and discoveryData.mid then existing.mid = discoveryData.mid end
-        if (existing.q or 0) == 0 and discoveryData.q then existing.q = discoveryData.q end
+        local wasUpdated = false
+        if not existing.il then 
+            existing.il = discoveryData.il 
+            wasUpdated = true
+        end
+        if not existing.mid and discoveryData.mid then 
+            existing.mid = discoveryData.mid 
+            wasUpdated = true
+        end
+        if (existing.q or 0) == 0 and discoveryData.q then 
+            existing.q = discoveryData.q 
+            wasUpdated = true
+        end
+        
+        -- Notifies Viewer if discovery was updated
+        if wasUpdated then
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "update", guid, existing)
+        end
     end
 
     local Map = L:GetModule("Map", true)
@@ -1610,6 +1653,8 @@ function Core:RemoveDiscoveryByGuid(guid, reason)
         L.db.global.discoveries[guid] = nil
         print(string.format("|cff00ff00LootCollector:|r %s", reason or ("Discovery " .. guid .. " removed.")))
         
+        -- Notifies Viewer of removed discovery
+        L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
         
         local Map = L:GetModule("Map", true)
         if Map and Map.Update then
@@ -1628,6 +1673,10 @@ function Core:ClearDiscoveries()
     L.db.global.discoveries = {}
     L.db.global.blackmarketVendors = {}
     print(string.format("[%s] Cleared all discovery and Blackmarket vendor data.", L.name))
+    
+    -- Notifies Viewer that all discoveries were cleared
+    L:SendMessage("LootCollector_DiscoveriesUpdated", "clear", nil, nil)
+    
     local Map = L:GetModule("Map", true)
     if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
         Map:Update()
@@ -1639,6 +1688,10 @@ function Core:RemoveDiscovery(guid)
     if L.db.global.discoveries[guid] then
         L.db.global.discoveries[guid] = nil
         print(string.format("|cff00ff00LootCollector:|r Discovery %s removed.", guid))
+        
+        -- Notifies Viewer of removed discovery
+        L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
+        
         local Map = L:GetModule("Map", true)
         if Map and Map.Update then
             Map:Update()

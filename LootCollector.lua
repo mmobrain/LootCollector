@@ -424,7 +424,7 @@ function LootCollector:OnInitialize()
     end
     
     self.name = "LootCollector"
-    self.Version = "alpha-0.5.1S"
+    self.Version = "alpha-0.5.2"
     
     -- *** PER-CHARACTER MIGRATION FINALIZER & VERIFIER ***
     if self.db.profile and self.db.profile.preservedLootedData_v6 then

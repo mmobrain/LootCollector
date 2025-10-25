@@ -263,6 +263,13 @@ function ZoneList:OnInitialize()
             end
         end
     end
+
+    -- Build map ID lookup tables
+    C_Timer.After(1, function()
+        if self.BuildMapIDLookups then
+            self:BuildMapIDLookups()
+        end
+    end)
 end
 
 return ZoneList

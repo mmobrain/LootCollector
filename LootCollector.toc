@@ -53,3 +53,5 @@ Modules\Settings.lua
 Modules\Toast.lua
 Modules\HistoryTab.lua
 Modules\ImportExport.lua
+Modules\Viewer.lua
+Modules\MinimapButton.lua

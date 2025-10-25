@@ -1361,31 +1361,29 @@ function Map:EnsureMinimapTicker()
 
       local c, z = GetCurrentMapContinent(), GetCurrentMapZone()
       local isAstrolabeZone = Map.WorldMapSize[c] and Map.WorldMapSize[c][z]
-      
-      -- Check if this is a custom zone that needs fallback calculation
       local isCustomZone = customZones[c] and customZones[c][z]
 
       -- Use GetViewRadius() for accurate minimap diameter in yards
       local minimapRadius = Minimap:GetViewRadius()
-      local mapDiameter = minimapRadius * 2
-      
       local mapWidth = Minimap:GetWidth()
       local mapHeight = Minimap:GetHeight()
-      
       -- yards per pixel
-      local xScale = mapDiameter / mapWidth
-      local yScale = mapDiameter / mapHeight
-      
+      local xScale = (minimapRadius * 2) / mapWidth
+      local yScale = (minimapRadius * 2) / mapHeight
+      local edgeRadius = minimapRadius - 8
+
       -- Rotation setup
       local facing = GetPlayerFacing()
       local rotateEnabled = (GetCVar("rotateMinimap") == "1")
-      local cos_f = math.cos(-facing)
-      local sin_f = math.sin(-facing)
-      
+      local cos_f, sin_f
+      if rotateEnabled then
+        cos_f = math.cos(facing)
+        sin_f = math.sin(facing)
+      end
+
       -- Edge detection
-      local shape = GetMinimapShape and GetMinimapShape()
-      shape = shape and ValidMinimapShapes and ValidMinimapShapes[shape]
-      local edgeRadius = minimapRadius - 8  -- in yards, not pixels
+      local shapeData = GetCurrentMinimapShape()
+      local isRoundShape = shapeData and shapeData["SQUARE"] == false
 
       for _, pin in ipairs(Map._mmPins) do
         if pin:IsShown() and pin.discovery then
@@ -1404,7 +1402,6 @@ function Map:EnsureMinimapTicker()
                 -- Fallback calculation for custom zones and non-Astrolabe zones
                 local zoneData = Map.WorldMapSize[c] and Map.WorldMapSize[c][z]
                 local ZONE_YARDS = zoneData and zoneData.width or 1000
-                
                 local dx = (d.xy.x or 0) - px
                 local dy = (d.xy.y or 0) - py
                 xDist = dx * ZONE_YARDS
@@ -1421,23 +1418,14 @@ function Map:EnsureMinimapTicker()
 
                 -- Calculate distance based on minimap shape
                 local dist
-                local isRound = true
-                if shape and not (xDist == 0 or yDist == 0) then
-                    local cornerIdx = (xDist < 0) and 1 or 3
-                    if yDist >= 0 then 
-                        cornerIdx = cornerIdx + 1 
-                    end
-                    isRound = shape[cornerIdx]
-                end
-
-                if isRound then
+                if isRoundShape then
                     dist = math.sqrt(xDist * xDist + yDist * yDist)
                 else
                     dist = math.max(math.abs(xDist), math.abs(yDist))
                 end
                 
                 -- Clamp to edge (in yards)
-                local iconRadius = (pin:GetWidth() / 2) * xScale  -- convert icon pixel size to yards
+                local iconRadius = (pin:GetWidth() / 2) * xScale
                 if dist + iconRadius > edgeRadius then
                     local maxDist = edgeRadius - iconRadius
                     if dist > 0 and maxDist > 0 then
@@ -1447,23 +1435,19 @@ function Map:EnsureMinimapTicker()
                     end
                 end
                 
-                -- Convert yards to pixels
-                local mmX = xDist / xScale
-                local mmY = -yDist / yScale  -- negative because screen Y is inverted
-                
+                -- Position pin
                 pin:ClearAllPoints()
-                pin:SetPoint("CENTER", Minimap, "CENTER", mmX, mmY)
+                pin:SetPoint("CENTER", Minimap, "CENTER", xDist / xScale, -yDist / yScale)
             end
         end
       end
-
     end
   end)
   
   self._mmTicker:RegisterEvent("ZONE_CHANGED_NEW_AREA")
   self._mmTicker:SetScript("OnEvent", function(self, event)
     if event == "ZONE_CHANGED_NEW_AREA" then
-        -- Force immediate update on zone change
+              -- Force immediate update on zone change
         self:GetScript("OnUpdate")(self, Map._mmInterval) 
     end
   end)

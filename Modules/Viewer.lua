@@ -3754,7 +3754,7 @@ function Viewer:ShowOnMap(discoveryData)
 
         if Map and Map.pins then
             for _, pin in ipairs(Map.pins) do
-                if pin.discovery and pin.discovery.guid == discovery.guid then
+                if pin.discovery and pin.discovery.g == discoveryData.guid then
                     targetPin = pin
                     break
                 end
@@ -3772,7 +3772,7 @@ function Viewer:ShowOnMap(discoveryData)
 
             -- Stores discovery data for the tooltip and tracks current overlay target.
             WorldMapFrame.viewerOverlayPin.discoveryData = discoveryData
-            Viewer.currentOverlayTarget = discovery.guid
+            Viewer.currentOverlayTarget = discoveryData.guid
 
             -- Sets the item icon texture.
             local Map = L:GetModule("Map", true)
@@ -3790,7 +3790,7 @@ function Viewer:ShowOnMap(discoveryData)
 
                 if Map and Map.pins then
                     for _, pin in ipairs(Map.pins) do
-                        if pin.discovery and pin.discovery.guid == discovery.guid then
+                        if pin.discovery and pin.discovery.g == discoveryData.guid then
                             targetPin = pin
                             break
                         end
@@ -3808,7 +3808,7 @@ function Viewer:ShowOnMap(discoveryData)
 
                     -- Stores discovery data for the tooltip and tracks current overlay target.
                     WorldMapFrame.viewerOverlayPin.discoveryData = discoveryData
-                    Viewer.currentOverlayTarget = discovery.guid
+                    Viewer.currentOverlayTarget = discoveryData.guid
 
                     -- Sets the item icon texture.
                     local Map = L:GetModule("Map", true)

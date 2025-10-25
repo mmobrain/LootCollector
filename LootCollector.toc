@@ -1,8 +1,10 @@
 ## Interface: 30300
-## Title: |ce5cc80ffLootCollector|r |cffff5555[alpha.0.4.9]
-## Notes: Community-driven addon enables players to collaboratively discover and share locations of lootable objects, enriching exploration and boosting gameplay efficiency. Designed for Ascension.Bronzebeard by Skulltrail.
+## Title: |ce5cc80ffLootCollector|r |cffff5555[alpha.0.5.1S]
+## Notes: Community-driven addon enables players to collaboratively discover and share locations of lootable objects, enriching exploration and boosting gameplay efficiency. Designed for Ascension.Bronzebeard by Skulltrail. |cffffffffContributors:|r |cffffff00Deidre, Rhenyra, Morty, Markosz|r. |cffffffffAlpha Top Collectors:|r |cffffff00Morty, Laya, Brokenheart, Mie, Rhen, Aaltrix, Insanestar, Harrydn, Blutact|r.
 ## Author: Skulltrail
-## Version: 0.4.9-alpha
+## Contributors: Deidre, Rhenyra, Morty, Markosz
+## AlphaTopCollectors: Morty, Laya, Brokenheart, Mie, Rhen, Aaltrix, Insanestar, Harrydn, Blutact
+## Version: alpha 0.5.1S
 ## SavedVariables: LootCollectorDB_Asc
 ## OptionalDeps: Ace3, TomTom
 
@@ -18,18 +20,36 @@ libs\AceSerializer-3.0\AceSerializer-3.0.lua
 libs\LibBase64-1.0\lib.xml
 libs\Ace3\AceComm-3.0\AceComm-3.0.xml
 libs\LibDeflate\lib.xml
+libs\XXH_Lua_Lib\XXH_Lua_Lib.lua
 
 DBopt\db.lua
+DBopt\customimport.lua
 
 LootCollector.lua
-Core.lua
-Detect.lua
-Reinforce.lua
-Comm.lua
-DBSync.lua
-Settings.lua
-Decay.lua
-Map.lua
-Arrow.lua
-Toast.lua
-ImportExport.lua
+
+#Core constants
+Modules\Constants.lua
+#migration early
+Modules\Migration_v5.lua
+
+# Data and resolution helpers early
+Modules\ZoneList.lua
+Modules\ZoneRelationships.lua
+
+# Core Logic
+Modules\Core.lua
+Modules\Detect.lua
+Modules\Reinforce.lua
+Modules\Decay.lua
+Modules\Comm.lua
+Modules\Moderation.lua
+Modules\DBSync.lua
+
+# Map/UI and behavior modules
+Modules\Map.lua
+Modules\CustomZoneData.lua
+Modules\Arrow.lua
+Modules\Settings.lua
+Modules\Toast.lua
+Modules\HistoryTab.lua
+Modules\ImportExport.lua

@@ -3,16 +3,20 @@
 > [!IMPORTANT]  
 > **Compatibility Notice:** This addon has been developed and tested specifically for the **Bronzebeard** realm of Project Ascension. Its data-sharing model is designed for static world object spawns (e.g., clickable chests/nodes). On realms where items like Mystic Scrolls drop from random mobs, sharing coordinates is not useful, and this addon may not function as intended.
 
-**LootCollector** is a community-driven discovery and navigation tool for the Bronzebeard realm of Project Ascension. It creates a live, shared database of hand-placed, static world objects—such as Worldforged gear and Mystic Scrolls—by allowing all users to automatically share their findings with each other in real-time.
+**LootCollector** is a community-driven discovery and navigation tool for the Bronzebeard realm of Project Ascension. It creates a live, shared, and now self-healing database of hand-placed world objects-such as Worldforged gear-by allowing all users to automatically share their findings and report when items are gone.
 
-Unlike addons that require manual updates after every server patch, LootCollector's database is evergreen. All it takes is one user to find a new item, and its location is instantly shared with the entire addon community.
+Thanks to a completely re-engineered database and network protocol, LootCollector is faster, more accurate, and more reliable than ever. All it takes is one user to find a new item, and its location is instantly shared with the entire addon community.
+
 
 Screenhots from live Brozebeard few fours after launch (0.4.2-alpha):
 ![image](https://i.imgur.com/cfYL2fM.jpeg)
 
+Screenhots from 0.5.1S-alpha:
+![image](https://i.imgur.com/W7oPo9L.jpeg)
+
 ## Installation
 
-1.  Download the latest version from the [Releases](https://github.com/your-username/LootCollector/releases) page.
+1.  Download the latest version from the [Releases](https://github.com/mmobrain/LootCollector/releases) page.
 2.  Extract the ZIP file.
 3.  Copy the `LootCollector` folder into your `Interface\AddOns` directory in your World of Warcraft installation.
 4.  Restart World of Warcraft.
@@ -20,62 +24,62 @@ Screenhots from live Brozebeard few fours after launch (0.4.2-alpha):
 ## Key Features
 
 ### 1. Live Community Database
-*   **Automatic Sharing:** When you loot a qualifying item (like a Worldforged piece or Mystic Scroll), its location is automatically shared with other LootCollector users.
-*   **Real-Time Updates:** Receive notifications and map updates as other players discover items around the world.
-*   **Status System:** Discoveries are tracked with a status (`UNCONFIRMED`, `FADING`, `STALE`), giving you an idea of how recently an item was seen.
-*   **Anonymous Mode:** Enable "Nameless Sharing" to contribute as "An Unnamed Collector".
-*   **Delayed Sharing:** Need a head start? Enable "Delayed Sharing" to wait a configurable amount of time before broadcasting your find.
-*   **Pause Functionality:** Temporarily pause all incoming and outgoing messages with `/lcpause` or through the map menu. Perfect for high-stakes situations.
+*   **Automatic Sharing:** When you loot a qualifying item, its location is automatically shared with other LootCollector users after a brief delay to ensure data accuracy.
+*   **Real-Time Updates:** Receive notifications and map updates as other players discover items.
+*   **Community Moderation:** Is a discovery no longer there? Right-click its pin and "Report as Gone." With enough reports from the community, an item's status will change to `FADING` and eventually `STALE`, keeping the map clean and up-to-date.
+*   **Spam & Tamper Resistance:** The new network protocol automatically validates incoming data and tracks sender reputation, protecting the database from invalid or malicious information.
+*   **Nameless & Delayed Sharing:** Enable "Nameless Sharing" to contribute anonymously or "Delayed Sharing" to wait a configurable time before broadcasting your find.
 
-### 2. Map & Navigation Tools
-*   **Interactive Map Overlay:** All known discoveries are plotted directly on your world map with item icons.
-    *   **Dynamic Icons:** Icons are color-coded by quality and change transparency based on their status (faded, stale).
-    *   **Looted Indicators:** Items you've already looted on your current character are clearly marked.
-    *   **Configurable Size:** Adjust the size of map icons to your preference via the settings panel.
-*   **TomTom Integration:** If you have the TomTom addon installed, LootCollector will use its navigation arrow to guide you to a discovery.
-    *   Right-click any discovery on the map and select "Navigate here" to set it as your target.
+### 2. Advanced Map & Navigation Tools
+*   **Clustered Map View:** The continent map is now decluttered! Discoveries are grouped into a single pin per zone with a counter. Clicking a cluster zooms you into that zone's map.
+*   **Map Search & Focus:** A new search bar on the world map allows you to filter pins by item or zone name. Find an item from anywhere and use the "Focus" feature to have the map automatically pan and play a pulsing animation at its location.
+*   **Interactive Map Overlay:** All known discoveries are plotted on your map with item icons.
+    *   **Quality Borders:** Pin borders are now color-coded by item quality for at-a-glance identification.
+    *   **Status Indicators:** `FADING` and `STALE` items are transparent, while items you've already looted are desaturated.
+*   **Smarter TomTom Integration:**
+    *   **Auto-Track Nearest:** Enable this new option to have the navigation arrow automatically point to the closest unlooted discovery matching your filters. (Requires TomTom and may not work in starter zone untill Astrolable - a library that TomTom uses is updated)
+    *   **Skip Target:** Don't want to go to the nearest item? Use the map menu to skip it for your current session.
+*   **Smarter Minimap:** The minimap has been overhauled for better performance and accuracy. A new distance filter lets you control how far away discoveries can be before they appear. You can also mouse over an minimap icons to see details!
 
-### 3. Advanced Filtering
-A filtering system, accessible via the "LC" button on the world map, gives you full control over what you see.
-*   **Hide by Status:** Hide discoveries that are `Faded`, `Stale`, or `Unconfirmed`.
-*   **Hide Looted:** Hide all items you've already found on your current character.
-*   **Filter by Quality:** Set a minimum item rarity to display on the map.
-*   **Filter by Equip Slot:** Only show specific armor or weapon types (e.g., only Trinkets and Two-Handed Weapons).
-*   **Filter by Class:** Show only items usable by your class.
-
-### 4. Data Management
-*   **Import/Export:** Share your entire discovery database with friends or import a backup. The addon uses a compressed format for easy sharing.
-*   **Top Contributors:** See a list of the top 10 players who have contributed the most discoveries with the `/lctop` command.
-
-## How to Configure
-
-All major options can be configured through the in-game panel or the "LC" button on the world map.
-
-*   **Open the options:** Type `/lc` in chat.
-*   **Navigate to:** `Interface -> AddOns -> LootCollector`
+### 3. Powerful Filtering & Data Management
+*   **Advanced Filtering:** The filter menu gives you full control over what you see.
+    *   Hide items by status (`Faded`, `Stale`, `Unconfirmed`) or those you've already looted.
+    *   **New:** Filter by **Usable by Class** or specific **Equipment Slot** (e.g., only Trinkets), which works even for items you haven't seen before.
+*   **"Show to..." Player Sharing:** Right-click a map pin and select "Show to..." to send a discovery's location directly to another player via whisper. They'll get a prompt to view it on their map.
+*   **Import/Export:** A new "Import from File" method allows you to safely import massive community databases without freezing your client.
 
 ## Slash Commands
 
-*   `/lc` - Opens the main options panel.
+*   `/lc` or `/lootcollector` - Opens the main options panel.
+*   `/lchistory` - Opens the new Discovery History window (test).
 *   `/lcarrow` - Toggles the TomTom navigation arrow.
+*   `/lcarrow clearskip` - Clears the list of temporarily skipped arrow targets.
 *   `/lctop` - Displays the top 10 contributors from the database.
 *   `/lcpause` - Toggles the pausing of all incoming and outgoing messages.
 *   `/lcshare <party|raid|guild|whisper> [player]` - Manually shares your entire database with others.
 *   `/lcexport` / `/lcimport` - Opens the export/import dialog windows.
 
+## Other QOL
+*   `Shift+click` - focus on discovery on the map
+*   `Ctrl+Alt+click` - link discovery with coords on chat
+
 ## FAQ
 
 **Q: I don't see an arrow. How do I turn it on?**
-**A:** The navigation arrow requires the **TomTom** addon to be installed and enabled. Once TomTom is running, you can right-click a discovery on the map to navigate to it or type `/lcarrow` to toggle the arrow.
+**A:** The navigation arrow requires the **TomTom** addon. Once installed, you can enable "Auto-track Nearest Unlooted" in the map filter menu, right-click a discovery and select "Navigate here," or type `/lcarrow`.
 
-**Q: The arrow is pointing in the wrong direction.**
-**A:** TomTom relies on a library named Astrolabe for zone and map data. Project Ascension has many custom zones that may not be in Astrolabe's database. Until this library is updated with the custom map data, TomTom may fail to navigate correctly in some places.
-
-**Q: Why does a map icon say "Found by: Unknown"?**
-**A:** This can happen if the discovery was imported from an older version of the addon, or if the person who found it had "Nameless Sharing" enabled. New discoveries you find should always be credited to your name.
+**Q: What do the `FADING` and `STALE` statuses mean?**
+**A:** These statuses are part of the new community moderation system. When enough players report an item as "gone," its status changes to `FADING`. If it remains unconfirmed after a long time, it becomes `STALE`. This helps keep the map accurate by highlighting discoveries that may no longer be there.
 
 **Q: I found an item but it wasn't shared.**
-**A:** The addon currently filters for items that contain the keywords "Worldforged" or "Mystic Scroll" in their tooltips. Other items are not automatically shared. Also, ensure that sharing is enabled in the options (`/lc`).
+**A:** The addon automatically shares items that have the "Worldforged" subtitle in their tooltip or "Mystic Scroll" in their name. Other items are not shared. Also, ensure that sharing is enabled in the options (`/lc`).
+
+**Q: The arrow is pointing in the wrong direction.**
+**A:** TomTom relies on a library named Astrolabe for map data. Project Ascension has custom zones that may not be in Astrolabe's database. While LootCollector includes its own data for minimap accuracy, TomTom's world map navigation may still fail in some custom areas.
+
+## Contributing
+
+This project is open to contributions from the community. If you are interested in fixing a bug or adding a new feature, please refer to the **[CONTRIBUTING.md](CONTRIBUTING.md)** guide for developer guidelines and best practices.
 
 ## License
 This project is released under the [MIT License](LICENSE.md).

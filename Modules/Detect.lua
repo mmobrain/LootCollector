@@ -1,8 +1,14 @@
--- Detect.lua
--- UNK.B64.UTF-8
+-- Detect.lua (3.3.5-safe)
+-- Source-aware filtering for LootCollector with iz resolution for instances.
+-- REVISED V2: Implements an "expectation" system. BAG_UPDATE is only processed for detection if a recent event (like GOSSIP_CLOSED or CHAT_MSG_LOOT) has set a flag indicating a new item is expected.
+-- UNK.B64-UTF-8
+
 
 local L = LootCollector
 local Detect = L:NewModule("Detect", "AceEvent-3.0")
+
+
+
 
 local SCAN_TIP_NAME = "LootCollectorScanTip"
 local scanTip
@@ -26,8 +32,8 @@ local lastLootContext = {
 }
 
 local LOOT_VALIDITY_WINDOW = 20
-local BAG_SCAN_CACHE_TTL = 3.0 
-local ITEM_EXPECTATION_WINDOW = 3.0 
+local BAG_SCAN_CACHE_TTL = 3.0 -- Seconds to cache a bag scan result to prevent spam
+local ITEM_EXPECTATION_WINDOW = 3.0 -- Seconds after an event to expect an item in bags
 
 Detect._expectingItemUntil = 0
 Detect._expectedItemLink = nil
@@ -56,7 +62,7 @@ local function TooltipHas(link, needle)
 end
 
 Detect._cache, Detect._recent = { isWF = {}, isMS = {} }, {}
-Detect._recentBagScans = {} 
+Detect._recentBagScans = {} -- Spam prevention cache for BAG_UPDATE
 
 function Detect:IsWorldforged(link)
   local c = self._cache.isWF[link]
@@ -150,17 +156,18 @@ function Detect:OnNPCInteraction()
   local unitToCheck = "npc"
   if not UnitExists(unitToCheck) then return end
 
-  
+
+  -- Step 1: Always scan the merchant's items first.
   local merchantItems = ScanMerchant()
   if #merchantItems == 0 then
       return
   end
 
-  
+  -- Step 2: Determine the vendor type based on their inventory or sub-title.
   local isMSVendor = false
   local isBMVendor = IsBlackmarketArtisan(unitToCheck)
   
-  if not isBMVendor then 
+  if not isBMVendor then -- Only check for MS if it's not already identified as BM
       for _, itemData in ipairs(merchantItems) do
           if itemData.name and string.find(itemData.name, "Mystic Scroll", 1, true) then
               isMSVendor = true
@@ -170,12 +177,12 @@ function Detect:OnNPCInteraction()
   else
   end
 
-  
+  -- Step 3: If the vendor is neither type, we are not interested.
   if not isMSVendor and not isBMVendor then
       return
   end
 
-  
+  -- Step 4: Determine vendorType and create the appropriate placeholder data.
   local vendorType, placeholderLink
   if isMSVendor then
       vendorType = "MS"
@@ -185,7 +192,7 @@ function Detect:OnNPCInteraction()
       placeholderLink = string.format("|cff663300|Hitem:-3:0:0:0:0:0:0:0:0|h[Blackmarket Supplies]|h|r")
   end
 
-  
+  -- Step 5: Gather location data and package the discovery.
   local now = time()
   local px, py = GetPlayerMapPosition("player")
   px = px or 0; py = py or 0
@@ -211,7 +218,7 @@ function Detect:OnNPCInteraction()
   local Constants = L:GetModule("Constants", true)
   local discovery = {
       il = placeholderLink,
-      i = (vendorType == "MS" and -4 or -3), 
+      i = (vendorType == "MS" and -4 or -3), -- Use a unique placeholder ID
       c = c,
       z = z,
       iz = iz,
@@ -220,8 +227,8 @@ function Detect:OnNPCInteraction()
       t0 = now,
       src = "merchant",
       fp = UnitName("player"),
-      dt = Constants and Constants.DISCOVERY_TYPE.BLACKMARKET, 
-      vendorType = vendorType, 
+      dt = Constants and Constants.DISCOVERY_TYPE.BLACKMARKET, -- Both are stored as this type
+      vendorType = vendorType, -- This field differentiates them
       vendorItems = merchantItems,
       vendorName = UnitName(unitToCheck),
   }
@@ -265,7 +272,7 @@ function Detect:OnInitialize()
   self:RegisterEvent("LOOT_OPENED", "OnLootOpened")
   self:RegisterEvent("LOOT_CLOSED", "OnLootClosed")
   
-  
+  -- Primary trigger for Mystic Scrolls
   self:RegisterEvent("BAG_UPDATE", "OnBagUpdate")
   
   self:RegisterEvent("GOSSIP_SHOW", function() self._ctx.lastGossipAt = time(); self:OnNPCInteraction() end)
@@ -392,12 +399,12 @@ function Detect:OnBagUpdate(event, bagID)
     
     local now = time()
     if now > self._expectingItemUntil then
-        
-        return 
+        -- self:Debug("Event: BAG_UPDATE for bag %d. Ignoring (unsolicited).", bagID)
+        return -- Not expecting an item, so ignore this update to prevent processing existing items.
     end
     
 
-    
+    -- Clean up old entries from the spam cache
     for link, timestamp in pairs(self._recentBagScans) do
         if now - timestamp > BAG_SCAN_CACHE_TTL then
             self._recentBagScans[link] = nil
@@ -408,15 +415,15 @@ function Detect:OnBagUpdate(event, bagID)
         local link = GetContainerItemLink(bagID, slotID)
         if link then
             if not self._recentBagScans[link] then
-                self._recentBagScans[link] = now 
+                self._recentBagScans[link] = now -- Add to spam cache immediately
 
                 local isExpectedLink = (self._expectedItemLink and self._expectedItemLink == link)
-                local isMS = self:IsMysticScroll(link, "direct") 
+                local isMS = self:IsMysticScroll(link, "direct") -- check if it's a scroll
                 local isWF = self:IsWorldforged(link)
 
                 if isExpectedLink then
                     self:ProcessPotentialDiscovery(link, "world_loot", UnitName("player"))
-                    self._expectedItemLink = nil 
+                    self._expectedItemLink = nil -- Consume the expectation
                 elseif isMS and not isWF then
                     self:ProcessPotentialDiscovery(link, "bag_update", UnitName("player"))
                 else

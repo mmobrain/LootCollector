@@ -79,8 +79,8 @@ local function compareVersions(v1, v2)
     return 0
 end
 
-Comm.addonPrefix = L.addonPrefix or "BBLCAM25"
-Comm.channelName = L.chatChannel or "BBLCC25"
+Comm.addonPrefix = L.addonPrefix or "BBLC25AM"
+Comm.channelName = L.chatChannel or "BBLC25C"
 Comm.channelId = 0
 
 local function _getconst(fn, default)
@@ -294,6 +294,10 @@ function Comm:IsChannelHealthy()
 end
 
 function Comm:EnsureChannelJoined()
+    if not L.channelReady then 
+        print("|cffff7f00LootCollector:|r Channel system is not ready yet, please wait a few seconds after login.")
+        return 
+    end
     local p = L and L.db and L.db.profile
     if not (p and p.sharing and p.sharing.enabled) then return end
     if self:IsChannelHealthy() then return end
@@ -694,6 +698,8 @@ end
 local function _sendWireToNetwork(wire)
     local tnow = now()
     
+    if not L.channelReady then return false end
+
     if (tnow - (Comm._lastSendAt or 0)) < (Comm.chatMinInterval or 0.75) then
         return false
     end

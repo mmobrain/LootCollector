@@ -49,10 +49,6 @@ StaticPopupDialogs["LOOTCOLLECTOR_SHOW_DISCOVERY_REQUEST"] = {
     OnAccept = function(self, data)
       if not data then return end
       
-      
-      
-  
-      
       local Core = LootCollector:GetModule("Core", true)
       if Core and Core.AddDiscovery then
         
@@ -78,8 +74,6 @@ StaticPopupDialogs["LOOTCOLLECTOR_SHOW_DISCOVERY_REQUEST"] = {
     timeout = 0,
     whileDead = 1,
     hideOnEscape = 1,
-    showAlert = true,
-    exclusive = 1,
   }
 
 StaticPopupDialogs["LOOTCOLLECTOR_OPTIONAL_DB_UPDATE"] = {
@@ -109,7 +103,6 @@ StaticPopupDialogs["LOOTCOLLECTOR_OPTIONAL_DB_UPDATE"] = {
   timeout = 0,
   whileDead = 1,
   hideOnEscape = 1,
-  showAlert = true,
 }
 
 StaticPopupDialogs["LOOTCOLLECTOR_MIGRATE_DB"] = {
@@ -130,9 +123,6 @@ StaticPopupDialogs["LOOTCOLLECTOR_MIGRATE_DB"] = {
   timeout = 0,
   whileDead = 1,
   hideOnEscape = 1,
-  showAlert = true,
-  exclusive = 1,
-  enterClicksFirstButton = true,
 }
 
 local dbDefaults = {
@@ -419,6 +409,8 @@ function LootCollector:OnInitialize()
     -- Initialize AceDB AFTER the check is complete.
     self.db = LibStub("AceDB-3.0"):New("LootCollectorDB_Asc", dbDefaults, true)
 
+    self.channelReady = false 
+
     -- If the pre-check determined a migration is needed, enter legacy mode and prompt the user.
     if needsMigration then
         self.LEGACY_MODE_ACTIVE = true
@@ -528,7 +520,10 @@ end
 function LootCollector:ProcessPauseQueues()
     if self:IsPaused() then return end
     local Core = self:GetModule("Core", true); local Comm = self:GetModule("Comm", true); if not Core or not Comm then return end
-    local incomingCount = #self.pauseQueue.incoming; for _, discoveryData in ipairs(self.pauseQueue.incoming) do Core:AddDiscovery(discoveryData, true) end; self.pauseQueue.incoming = {}
+    
+
+    local incomingCount = #self.pauseQueue.incoming; for _, discoveryData in ipairs(self.pauseQueue.incoming) do Core:AddDiscovery(discoveryData, { isNetwork = true }) end; self.pauseQueue.incoming = {}
+    
     local outgoingCount = #self.pauseQueue.outgoing; for _, discoveryData in ipairs(self.pauseQueue.outgoing) do Comm:_BroadcastNow(discoveryData) end; self.pauseQueue.outgoing = {}
     if (incomingCount + outgoingCount) > 0 then print(string.format("|cff00ff00LootCollector:|r Processed %d incoming and %d outgoing queued messages.", incomingCount, outgoingCount)); local Map = self:GetModule("Map", true); if Map and Map.Update then Map:Update() end end
 end
@@ -549,12 +544,38 @@ function LootCollector:DelayedChannelInit()
     
     LeaveChannelByName("BBLCC25")
 
-    if not (self.db and self.db.profile.sharing.enabled) or self:IsZoneIgnored() then return end
+    
     local Comm = self:GetModule("Comm", true); if not Comm then return end
-    local DELAY_SECONDS = 9.0
+    local DELAY_SECONDS = 12.0
     
+    print("|cffffd100LootCollector Debug:|r DelayedChannelInit started. Timer will fire in 9 seconds.")
+
     
-    local timerFrame = CreateFrame("Frame", "LootCollectorChannelTimer"); local elapsed = 0; timerFrame:SetScript("OnUpdate", function(_, e) elapsed = elapsed + e; if elapsed >= DELAY_SECONDS then timerFrame:SetScript("OnUpdate", nil); if Comm.InitializeChannelLogic then Comm:InitializeChannelLogic() end end end)
+    local timerFrame = CreateFrame("Frame", "LootCollectorChannelTimer"); 
+    local elapsed = 0; 
+    
+    timerFrame:SetScript("OnUpdate", function(_, e) 
+        elapsed = elapsed + e; 
+
+        if elapsed >= DELAY_SECONDS then 
+            
+            timerFrame:SetScript("OnUpdate", nil); 
+            
+            print("|cffffd100LootCollector Debug:|r Timer finished. Setting channelReady to true.")
+            LootCollector.channelReady = true;
+
+            
+            if LootCollector.db and LootCollector.db.profile.sharing.enabled and not LootCollector:IsZoneIgnored() then
+                print("|cffffd100LootCollector Debug:|r Sharing is enabled, attempting to join channel.")
+                if Comm.InitializeChannelLogic then 
+                    Comm:InitializeChannelLogic()
+                end
+            else
+                print("|cffffd100LootCollector Debug:|r Sharing is disabled, skipping channel join.")
+            end
+        end 
+    end)
+
     self:UnregisterEvent("PLAYER_ENTERING_WORLD")
 end
 

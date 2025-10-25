@@ -1447,8 +1447,13 @@ function Map:EnsureMinimapTicker()
   self._mmTicker:RegisterEvent("ZONE_CHANGED_NEW_AREA")
   self._mmTicker:SetScript("OnEvent", function(self, event)
     if event == "ZONE_CHANGED_NEW_AREA" then
-              -- Force immediate update on zone change
-        self:GetScript("OnUpdate")(self, Map._mmInterval) 
+        -- MODIFIED: Instead of forcing an immediate scan, schedule it.
+        -- This prevents a lag spike during the zone transition.
+        C_Timer.After(1.5, function()
+            if Map._mmTicker and Map._mmTicker:IsShown() then
+                Map:UpdateMinimap()
+            end
+        end)
     end
   end)
 end

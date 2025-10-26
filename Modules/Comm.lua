@@ -783,8 +783,8 @@ local function ChatFilter(_, _, msg, _, _, _, _, _, _, _, channelName)
     
     local chA = string.upper(channelName or "")
     local chB = string.upper(Comm.channelName or "")
+
     if chA ~= chB then return false end
-    
     
     
     if type(msg) == "string" and msg:match("^LC[1-5]:") then
@@ -1161,6 +1161,13 @@ function Comm:OnCommReceived(prefix, message, distribution, sender)
 end
 
 function Comm:RouteIncoming(tbl, via, sender)
+    if via == "CHANNEL" then
+        local p = L and L.db and L.db.profile and L.db.profile.sharing
+        if not (p and p.enabled) then            
+            return
+        end
+    end
+    
     if sender == UnitName("player") and not L._INJECT_TEST_MODE then
         
         return

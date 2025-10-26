@@ -148,6 +148,7 @@ local dbDefaults = {
             maxMinimapDistance = 0,
             showMysticScrolls = true,
             showWorldforged = true,
+            showWFTooltip = true,
             minRarity = 0,
             usableByClasses = {},
             allowedEquipLoc = {},
@@ -287,6 +288,7 @@ function LootCollector:GetFilters()
     if f.showMinimap == nil then f.showMinimap = true end
     if f.showMysticScrolls == nil then f.showMysticScrolls = true end
     if f.showWorldforged == nil then f.showWorldforged = true end
+    if f.showWFTooltip == nil then f.showWFTooltip = true end
     if f.maxMinimapDistance == nil then f.maxMinimapDistance = 0 end
     if f.pinSize == nil then f.pinSize = 16 end
     return f

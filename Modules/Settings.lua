@@ -704,7 +704,7 @@ local function buildOptions()
                 args = {
                     intro_text = {
                         type = "description",
-                        name = "Hi there! \n\nI'm Skulltrail, and I'm thrilled to present LootCollector - my first-ever WoW addon! \nI'm over the moon that so many players are finding it useful! 😊\n\nA huge shoutout to all the amazing contributors for their incredible help and hard work. This addon wouldn't be what it is today without you! \nBig thanks to: |cffFFD700Deidre, Rhenyra, Morty, Markosz, Bandit Tech|r, and all the awesome community helpers out there.\n\nIf you'd like to support me, I'd love to hear what you enjoy about LootCollector or any ideas for improvement. Feel free to drop me a message on Discord @Skulltrail!",
+                        name = "Hi there! \n\nI'm Skulltrail, and I'm thrilled to present LootCollector - my first-ever WoW addon! \nI'm over the moon that so many players are finding it useful! 😊\n\nA huge shoutout to all the amazing contributors for their incredible help and hard work. This addon wouldn't be what it is today without you! \nBig thanks to: |cffFFD700Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan|r, and all the awesome community helpers out there.\n\nIf you'd like to support me, I'd love to hear what you enjoy about LootCollector or any ideas for improvement. Feel free to drop me a message on Discord @Skulltrail!",
                         fontSize = "large",
                         order = 10,
                     },

@@ -1527,8 +1527,21 @@ function Core:AddDiscovery(discoveryData, options)
             
             
             if incoming_fp ~= existing.fp then
+                -- Backfill fp_votes for older records before processing the new vote.
+                if not existing.fp_votes then
+                    -- FIX: Use a fallback for existing.fp in case it's nil on very old records.
+                    local original_finder = existing.fp or "Unknown"
+                    existing.fp_votes = { [original_finder] = { score = 1, t0 = existing.t0 } }
+                end
                 
-                
+                -- Add/update the vote from the incoming discovery.
+                local incomingVote = existing.fp_votes[incoming_fp]
+                if not incomingVote then
+                    existing.fp_votes[incoming_fp] = { score = 1, t0 = discoveryData.t0 }
+                else
+                    incomingVote.score = incomingVote.score + 1
+                end
+
                 if not existing.corr_sent_ts or (time() - existing.corr_sent_ts > 900) then
                     local Comm = L:GetModule("Comm", true)
                     if Comm and Comm.BroadcastCorrection then
@@ -1562,17 +1575,21 @@ function Core:AddDiscovery(discoveryData, options)
             L:SendMessage("LootCollector_DiscoveriesUpdated", "update", guid, existing)
         end
 
-    elseif op == "CONF" or op == "SHOW" then
+    elseif op == "CONF" then
         if existing then
             
             existing.ls = max(existing.ls or 0, discoveryData.ls)
-            if op == "CONF" then
-                existing.o = discoveryData.sender
-                L:SendMessage("LOOTCOLLECTOR_CONFIRMATION_RECEIVED", discoveryData)
-            end
-        else
-            local finder = discoveryData.fp or "Unknown"
+            existing.o = discoveryData.sender
+            L:SendMessage("LOOTCOLLECTOR_CONFIRMATION_RECEIVED", discoveryData)
+        end
+        
+    elseif op == "SHOW" then
+        if existing then
             
+            existing.ls = max(existing.ls or 0, discoveryData.ls)
+        else
+            
+            local finder = discoveryData.fp or "Unknown"
             local newRecord = {
                 g = guid, c = c, z = z, iz = iz, i = itemID, xy = {x=x, y=y},
                 il = discoveryData.il, q = discoveryData.q, t0 = discoveryData.t0,
@@ -1620,7 +1637,8 @@ function Core:AddDiscovery(discoveryData, options)
 end
 
 function Core:ReportDiscoveryAsGone(guid)
-    if not guid then return end
+    if not guid or not (L.db and L.db.global and L.db.global.discoveries) then return end
+    
     local db = L.db.global.discoveries
     local rec = db[guid]
     if not rec then return end
@@ -1684,21 +1702,10 @@ function Core:ClearDiscoveries()
 end
 
 function Core:RemoveDiscovery(guid)
-    if not guid or not (L.db and L.db.global and L.db.global.discoveries) then return end
-    if L.db.global.discoveries[guid] then
-        L.db.global.discoveries[guid] = nil
-        print(string.format("|cff00ff00LootCollector:|r Discovery %s removed.", guid))
-        
-        -- Notifies Viewer of removed discovery
-        L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
-        
-        local Map = L:GetModule("Map", true)
-        if Map and Map.Update then
-            Map:Update()
-        end
-        return true
-    end
-    return false
+    if not guid then return end
+    -- Redirect the call to the function that also handles sending the network ACK message.
+    -- ReportDiscoveryAsGone now contains all necessary safety checks.
+    self:ReportDiscoveryAsGone(guid)
 end
 
 function Core:RescanAllClasses()

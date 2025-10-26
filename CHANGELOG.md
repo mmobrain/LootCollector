@@ -1,3 +1,30 @@
+## **LootCollector 0.5.3 - Enhanced WF Tooltip + Fixes**
+Highlights
+Enhanced WF Tooltip - new feature for WF items that displays statistics after certain upgrade levels, providing detailed progression information directly in tooltips.
+
+Fixes
+Database Error Fix: Resolved issue where new discovery reports for older records caused errors when attempting to access the non-existent fp_votes table.
+
+Toast Notification Fix: Reduced redundant toast spam that incorrectly displayed notifications for already existing discoveries.
+
+Database Update: Updated starter database to 1,590 discoveries.
+
+
+
+## **LootCollector 0.5.2 - Viewer + Fixes**
+Highlights
+Integrated Markosz’s Viewer module and its minimap icon into the addon.
+
+Fixes
+Resolved locked movement during display of certain popup dialogs.
+Added a short delay to addon minimap operations after changing zones to avoid UI lag.
+Corrected fallback channel name resolution in Comm.lua.
+Fixed pause state handling.
+Possibly fixed another /1 hijack issue and fixed channel joining.
+Fixed an issue where looted discoveries were not automatically marked as looted
+Corrected square map detection and minimap rotation handling. //Markosz
+Fixed the Show() function to target the correct discovery item. //Markosz
+
 ## **LootCollector Changelog: Version 0.5.1S (from 0.4.9)**
 
 Changes focusing on database optimization, network protocol enhancements, community moderation, and  UI/UX and QOL improvements.

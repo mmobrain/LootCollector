@@ -1377,13 +1377,16 @@ function Map:EnsureMinimapTicker()
       local rotateEnabled = (GetCVar("rotateMinimap") == "1")
       local cos_f, sin_f
       if rotateEnabled then
-        cos_f = math.cos(facing)
-        sin_f = math.sin(facing)
+        cos_f = math.cos(-facing)
+        sin_f = math.sin(-facing)
       end
 
       -- Edge detection
-      local shapeData = GetCurrentMinimapShape()
-      local isRoundShape = shapeData and shapeData["SQUARE"] == false
+      local shape
+      if _G.GetMinimapShape then          
+          shape = GetMinimapShape and _G.GetMinimapShape() or "ROUND"
+      end
+      shape = shape and ValidMinimapShapes and ValidMinimapShapes[shape]
 
       for _, pin in ipairs(Map._mmPins) do
         if pin:IsShown() and pin.discovery then
@@ -1418,7 +1421,16 @@ function Map:EnsureMinimapTicker()
 
                 -- Calculate distance based on minimap shape
                 local dist
-                if isRoundShape then
+                local isRound = true
+                if shape and not (xDist == 0 or yDist == 0) then
+                    local cornerIdx = (xDist < 0) and 1 or 3
+                    if yDist >= 0 then 
+                        cornerIdx = cornerIdx + 1 
+                    end
+                    isRound = shape[cornerIdx]
+                end
+
+                if isRound then
                     dist = math.sqrt(xDist * xDist + yDist * yDist)
                 else
                     dist = math.max(math.abs(xDist), math.abs(yDist))
@@ -1457,9 +1469,6 @@ function Map:EnsureMinimapTicker()
     end
   end)
 end
-
-
-
 
 function Map:ToggleSearchUI(show)
     self:EnsureSearchUI()

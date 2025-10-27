@@ -731,6 +731,7 @@ SlashCmdList["LootCollectorSHARE"] = function(msg)
 end
 
 function DBSync:OnInitialize()
+    if L.LEGACY_MODE_ACTIVE then return end
     self:RegisterComm(PREFIX, "OnCommReceived")
     if not summaryTicker then
         summaryTicker = CreateFrame("Frame", "LootCollectorDBSyncSummaryTicker")

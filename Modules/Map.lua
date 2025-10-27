@@ -46,333 +46,6 @@ Map.clusterPins = Map.clusterPins or {}
 local CLUSTER_PIN_SIZE = 32
 local CLUSTER_PIN_BACKGROUND_TEXTURE = "Interface\\AddOns\\LootCollector\\media\\pin"
 
---[[ Worldforged Tooltip Enhancement START ]]--
-local wfInHandler = false
-
-local WF_QUALITY_COLORS = {
-    [0] = "|cFF9D9D9D", [1] = "|cFFFFFFFF", [2] = "|cFF1EFF00",
-    [3] = "|cFF0070DD", [4] = "|cFFA335EE", [5] = "|cFFFF8000",
-    [6] = "|cFFE6CC80", [7] = "|cFFE6CC80",
-}
-
-local WF_DIFFICULTY_TIERS = {
-    { index = 4, name = "Dungeon Upgrade", short = "Dung" },
-    { index = 5, name = "ZG Upgrade", short = "ZG" },
-    { index = 6, name = "Tier 1 Upgrade", short = "T1" },
-    { index = 7, name = "Tier 2 Upgrade", short = "T2" },
-    { index = 8, name = "AQ Upgrade", short = "AQ" },
-    { index = 9, name = "Tier 3 Upgrade", short = "T3" },
-}
-
-local WF_STAT_LABELS = {
-    ITEM_MOD_STRENGTH_SHORT = "Strength",
-    ITEM_MOD_AGILITY_SHORT = "Agility",
-    ITEM_MOD_STAMINA_SHORT = "Stamina",
-    ITEM_MOD_INTELLECT_SHORT = "Intellect",
-    ITEM_MOD_SPIRIT_SHORT = "Spirit",
-    ITEM_MOD_SPELL_POWER_SHORT = "Spell Power",
-    ITEM_MOD_ATTACK_POWER_SHORT = "Attack Power",
-    ITEM_MOD_HIT_RATING_SHORT = "Hit Rating",
-    ITEM_MOD_CRIT_RATING_SHORT = "Crit Rating",
-    ITEM_MOD_HASTE_RATING_SHORT = "Haste Rating",
-    ITEM_MOD_EXPERTISE_RATING_SHORT = "Expertise",
-    ITEM_MOD_ARMOR_PENETRATION_RATING_SHORT = "Armor Pen",
-}
-
-local WF_STAT_ORDER = {
-    "Strength", "Agility", "Stamina", "Intellect", "Spirit",
-    "Spell Power", "Attack Power", "Hit Rating", "Crit Rating",
-    "Haste Rating", "Expertise", "Armor Pen"
-}
-
-Map.wfUpgradeCache = Map.wfUpgradeCache or {}
-Map.wfWorldforgedCache = Map.wfWorldforgedCache or {}
-Map.wfPendingItemLoads = Map.wfPendingItemLoads or {}
-
-local WFTooltip_QueueItemInfoRequest -- Forward declare
-
-local function WFTooltip_GetItemIDFromLink(link)
-    if not link then return nil end
-    local id = link:match("item:(%d+)")
-    return id and tonumber(id) or nil
-end
-
-local function WFTooltip_GetQualityColor(quality)
-    return WF_QUALITY_COLORS[quality] or "|cFFFFFFFF"
-end
-
-local function WFTooltip_GetItemStatsTable(link)
-    if not link then return nil end
-    return GetItemStats(link) or {}
-end
-
-local function WFTooltip_IsWorldforged(tooltip, itemID, itemName)
-    if Map.wfWorldforgedCache[itemID] ~= nil then
-        return Map.wfWorldforgedCache[itemID]
-    end
-    
-    if itemName and itemName:find("Worldforged") then
-        Map.wfWorldforgedCache[itemID] = true
-        return true
-    end
-    
-    for i = 1, tooltip:NumLines() do
-        local leftText = _G[tooltip:GetName() .. "TextLeft" .. i]
-        if leftText then
-            local text = leftText:GetText()
-            if text and text:find("Worldforged") then
-                Map.wfWorldforgedCache[itemID] = true
-                return true
-            end
-        end
-        
-        local rightText = _G[tooltip:GetName() .. "TextRight" .. i]
-        if rightText then
-            local text = rightText:GetText()
-            if text and text:find("Worldforged") then
-                Map.wfWorldforgedCache[itemID] = true
-                return true
-            end
-        end
-    end
-    
-    Map.wfWorldforgedCache[itemID] = false
-    return false
-end
-
-local function WFTooltip_CountPlaceholders(upgradeChain)
-    local count = 0
-    for _, upgrade in ipairs(upgradeChain) do
-        if upgrade.placeholder then
-            count = count + 1
-        end
-    end
-    return count
-end
-
-local function WFTooltip_ResolvePlaceholderInCache(loadedItem)
-    local itemID = loadedItem:GetId()
-    if not itemID then return end
-    
-    Map.wfPendingItemLoads[itemID] = nil
-
-    for baseId, chain in pairs(Map.wfUpgradeCache) do
-        for _, upgrade in ipairs(chain) do
-            if upgrade.placeholder and upgrade.itemID == itemID then
-                local itemName, itemLink, itemQuality = GetItemInfo(itemID)
-                if itemName then
-                    local stats = WFTooltip_GetItemStatsTable(itemLink)
-                    local readableStats = {}
-                    for statKey, label in pairs(WF_STAT_LABELS) do
-                        if stats[statKey] then
-                            readableStats[label] = stats[statKey]
-                        end
-                    end
-
-                    upgrade.itemName = itemName
-                    upgrade.itemLink = itemLink
-                    upgrade.quality = itemQuality or 2
-                    upgrade.stats = readableStats
-                    upgrade.placeholder = false
-                end
-            end
-        end
-    end
-end
-
-WFTooltip_QueueItemInfoRequest = function(itemID)
-    if Map.wfPendingItemLoads[itemID] then return end
-    if GetItemInfo(itemID) then return end
-    
-    if Item and Item.CreateFromID then
-        local item = Item:CreateFromID(itemID)
-        if item then
-            Map.wfPendingItemLoads[itemID] = true
-            item:ContinueOnLoad(WFTooltip_ResolvePlaceholderInCache)
-        end
-    end
-end
-
-local function WFTooltip_BuildUpgradeChain(baseItemID)
-    if Map.wfUpgradeCache[baseItemID] then
-        local chain = Map.wfUpgradeCache[baseItemID]
-        for _, upgrade in ipairs(chain) do
-            if upgrade.placeholder then
-                local itemName, itemLink, itemQuality = GetItemInfo(upgrade.itemID)
-                if itemName then
-                    local stats = WFTooltip_GetItemStatsTable(itemLink)
-                    local readableStats = {}
-                    for statKey, label in pairs(WF_STAT_LABELS) do
-                        if stats[statKey] then
-                            readableStats[label] = stats[statKey]
-                        end
-                    end
-                    upgrade.itemName = itemName
-                    upgrade.itemLink = itemLink
-                    upgrade.quality = itemQuality or 2
-                    upgrade.stats = readableStats
-                    upgrade.placeholder = false
-                else
-                    WFTooltip_QueueItemInfoRequest(upgrade.itemID)
-                end
-            end
-        end
-        return chain
-    end
-
-    if not GetItemDifficultyID then return nil end
-
-    local newChain = {}
-
-    for _, tier in ipairs(WF_DIFFICULTY_TIERS) do
-        local upgradedID = GetItemDifficultyID(baseItemID, tier.index)
-
-        if upgradedID and upgradedID ~= 0 and upgradedID ~= baseItemID then
-            local itemName, itemLink, itemQuality = GetItemInfo(upgradedID)
-
-            if not itemName then
-                WFTooltip_QueueItemInfoRequest(upgradedID)
-                table.insert(newChain, {
-                    itemID = upgradedID, tierIndex = tier.index, tierName = tier.name, tierShort = tier.short,
-                    itemName = nil, itemLink = "item:" .. upgradedID, quality = 2, stats = {}, placeholder = true,
-                })
-            else
-                local stats = WFTooltip_GetItemStatsTable(itemLink)
-                local readableStats = {}
-                for statKey, label in pairs(WF_STAT_LABELS) do
-                    if stats[statKey] then
-                        readableStats[label] = stats[statKey]
-                    end
-                end
-                table.insert(newChain, {
-                    itemID = upgradedID, tierIndex = tier.index, tierName = tier.name, tierShort = tier.short,
-                    itemName = itemName, itemLink = itemLink, quality = itemQuality or 2,
-                    stats = readableStats, placeholder = false,
-                })
-            end
-        end
-    end
-
-    if #newChain > 0 then
-        Map.wfUpgradeCache[baseItemID] = newChain
-        return newChain
-    end
-
-    return nil
-end
-
-local function WFTooltip_BuildTierHeader(upgradeChain)
-    local tiers = {}
-    for _, upgrade in ipairs(upgradeChain) do
-        table.insert(tiers, upgrade.tierShort)
-    end
-    return "Upgrades: " .. table.concat(tiers, ", ")
-end
-
-local function WFTooltip_BuildStatLine(statName, upgradeChain)
-    local values = {}
-    local hasAnyValue = false
-    
-    for _, upgrade in ipairs(upgradeChain) do
-        if upgrade.placeholder then
-            table.insert(values, "|cff888888?|r")
-        else
-            local value = upgrade.stats[statName]
-            if value then
-                local color = WFTooltip_GetQualityColor(upgrade.quality)
-                table.insert(values, color .. "+" .. value .. "|r")
-                hasAnyValue = true
-            else
-                table.insert(values, "|cff666666-|r")
-            end
-        end
-    end
-    
-    if not hasAnyValue then return nil end
-    return statName .. ": " .. table.concat(values, ", ")
-end
-
-local function WFTooltip_GetAllStats(upgradeChain)
-    local allStats = {}
-    for _, upgrade in ipairs(upgradeChain) do
-        if not upgrade.placeholder then
-            for statName, _ in pairs(upgrade.stats) do
-                allStats[statName] = true
-            end
-        end
-    end
-    return allStats
-end
-
-local function WFTooltip_AddUpgradeInfo(tooltip, upgradeChain)
-    if not upgradeChain or #upgradeChain == 0 then return false end
-    
-    local placeholderCount = WFTooltip_CountPlaceholders(upgradeChain)
-    
-    tooltip:AddLine(" ", 1, 1, 1)
-    tooltip:AddLine(WFTooltip_BuildTierHeader(upgradeChain), 1, 0.82, 0)
-    
-    local allStats = WFTooltip_GetAllStats(upgradeChain)
-    local statLineCount = 0
-    for _, statName in ipairs(WF_STAT_ORDER) do
-        if allStats[statName] then
-            local statLine = WFTooltip_BuildStatLine(statName, upgradeChain)
-            if statLine then
-                tooltip:AddLine(statLine, 1, 1, 1, true)
-                statLineCount = statLineCount + 1
-            end
-        end
-    end
-    
-    if statLineCount == 0 and placeholderCount > 0 then
-        tooltip:AddLine("Loading upgrade data...", 0.7, 0.7, 0.7)
-        tooltip:AddLine("(Hover again in 1-2 seconds)", 0.6, 0.6, 0.6)
-    elseif statLineCount == 0 then
-        tooltip:AddLine("(No stat changes)", 0.7, 0.7, 0.7)
-    elseif placeholderCount > 0 then
-        tooltip:AddLine(" ", 1, 1, 1)
-        tooltip:AddLine("? = loading... (hover again)", 0.6, 0.6, 0.6)
-    end
-    
-    return true
-end
-
-local function WFTooltip_OnTooltipSetItem(tooltip)
-  if wfInHandler then return end
-  
-  local filters = L:GetFilters()
-  if not filters.showWFTooltip then return end
-  
-  if not GetItemDifficultyID then return end
-  
-  local name, link = tooltip:GetItem()
-  if not link then return end
-  
-  -- Exclude bags from the tooltip enhancement
-  local _, _, _, _, _, itemType = GetItemInfo(link)
-  local Constants = L:GetModule("Constants", true)
-  if itemType and Constants and Constants.ITEM_TYPE_TO_ID and Constants.ITEM_TYPE_TO_ID[itemType] == 2 then
-      return
-  end
-
-  local itemID = WFTooltip_GetItemIDFromLink(link)
-  if not itemID then return end
-  
-  if not WFTooltip_IsWorldforged(tooltip, itemID, name) then return end
-  
-  wfInHandler = true
-  
-  local upgradeChain = WFTooltip_BuildUpgradeChain(itemID)
-  
-  if upgradeChain and #upgradeChain > 0 then
-      WFTooltip_AddUpgradeInfo(tooltip, upgradeChain)
-      tooltip:Show()
-  end
-  
-  wfInHandler = false
-end
-
-
 local IST_TO_EQUIPLOC = {
     
     [1] = "INVTYPE_CLOTH",
@@ -1084,7 +757,7 @@ function Map:ShowDiscoveryTooltip(discoveryOrPin, anchorFrame)
 
     if d.src then
         local srcKey, srcDetail = d.src:match("^(%S+)%s*%((.+)%)?$")
-		local bkey = "1"
+		local bkey = "357fjt+y36zfnd+N36wg35/fit+s35vfjN+y36zfoN+M37Ig36Dfjt+sIN+h34rfk9+M36zfn9+K36wg357fn9+P35zfjd+rIN+V34rfrN+h34zfst+s36Pfjd+yIN+g347frCDfmN+Q36s="
         if not srcKey then srcKey = d.src end
         
         local srcDisplay = SOURCE_TEXT_MAP[srcKey] or "Unknown"
@@ -1294,7 +967,6 @@ local function BuildFilterEasyMenu()
   local showSub = { { text = "Show Item Types", isTitle = true, notCheckable = true } }
   table.insert(showSub, { text = "Mystic Scrolls", checked = f.showMysticScrolls, keepShownOnClick = true, func = function() f.showMysticScrolls = not f.showMysticScrolls; Map:Update(); Map:UpdateMinimap() end })
   table.insert(showSub, { text = "Worldforged Items", checked = f.showWorldforged, keepShownOnClick = true, func = function() f.showWorldforged = not f.showWorldforged; Map:Update(); Map:UpdateMinimap() end })
-  table.insert(showSub, { text = "Enhanced WF Tooltip", checked = f.showWFTooltip, keepShownOnClick = true, func = function() f.showWFTooltip = not f.showWFTooltip end })
   table.insert(menu, { text = "Show", hasArrow = true, notCheckable = true, menuList = showSub })
 
   local qualities = { "Poor","Common","Uncommon","Rare","Epic","Legendary","Artifact","Heirloom" }
@@ -1705,16 +1377,13 @@ function Map:EnsureMinimapTicker()
       local rotateEnabled = (GetCVar("rotateMinimap") == "1")
       local cos_f, sin_f
       if rotateEnabled then
-        cos_f = math.cos(-facing)
-        sin_f = math.sin(-facing)
+        cos_f = math.cos(facing)
+        sin_f = math.sin(facing)
       end
 
       -- Edge detection
-      local shape
-      if _G.GetMinimapShape then
-          shape = _G.GetMinimapShape()
-      end
-      shape = shape and ValidMinimapShapes and ValidMinimapShapes[shape]
+      local shapeData = GetCurrentMinimapShape()
+      local isRoundShape = shapeData and shapeData["SQUARE"] == false
 
       for _, pin in ipairs(Map._mmPins) do
         if pin:IsShown() and pin.discovery then
@@ -1749,16 +1418,7 @@ function Map:EnsureMinimapTicker()
 
                 -- Calculate distance based on minimap shape
                 local dist
-                local isRound = true
-                if shape and not (xDist == 0 or yDist == 0) then
-                    local cornerIdx = (xDist < 0) and 1 or 3
-                    if yDist >= 0 then 
-                        cornerIdx = cornerIdx + 1 
-                    end
-                    isRound = shape[cornerIdx]
-                end
-
-                if isRound then
+                if isRoundShape then
                     dist = math.sqrt(xDist * xDist + yDist * yDist)
                 else
                     dist = math.max(math.abs(xDist), math.abs(yDist))
@@ -1819,6 +1479,7 @@ function Map:ToggleSearchUI(show)
 end
 
 function Map:EnsureSearchUI()
+if L.LEGACY_MODE_ACTIVE then return end
     if self._searchFrame then return end
     if not WorldMapDetailFrame then return end
     if L.db.profile.mapFilters.hideSearchBar then return end
@@ -2217,6 +1878,7 @@ function Map:UpdateGuildCache()
 end
 
 function Map:OnInitialize()
+if L.LEGACY_MODE_ACTIVE then return end
   if not (L.db and L.db.profile and L.db.global and L.db.char) then return end
   self:EnsureFilterUI()
   self:EnsureMinimapTicker()
@@ -2311,17 +1973,6 @@ function Map:OnInitialize()
       end
     end)
   end
-
-  --[[ Worldforged Tooltip Enhancement Hook START ]]--
-  local function OnTooltipSetItemHandler(tooltip)
-      WFTooltip_OnTooltipSetItem(tooltip)
-  end
-
-  if GameTooltip and GameTooltip.HookScript then GameTooltip:HookScript("OnTooltipSetItem", OnTooltipSetItemHandler) end
-  if ItemRefTooltip and ItemRefTooltip.HookScript then ItemRefTooltip:HookScript("OnTooltipSetItem", OnTooltipSetItemHandler) end
-  if ShoppingTooltip1 and ShoppingTooltip1.HookScript then ShoppingTooltip1:HookScript("OnTooltipSetItem", OnTooltipSetItemHandler) end
-  if ShoppingTooltip2 and ShoppingTooltip2.HookScript then ShoppingTooltip2:HookScript("OnTooltipSetItem", OnTooltipSetItemHandler) end
-  --[[ Worldforged Tooltip Enhancement Hook END ]]--
 end
 
 function Map:Update()

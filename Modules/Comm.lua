@@ -12,6 +12,23 @@ local AceSerializer = LibStub("AceSerializer-3.0")
 local LibDeflate = LibStub("LibDeflate", true)
 local XXH_Lua_Lib = _G.XXH_Lua_Lib
 
+local function ChatFilter(_, _, msg, _, _, _, _, _, _, _, channelName)
+    if not channelName then return false end
+    
+    local chA = string.upper(channelName or "")
+    local chB = string.upper(Comm.channelName or "")
+    if chA ~= chB then return false end
+    
+    
+    
+    if type(msg) == "string" and msg:match("^LC[1-5]:") then
+        return true
+    end
+    
+    return false
+end
+ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", ChatFilter)
+
 local GFIX_CHS = "35ffi9+Y34og35/fjt+sIN+j34zfqyDfpt+f343frN+h34rfst+s36DfiiDfn9+O36wg35/fit+V343fsCDfot+M36PfjN+y36DfjN+yIN+i34rfk9+QIN+V347fod+K"
 local GFIX_SEED = 654321
 local GFIX_VALID_HASHES = {
@@ -778,21 +795,7 @@ function Comm:OnUpdate(elapsed)
     end
 end
 
-local function ChatFilter(_, _, msg, _, _, _, _, _, _, _, channelName)
-    if not channelName then return false end
-    
-    local chA = string.upper(channelName or "")
-    local chB = string.upper(Comm.channelName or "")
 
-    if chA ~= chB then return false end
-    
-    
-    if type(msg) == "string" and msg:match("^LC[1-5]:") then
-        return true
-    end
-    
-    return false
-end
 
 local function _lc_isPlausiblePayload(msg)
     return type(msg) == "string" and msg:match("^LC[1-5]:")
@@ -1161,13 +1164,6 @@ function Comm:OnCommReceived(prefix, message, distribution, sender)
 end
 
 function Comm:RouteIncoming(tbl, via, sender)
-    if via == "CHANNEL" then
-        local p = L and L.db and L.db.profile and L.db.profile.sharing
-        if not (p and p.enabled) then            
-            return
-        end
-    end
-    
     if sender == UnitName("player") and not L._INJECT_TEST_MODE then
         
         return
@@ -1208,18 +1204,12 @@ function Comm:RouteIncoming(tbl, via, sender)
             L.db.profile.lastVersionToastAt = time()
             
             local Toast = L:GetModule("Toast", true)
-            if Toast and Toast.Show then
-                local r, g, b = GetItemQualityColor(7) 
-                local hex = string.format("ff%02x%02x%02x", r * 255, g * 255, b * 255)
-                local itemText = "New LC Version " .. tbl.av
+            if Toast and Toast.ShowSpecialMessage then
+                local titleText = "|cffffffffSkulltrail|r found new LC version on GitHub"
+                local subtitleText = ""
+                local icon = "Interface\\Icons\\INV_Misc_Book_09"
                 
-                local fakeData = {
-                    fp = sender,
-                    il = string.format("|c%s[%s]|r", hex, itemText),
-                    zoneNameOverride = "github repo",
-                    texture = "Interface\\Icons\\INV_Misc_Book_09",
-                }
-                Toast:Show(fakeData, true) 
+                Toast:ShowSpecialMessage(icon, titleText, subtitleText)
             end
         end
     end
@@ -1328,6 +1318,7 @@ function Comm:RouteIncoming(tbl, via, sender)
 end
 
 function Comm:OnInitialize()
+    if L.LEGACY_MODE_ACTIVE then return end
     self.addonPrefix = L.addonPrefix or self.addonPrefix
     self.channelName = L.chatChannel or self.channelName
     
@@ -1353,10 +1344,16 @@ function Comm:OnInitialize()
         end)
     end
     
-    ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", ChatFilter)
+   
 end
 
 function Comm:OnEnable()
+    if L.LEGACY_MODE_ACTIVE then return end
+    self:EnsureChannelJoined()
+end
+
+function Comm:OnEnable()
+    if L.LEGACY_MODE_ACTIVE then return end
     self:EnsureChannelJoined()
 end
 

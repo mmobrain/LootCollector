@@ -570,6 +570,11 @@ end
 function Core:RunManualDatabaseCleanup()
     print("|cff00ff00LootCollector:|r Starting manual database cleanup...")
 
+    local zeroCoordRemoved = self:PurgeZeroCoordDiscoveries()
+    if zeroCoordRemoved > 0 then
+        print(string.format("|cff00ff00LootCollector:|r Purged %d entries with (0,0) coordinates.", zeroCoordRemoved))
+    end
+
     local cityGuidsToRemove = {}
     for guid, d in pairs(L.db.global.discoveries or {}) do
         
@@ -609,7 +614,7 @@ function Core:RunManualDatabaseCleanup()
     L.db.global.manualCleanupRunCount = (L.db.global.manualCleanupRunCount or 0) + 1
     print(string.format("|cffffff00LootCollector:|r Manual cleanup has now been run %d time(s).", L.db.global.manualCleanupRunCount))
 
-    if (cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved) == 0 then
+    if (zeroCoordRemoved + cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved) == 0 then
         print("|cff00ff00LootCollector:|r No items needed purging or deduplication.")
     else
         print("|cff00ff00LootCollector:|r Manual cleanup complete.")
@@ -621,6 +626,8 @@ function Core:RunManualDatabaseCleanup()
 end
 
 function Core:RunInitialCleanup()
+    local zeroCoordRemoved = self:PurgeZeroCoordDiscoveries()
+
     local cityGuidsToRemove = {}
     for guid, d in pairs(L.db.global.discoveries or {}) do
         local zoneName = L:ResolveZoneDisplay(d.c, d.z, d.iz)
@@ -641,8 +648,8 @@ function Core:RunInitialCleanup()
     local ignoredRemoved = self:PurgeAllIgnoredItems()
     local wfRemoved, msRemoved = self:DeduplicateItems(true)
 
-    if (cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved) > 0 then
-        print("|cff00ff00LootCollector:|r Initial cleanup complete. Removed: " .. cityRemoved .. " city, " .. prefixRemoved .. " prefix, " .. ignoredRemoved .. " WF dupes, " .. msRemoved .. " MS dupes.")
+    if (zeroCoordRemoved + cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved) > 0 then
+        print("|cff00ff00LootCollector:|r Initial cleanup complete. Removed: " .. zeroCoordRemoved .. " (0,0) coords, " .. cityRemoved .. " city, " .. prefixRemoved .. " prefix, " .. ignoredRemoved .. " ignored, " .. wfRemoved .. " WF dupes, " .. msRemoved .. " MS dupes.")
         local Map = L:GetModule("Map", true)
         if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
             Map:Update()
@@ -661,9 +668,56 @@ function Core:RunAutomaticOnLoginCleanup()
     end
 end
 
+function Core:FixEmptyFinderNames()
+    if not (L.db and L.db.global and L.db.global.discoveries) then return 0 end
+    
+    local discoveries = L.db.global.discoveries
+    local fixedCount = 0
+    
+    for guid, d in pairs(discoveries) do
+        if d and (d.fp == nil or d.fp == "") then
+            d.fp = "An Unnamed Collector"
+            fixedCount = fixedCount + 1
+        end
+    end
+    
+    return fixedCount
+end
+
+function Core:FixMissingFpVotes()
+    if not (L.db and L.db.global and L.db.global.discoveries) then return 0 end
+    
+    local discoveries = L.db.global.discoveries
+    local fixedCount = 0
+    
+    for guid, d in pairs(discoveries) do
+        if d and not d.fp_votes then
+            d.fp_votes = {}
+            if d.fp and d.fp ~= "" and d.t0 then
+                d.fp_votes[d.fp] = { score = 1, t0 = d.t0 }
+            end
+            fixedCount = fixedCount + 1
+        end
+    end
+    
+    return fixedCount
+end
+
 function Core:PerformOnLoginMaintenance()
     if self.onLoginCleanupPerformed then return end
     self.onLoginCleanupPerformed = true
+
+    -- *** NEW: Run the fix for empty finder names ***
+    local fixedFPCount = self:FixEmptyFinderNames()
+    if fixedFPCount > 0 then
+        print(string.format("|cff00ff00LootCollector:|r Repaired %d database entries with missing finder names.", fixedFPCount))
+    end
+
+    -- *** NEW: Retroactively add fp_votes to older records ***
+    local fixedVotesCount = self:FixMissingFpVotes()
+    if fixedVotesCount > 0 then
+        print(string.format("|cff00ff00LootCollector:|r Updated %d older records with the new finder consensus system.", fixedVotesCount))
+    end
 
     local phase = L.db.global.autoCleanupPhase or 0
     if phase < 2 then
@@ -1046,12 +1100,17 @@ function Core:HandleLocalLoot(discovery)
             
             guid = "MS-" .. c .. "-" .. z .. "-" .. string.format("%.2f", L:Round2(x)) .. "-" .. string.format("%.2f", L:Round2(y))
             itemLink = string.format("|cffa335ee|Hitem:%d:0:0:0:0:0:0:0:0|h[Mystic Scroll Vendor]|h|r", itemID)
-        else 
+        elseif discovery.vendorType == "BM" then
             
             itemID = - (300000 + mapID)
             
             guid = "BM-" .. c .. "-" .. z .. "-" .. string.format("%.2f", L:Round2(x)) .. "-" .. string.format("%.2f", L:Round2(y))
             itemLink = string.format("|cff663300|Hitem:%d:0:0:0:0:0:0:0:0|h[Blackmarket Supplies]|h|r", itemID)
+        else
+            -- Fallback for any other type, though currently only BM/MS exist
+            itemID = - (500000 + mapID)
+            guid = "V-" .. c .. "-" .. z .. "-" .. string.format("%.2f", L:Round2(x)) .. "-" .. string.format("%.2f", L:Round2(y))
+            itemLink = string.format("|cffffff00|Hitem:%d:0:0:0:0:0:0:0:0|h[Specialty Vendor]|h|r", itemID)
         end
         
         local bm_db = L.db.global.blackmarketVendors
@@ -1342,60 +1401,77 @@ function Core:UpdateCoordinatesByConsensus(d)
     wipe(d.coord_votes)
 end
 
+local function FindWorldforgedInZone(continent, zoneID, itemID, db)
+    if not db then return nil end
+    local Constants = L:GetModule("Constants", true)
+    if not Constants then return nil end
+
+    for _, d in pairs(db) do
+        if d and d.c == continent and d.z == zoneID and d.i == itemID and d.dt == Constants.DISCOVERY_TYPE.WORLDFORGED then
+            return d
+        end
+    end
+    
+    return nil
+end
+
 function Core:AddDiscovery(discoveryData, options)
     options = options or {}
     local op = options.op or "DISC"
 
-    
-    
     if L:IsZoneIgnored() and options.isNetwork then
         return
     end
     
     if not (L.db and L.db.global) then
-        
         return
     end
     
     if type(discoveryData) ~= "table" then
-        
         return
     end
     
     local itemID = discoveryData.i or extractItemID(discoveryData.il)
     if not itemID then
-        
         return
     end
     
     local Constants = L:GetModule("Constants", true)
-    local isBlackmarket = Constants and discoveryData.dt == Constants.DISCOVERY_TYPE.BLACKMARKET
-    
+    local dt = discoveryData.dt
+    if not dt and itemID > 0 then
+        local name = select(1, GetItemInfo(itemID))
+        if name then
+            if string.find(name, "Mystic Scroll", 1, true) then
+                dt = Constants.DISCOVERY_TYPE.MYSTIC_SCROLL
+            else
+                dt = Constants.DISCOVERY_TYPE.WORLDFORGED
+            end
+        end
+    end
+    discoveryData.dt = dt -- Ensure it's set for later use
+
+    local isBlackmarket = Constants and dt == Constants.DISCOVERY_TYPE.BLACKMARKET
     
     if options.isNetwork then
         if isBlackmarket then
-            
+            -- Process vendors immediately
         elseif self:IsItemFullyCached(itemID) then
-            
+            -- Process cached items immediately
         else
-            
+            -- Defer processing for uncached items
             local firstDelay = math.random(5, 25)
-            
             self:QueueItemForCaching(itemID)
 
             ScheduleAfter(firstDelay, function()
                 if self:IsItemFullyCached(itemID) then
-                    
                     self:AddDiscovery(discoveryData, options)
                 else
-                    
                     SafeCacheItemRequest(itemID)
                     ScheduleAfter(5, function()
                         if self:IsItemFullyCached(itemID) then
-                            
                             self:AddDiscovery(discoveryData, options)
                         else
-                            
+                            -- Drop packet if still not cached
                         end
                     end)
                 end
@@ -1403,8 +1479,6 @@ function Core:AddDiscovery(discoveryData, options)
             return 
         end
     end
-    
-    
     
     if self:ShouldCacheItem(itemID) and not isBlackmarket then
         self:QueueItemForCaching(itemID)
@@ -1420,7 +1494,6 @@ function Core:AddDiscovery(discoveryData, options)
     local z = discoveryData.z or 0
     local iz = discoveryData.iz or 0
     
-    
     if options.isNetwork and z == 0 and iz == 0 then
         local legacyZoneName = discoveryData.zn or discoveryData.zone
         if legacyZoneName then
@@ -1428,14 +1501,14 @@ function Core:AddDiscovery(discoveryData, options)
             if ZoneList and ZoneList.ResolveInstanceIz then
                 local resolved_iz = ZoneList:ResolveInstanceIz(legacyZoneName)
                 if resolved_iz > 0 then
-                    
+                    iz = resolved_iz
+                    discoveryData.iz = iz
                 end
             end
         end
     end
 
     if isBlackmarket then
-        
         local guid, vendorType
         vendorType = discoveryData.vendorType
         if not vendorType then
@@ -1449,7 +1522,6 @@ function Core:AddDiscovery(discoveryData, options)
         else
             guid = "BM-" .. c .. "-" .. z .. "-" .. string.format("%.2f", L:Round2(x)) .. "-" .. string.format("%.2f", L:Round2(y))
         end
-
         
         local vendorItems = {}
         if discoveryData.vendorItemIDs and type(discoveryData.vendorItemIDs) == "table" then
@@ -1465,7 +1537,6 @@ function Core:AddDiscovery(discoveryData, options)
         local existing = bm_db[guid]
 
         if not existing then
-            
             bm_db[guid] = {
                 g = guid, c = c, z = z, iz = iz, i = itemID, 
                 il = discoveryData.il,
@@ -1478,7 +1549,6 @@ function Core:AddDiscovery(discoveryData, options)
                 vendorItems = vendorItems,
             }
         else
-            
             existing.ls = max(existing.ls or 0, discoveryData.t0 or 0)
             existing.vendorName = discoveryData.vendorName or existing.vendorName
             if #vendorItems > 0 then
@@ -1492,19 +1562,24 @@ function Core:AddDiscovery(discoveryData, options)
     end
     
     local db = L.db.global.discoveries
-    local guid = L:GenerateGUID(c, z, itemID, x, y)
-    local existing = db[guid] or FindNearbyDiscovery(c, z, itemID, x, y, db)
+    local existing
+    
+    if (op == "CONF" or op == "SHOW") and dt == Constants.DISCOVERY_TYPE.WORLDFORGED then
+        existing = FindWorldforgedInZone(c, z, itemID, db)
+    end
+
+    if not existing then
+        local guid = L:GenerateGUID(c, z, itemID, x, y)
+        existing = db[guid] or FindNearbyDiscovery(c, z, itemID, x, y, db)
+    end
     
     if op == "DISC" then
-        
         local incoming_fp = discoveryData.fp
         if discoveryData.sflag == 1 then incoming_fp = "An Unnamed Collector" end
 
         if not existing then
-            
-            
             local newRecord = {
-                g = guid, c = c, z = z, iz = iz, i = itemID, xy = {x=x, y=y},
+                g = L:GenerateGUID(c, z, itemID, x, y), c = c, z = z, iz = iz, i = itemID, xy = {x=x, y=y},
                 il = discoveryData.il, q = discoveryData.q, t0 = discoveryData.t0,
                 ls = discoveryData.ls, st = discoveryData.ls, s = Constants.STATUS.UNCONFIRMED,
                 mc = 1, fp = incoming_fp, o = discoveryData.sender,
@@ -1515,38 +1590,27 @@ function Core:AddDiscovery(discoveryData, options)
                 mid = discoveryData.mid,
                 adc = 0, ack_votes = {},
             }
-            db[guid] = newRecord
+            db[newRecord.g] = newRecord
             
-            -- Notifies Viewer of new discovery
-            L:SendMessage("LootCollector_DiscoveriesUpdated", "add", guid, newRecord)
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "add", newRecord.g, newRecord)
             
             local toast = L:GetModule("Toast", true)
             if toast and toast.Show then toast:Show(newRecord, false, options) end
         else
-            
-            
-            
             if incoming_fp ~= existing.fp then
-                -- Backfill fp_votes for older records before processing the new vote.
+                -- [FIX] Defensively create the fp_votes table if it doesn't exist on an old record.
                 if not existing.fp_votes then
-                    -- FIX: Use a fallback for existing.fp in case it's nil on very old records.
-                    local original_finder = existing.fp or "Unknown"
-                    existing.fp_votes = { [original_finder] = { score = 1, t0 = existing.t0 } }
-                end
-                
-                -- Add/update the vote from the incoming discovery.
-                local incomingVote = existing.fp_votes[incoming_fp]
-                if not incomingVote then
-                    existing.fp_votes[incoming_fp] = { score = 1, t0 = discoveryData.t0 }
-                else
-                    incomingVote.score = incomingVote.score + 1
+                    existing.fp_votes = {}
+                    if existing.fp and existing.t0 then
+                        existing.fp_votes[existing.fp] = { score = 1, t0 = existing.t0 }
+                    end
                 end
 
                 if not existing.corr_sent_ts or (time() - existing.corr_sent_ts > 900) then
                     local Comm = L:GetModule("Comm", true)
                     if Comm and Comm.BroadcastCorrection then
                         self:UpdateConsensusWinner(existing)
-                        local winner_data = existing.fp_votes[existing.fp]
+                        local winner_data = existing.fp_votes[existing.fp] -- This line no longer errors
                         
                         Comm:BroadcastCorrection({
                             i = existing.i, c = existing.c, z = existing.z,
@@ -1557,7 +1621,6 @@ function Core:AddDiscovery(discoveryData, options)
                     end
                 end
             end
-            
             
             if options.isNetwork then
                 existing.coord_votes = existing.coord_votes or {}
@@ -1571,42 +1634,42 @@ function Core:AddDiscovery(discoveryData, options)
                 end
             end
             
-            -- Notifies Viewer of updated discovery
-            L:SendMessage("LootCollector_DiscoveriesUpdated", "update", guid, existing)
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "update", existing.g, existing)
         end
 
-    elseif op == "CONF" then
+    elseif op == "CONF" or op == "SHOW" then
         if existing then
-            
-            existing.ls = max(existing.ls or 0, discoveryData.ls)
-            existing.o = discoveryData.sender
-            L:SendMessage("LOOTCOLLECTOR_CONFIRMATION_RECEIVED", discoveryData)
-        end
-        
-    elseif op == "SHOW" then
-        if existing then
-            
-            existing.ls = max(existing.ls or 0, discoveryData.ls)
+            existing.ls = max(existing.ls or 0, discoveryData.ls or discoveryData.t0)
+            if op == "CONF" then
+                existing.mc = (existing.mc or 1) + 1
+                L:SendMessage("LOOTCOLLECTOR_CONFIRMATION_RECEIVED", discoveryData)
+            end
         else
-            
-            local finder = discoveryData.fp or "Unknown"
-            local newRecord = {
-                g = guid, c = c, z = z, iz = iz, i = itemID, xy = {x=x, y=y},
-                il = discoveryData.il, q = discoveryData.q, t0 = discoveryData.t0,
-                ls = discoveryData.ls, st = discoveryData.ls, s = Constants.STATUS.UNCONFIRMED,
-                mc = 1, fp = finder, o = discoveryData.sender,
-                dt = discoveryData.dt, it = discoveryData.it, ist = discoveryData.ist, cl = discoveryData.cl,
-                src = discoveryData.src,
-                mid = discoveryData.mid,
-                adc = 0, ack_votes = {},
-            }
-            db[guid] = newRecord
-            
-            -- Notifies Viewer of new discovery
-            L:SendMessage("LootCollector_DiscoveriesUpdated", "add", guid, newRecord)
-            
-            local toast = L:GetModule("Toast", true)
-            if toast and toast.Show then toast:Show(newRecord, false, options) end
+            if x ~= 0 and y ~= 0 then
+                -- *** CORRECTED FIX: Sanitize finder name for new records from CONF/SHOW ***
+                local finder = discoveryData.fp
+                if not finder or finder == "" then
+                    finder = "An Unnamed Collector"
+                end
+                
+                local newRecord = {
+                    g = L:GenerateGUID(c, z, itemID, x, y), c = c, z = z, iz = iz, i = itemID, xy = {x=x, y=y},
+                    il = discoveryData.il, q = discoveryData.q, t0 = discoveryData.t0,
+                    ls = (discoveryData.ls or discoveryData.t0), st = (discoveryData.ls or discoveryData.t0), s = Constants.STATUS.UNCONFIRMED,
+                    mc = 1, fp = finder, o = discoveryData.sender,
+                    fp_votes = { [finder] = { score = 1, t0 = discoveryData.t0 } },
+                    dt = discoveryData.dt, it = discoveryData.it, ist = discoveryData.ist, cl = discoveryData.cl,
+                    src = discoveryData.src,
+                    mid = discoveryData.mid,
+                    adc = 0, ack_votes = {},
+                }
+                db[newRecord.g] = newRecord
+                
+                L:SendMessage("LootCollector_DiscoveriesUpdated", "add", newRecord.g, newRecord)
+                
+                local toast = L:GetModule("Toast", true)
+                if toast and toast.Show then toast:Show(newRecord, false, options) end
+            end
         end
     end
     
@@ -1626,9 +1689,8 @@ function Core:AddDiscovery(discoveryData, options)
             wasUpdated = true
         end
         
-        -- Notifies Viewer if discovery was updated
         if wasUpdated then
-            L:SendMessage("LootCollector_DiscoveriesUpdated", "update", guid, existing)
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "update", existing.g, existing)
         end
     end
 
@@ -1636,9 +1698,31 @@ function Core:AddDiscovery(discoveryData, options)
     if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
 end
 
-function Core:ReportDiscoveryAsGone(guid)
-    if not guid or not (L.db and L.db.global and L.db.global.discoveries) then return end
+function Core:PurgeZeroCoordDiscoveries()
+    if not (L.db and L.db.global and L.db.global.discoveries) then return 0 end
     
+    local discoveries = L.db.global.discoveries
+    local guidsToRemove = {}
+    
+    for guid, d in pairs(discoveries) do
+        if d and d.xy and d.xy.x == 0 and d.xy.y == 0 then
+            table.insert(guidsToRemove, guid)
+        end
+    end
+    
+    local removedCount = #guidsToRemove
+    if removedCount > 0 then
+        for _, guid in ipairs(guidsToRemove) do
+            discoveries[guid] = nil
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
+        end
+    end
+    
+    return removedCount
+end
+
+function Core:ReportDiscoveryAsGone(guid)
+    if not guid then return end
     local db = L.db.global.discoveries
     local rec = db[guid]
     if not rec then return end
@@ -1686,11 +1770,26 @@ function Core:RemoveDiscoveryByGuid(guid, reason)
     return false
 end
 
+function Core:RemoveBlackmarketVendorByGuid(guid)
+    if not guid or not (L.db and L.db.global and L.db.global.blackmarketVendors) then return end
+    if L.db.global.blackmarketVendors[guid] then
+        L.db.global.blackmarketVendors[guid] = nil
+        print("|cff00ff00LootCollector:|r Specialty Vendor pin removed from local database.")
+        
+        local Map = L:GetModule("Map", true)
+        if Map and Map.Update then
+            Map:Update()
+        end
+        return true
+    end
+    return false
+end
+
 function Core:ClearDiscoveries()
     if not (L.db and L.db.global) then return end
     L.db.global.discoveries = {}
     L.db.global.blackmarketVendors = {}
-    print(string.format("[%s] Cleared all discovery and Blackmarket vendor data.", L.name))
+    print(string.format("[%s] Cleared all discovery and vendor data.", L.name))
     
     -- Notifies Viewer that all discoveries were cleared
     L:SendMessage("LootCollector_DiscoveriesUpdated", "clear", nil, nil)
@@ -1702,10 +1801,21 @@ function Core:ClearDiscoveries()
 end
 
 function Core:RemoveDiscovery(guid)
-    if not guid then return end
-    -- Redirect the call to the function that also handles sending the network ACK message.
-    -- ReportDiscoveryAsGone now contains all necessary safety checks.
-    self:ReportDiscoveryAsGone(guid)
+    if not guid or not (L.db and L.db.global and L.db.global.discoveries) then return end
+    if L.db.global.discoveries[guid] then
+        L.db.global.discoveries[guid] = nil
+        print(string.format("|cff00ff00LootCollector:|r Discovery %s removed.", guid))
+        
+        -- Notifies Viewer of removed discovery
+        L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
+        
+        local Map = L:GetModule("Map", true)
+        if Map and Map.Update then
+            Map:Update()
+        end
+        return true
+    end
+    return false
 end
 
 function Core:RescanAllClasses()

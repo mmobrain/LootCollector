@@ -1,3 +1,10 @@
+## **LootCollector 0.5.4 - Fixes **
+Mainly related to the new player experience with the addon.
+Changed item and vendor detection.
+A bunch of other fixes.
+
+Database Update: Updated starter database to 1650 discoveries.
+
 ## **LootCollector 0.5.3 - Enhanced WF Tooltip + Fixes**
 Highlights
 Enhanced WF Tooltip - new feature for WF items that displays statistics after certain upgrade levels, providing detailed progression information directly in tooltips.
@@ -7,7 +14,7 @@ Database Error Fix: Resolved issue where new discovery reports for older records
 
 Toast Notification Fix: Reduced redundant toast spam that incorrectly displayed notifications for already existing discoveries.
 
-Database Update: Updated starter database to 1,590 discoveries.
+Database Update: Updated starter database to 1590 discoveries.
 
 
 

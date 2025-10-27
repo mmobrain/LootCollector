@@ -210,28 +210,42 @@ local function scanAndEnqueue()
 end
 
 local tickerFrame = nil
+
 local function ensureTicker()
-    if tickerFrame then return end
+ if tickerFrame then return end
     tickerFrame = CreateFrame("Frame", "LootCollectorReinforceTicker")
-    tickerFrame:SetScript("OnUpdate", function(_, e)
-        Reinforce.scanAccum = Reinforce.scanAccum + e
-        if Reinforce.scanAccum >= Reinforce.scanPeriod then
-            Reinforce.scanAccum = 0
-            scanAndEnqueue()
-        end
-        drainQueueOnce()
-    end)
+    
 end
 
 function Reinforce:OnInitialize()
-    
+	if L.LEGACY_MODE_ACTIVE then return end
     self:RegisterMessage("LOOTCOLLECTOR_CONFIRMATION_RECEIVED", "HandleConfirmation")
     ensureTicker()
 end
 
 function Reinforce:OnEnable()
+    if L.LEGACY_MODE_ACTIVE then return end
+    
+    if tickerFrame then
+        tickerFrame:SetScript("OnUpdate", function(_, e)
+            Reinforce.scanAccum = Reinforce.scanAccum + e
+            if Reinforce.scanAccum >= Reinforce.scanPeriod then
+                Reinforce.scanAccum = 0
+                scanAndEnqueue()
+            end
+            drainQueueOnce()
+        end)
+    end
+    
     if C_Timer and C_Timer.After then
         C_Timer.After(5, scanAndEnqueue)
+    end
+end
+
+function Reinforce:OnDisable()
+    
+    if tickerFrame then
+        tickerFrame:SetScript("OnUpdate", nil)
     end
 end
 

@@ -452,6 +452,11 @@ function ImportExport:ApplyImport(parsed, mode, withOverlays, skipBlacklist, ski
             end
         end
     end
+
+    -- *** CORRECTED FIX: Ensure schema version is set on the root global table after any import ***
+    if _G.LootCollectorDB_Asc then
+        _G.LootCollectorDB_Asc._schemaVersion = 6
+    end
 	
 	local Map = L:GetModule("Map", true)
 	if Map and Map.Update then Map:Update() end
@@ -476,7 +481,7 @@ function ImportExport:ApplyImportString(importString, mode, withOverlays, skipBl
 	
 	local msg = string.format("|cff00ff00LootCollector|r Import successful! Processed %d discoveries.", res.total)
     if res.bm_total > 0 then
-        msg = msg .. string.format(" Processed %d Blackmarket vendors.", res.bm_total)
+        msg = msg .. string.format(" Processed %d vendors.", res.bm_total)
     end
     if isStarterDB then
         msg = msg .. " Reinforcement schedule has been pre-staggered."
@@ -1405,6 +1410,7 @@ local function BuildBlackmarketPage(parent)
 end
 
 function ImportExport:OnInitialize()
+if L.LEGACY_MODE_ACTIVE then return end
 	panel = CreateFrame("Frame", "LootCollectorDiscoveriesPanel", InterfaceOptionsFramePanelContainer)
 	panel.name = "Discoveries"
 	panel.parent = "LootCollector"

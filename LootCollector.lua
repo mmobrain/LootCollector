@@ -148,7 +148,6 @@ local dbDefaults = {
             maxMinimapDistance = 0,
             showMysticScrolls = true,
             showWorldforged = true,
-            showWFTooltip = true,
             minRarity = 0,
             usableByClasses = {},
             allowedEquipLoc = {},
@@ -288,7 +287,6 @@ function LootCollector:GetFilters()
     if f.showMinimap == nil then f.showMinimap = true end
     if f.showMysticScrolls == nil then f.showMysticScrolls = true end
     if f.showWorldforged == nil then f.showWorldforged = true end
-    if f.showWFTooltip == nil then f.showWFTooltip = true end
     if f.maxMinimapDistance == nil then f.maxMinimapDistance = 0 end
     if f.pinSize == nil then f.pinSize = 16 end
     return f
@@ -403,30 +401,29 @@ function LootCollector:OnInitialize()
         end
 
         -- A database needs migration ONLY if its version is old AND it actually contains old discovery data.
-        if dbVersion < 6 and rawDB.global and next(rawDB.global.discoveries) then
+        if dbVersion < 6 and rawDB.global and rawDB.global.discoveries and next(rawDB.global.discoveries) then
             needsMigration = true
         end
     end
 
-    -- Initialize AceDB AFTER the check is complete.
-    self.db = LibStub("AceDB-3.0"):New("LootCollectorDB_Asc", dbDefaults, true)
 
-    self.channelReady = false 
-
-    -- If the pre-check determined a migration is needed, enter legacy mode and prompt the user.
     if needsMigration then
         self.LEGACY_MODE_ACTIVE = true
         StaticPopup_Show("LOOTCOLLECTOR_MIGRATE_DB")
         return 
     end
 
-    -- For new installs or post-migration, ensure the root schema version is set to 6 so it gets saved.
-    if not self.db._schemaVersion or self.db._schemaVersion < 6 then
-        self.db._schemaVersion = 6
+
+    self.db = LibStub("AceDB-3.0"):New("LootCollectorDB_Asc", dbDefaults, true)
+    
+    if _G.LootCollectorDB_Asc then
+        _G.LootCollectorDB_Asc._schemaVersion = 6
     end
+
+    self.channelReady = false 
     
     self.name = "LootCollector"
-    self.Version = "alpha-0.5.3"
+    self.Version = "alpha-0.5.4"
     
     -- *** PER-CHARACTER MIGRATION FINALIZER & VERIFIER ***
     if self.db.profile and self.db.profile.preservedLootedData_v6 then
@@ -498,9 +495,21 @@ function LootCollector:OnInitialize()
     if _G.LootCollector_OptionalDB_Data and type(_G.LootCollector_OptionalDB_Data) == "table" then
         local dbData = _G.LootCollector_OptionalDB_Data
         if dbData.version and dbData.data and self.db.profile.offeredOptionalDB ~= dbData.version then
-            C_Timer.After(5, function()
-                StaticPopup_Show("LOOTCOLLECTOR_OPTIONAL_DB_UPDATE", dbData.version, dbData.changelog or "No changes listed.")
-            end)
+            -- Auto-merge if database is empty, otherwise show prompt
+            if not self.db.global.discoveries or not next(self.db.global.discoveries) then
+                print("|cff00ff00LootCollector:|r New installation detected. Automatically merging starter database...")
+                local ImportExport = self:GetModule("ImportExport", true)
+                if ImportExport and ImportExport.ApplyImportString then
+                    ImportExport:ApplyImportString(dbData.data, "MERGE", false, true, true)
+                end
+                if self.db and self.db.profile then
+                    self.db.profile.offeredOptionalDB = dbData.version
+                end
+            else
+                C_Timer.After(5, function()
+                    StaticPopup_Show("LOOTCOLLECTOR_OPTIONAL_DB_UPDATE", dbData.version, dbData.changelog or "No changes listed.")
+                end)
+            end
         end
     end
 
@@ -544,38 +553,29 @@ end
 
 function LootCollector:DelayedChannelInit()
     
-    LeaveChannelByName("BBLCC25")
+    pcall(LeaveChannelByName, "BBLCC25")
 
+    local Comm = self:GetModule("Comm", true)
+    if not Comm then return end
     
-    local Comm = self:GetModule("Comm", true); if not Comm then return end
     local DELAY_SECONDS = 12.0
-    
-    print("|cffffd100LootCollector Debug:|r DelayedChannelInit started. Timer will fire in 9 seconds.")
+    print(string.format("|cffffd100LootCollector Debug:|r DelayedChannelInit started. Timer will fire in %d seconds.", DELAY_SECONDS))
 
     
-    local timerFrame = CreateFrame("Frame", "LootCollectorChannelTimer"); 
-    local elapsed = 0; 
-    
-    timerFrame:SetScript("OnUpdate", function(_, e) 
-        elapsed = elapsed + e; 
+    self:ScheduleAfter(DELAY_SECONDS, function()
+        print("|cffffd100LootCollector Debug:|r Timer finished. Setting channelReady to true.")
+        LootCollector.channelReady = true
 
-        if elapsed >= DELAY_SECONDS then 
-            
-            timerFrame:SetScript("OnUpdate", nil); 
-            
-            print("|cffffd100LootCollector Debug:|r Timer finished. Setting channelReady to true.")
-            LootCollector.channelReady = true;
-
-            
-            if LootCollector.db and LootCollector.db.profile.sharing.enabled and not LootCollector:IsZoneIgnored() then
-                print("|cffffd100LootCollector Debug:|r Sharing is enabled, attempting to join channel.")
-                if Comm.InitializeChannelLogic then 
-                    Comm:InitializeChannelLogic()
-                end
+        if LootCollector.db and LootCollector.db.profile.sharing.enabled and not LootCollector:IsZoneIgnored() then
+            print("|cffffd100LootCollector Debug:|r Sharing is enabled, attempting to join channel.")
+            if Comm.EnsureChannelJoined then
+                Comm:EnsureChannelJoined()
             else
-                print("|cffffd100LootCollector Debug:|r Sharing is disabled, skipping channel join.")
+                print("|cffff0000LootCollector Error:|r Comm.EnsureChannelJoined is missing!")
             end
-        end 
+        else
+            print("|cffffd100LootCollector Debug:|r Sharing is disabled, skipping channel join.")
+        end
     end)
 
     self:UnregisterEvent("PLAYER_ENTERING_WORLD")
@@ -600,4 +600,3 @@ SlashCmdList["LCHISTORY"] = function()
         print("|cffff7f00LootCollector:|r HistoryTab module not available.")
     end
 end
--- QSBBIEEgQSBBIEEgQSBBIEEgQQrwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5Kl

@@ -63,6 +63,7 @@ SLASH_LootCollectorDECAY1 = "/lcdecay"; SlashCmdList["LootCollectorDECAY"] = fun
 end
 
 function Decay:OnInitialize()
+    if L.LEGACY_MODE_ACTIVE then return end
     if hasCTimer then
         C_Timer.After(SCAN_ON_LOGIN_DELAY, function() self:ScanOnce() end)
         C_Timer.NewTicker(SCAN_PERIODIC_SECONDS, function() self:ScanOnce() end)

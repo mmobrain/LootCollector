@@ -25,7 +25,7 @@ local ANONMIN, ANONMAX = 2, 3
 local MAXCONCURRENTTOASTSNORMAL = 2
 local MAXCONCURRENTTOASTSWITHTICKER = 1
 
-local TICKERSPEED = 90 
+local TICKERSPEED = 32 
 local TICKERSTARTPADDING = 30 
 
 local TICKERMINMERGED = 3
@@ -199,6 +199,57 @@ local function getQualityColor(q)
 		return c.r or 1, c.g or 1, c.b or 1
 	end
 	return 1, 1, 1
+end
+
+function Toast:ShowSpecialMessage(iconTexture, titleText, subtitleText)
+    if not (L.db and L.db.profile and L.db.profile.toasts and L.db.profile.toasts.enabled) then
+		return
+	end
+	if not toastContainer then return end
+
+    -- This function is for trusted, local-only messages.
+    -- It does not use the queue and displays immediately.
+
+    local f = self:acquireToast()
+
+    f.text.discoveryData = nil -- No discovery data associated with this
+	f.icon:SetTexture(iconTexture or "Interface\\Icons\\INV_Misc_Book_09")
+    f.text.fontString:SetText(titleText or "LootCollector Notification")
+	f.subtext:SetText(subtitleText or "")
+
+	if not toastContainer:IsShown() then
+		toastContainer:Show()
+	end
+	f:SetAlpha(0.0)
+	f.startTime = GetTime()
+	f:Show()
+	self:_layoutStacks()
+	f:SetScript("OnUpdate", function(self)
+		local dt = GetTime() - (self.startTime or 0)
+		if dt < TOASTFADEIN then
+			self:SetAlpha(dt / TOASTFADEIN)
+		elseif dt < TOASTFADEIN + Toast.displayTime then
+			self:SetAlpha(1.0)
+		elseif dt < TOASTFADEIN + Toast.displayTime + TOASTFADEOUT then
+			local fade = (dt - (TOASTFADEIN + Toast.displayTime)) / TOASTFADEOUT
+			self:SetAlpha(1.0 - fade)
+			if fade >= 1.0 then
+				self:SetScript("OnUpdate", nil)
+				self:Hide()
+				Toast:_layoutStacks()
+				if not anyShown() and not ticker.active then
+					toastContainer:Hide()
+				end
+			end
+		else
+			self:SetScript("OnUpdate", nil)
+			self:Hide()
+			Toast:_layoutStacks()
+			if not anyShown() and not ticker.active then
+				toastContainer:Hide()
+			end
+		end
+	end)
 end
 
 local function makeItemDisplay(d)
@@ -390,7 +441,7 @@ function Toast:ApplySettings()
 	end
 end
 
-local function acquireToast()
+function Toast:acquireToast()
 	for _, t in ipairs(toasts) do
 		if not t:IsShown() then return t end
 	end
@@ -419,6 +470,7 @@ local function acquireToast()
 		local parent = btn:GetParent()
 		parent:Hide()
 		parent:SetScript("OnUpdate", nil)
+        Toast:_layoutStacks()
 		if not anyShown() and not ticker.active then
 			toastContainer:Hide()
 		end
@@ -483,7 +535,7 @@ local function acquireToast()
 	return f
 end
 
-local function layoutStacks()
+function Toast:_layoutStacks()
 	local visibles = {}
 	for _, f in ipairs(toasts) do
 		if f:IsShown() then table.insert(visibles, f) end
@@ -516,33 +568,39 @@ local function renderToast(d, options)
 	end
 	if not toastContainer then return end
 	local itemDisplay, icon = makeItemDisplay(d)
-	local f = acquireToast()
+	local f = Toast:acquireToast()
 
     f.text.discoveryData = d 
 	f.icon:SetTexture(icon)
 
-	local zoneName = d.zoneNameOverride
-	if not zoneName then
-		zoneName = L.ResolveZoneDisplay(d.c, d.z, d.iz) or "an unknown zone"
-	end
-	if options.isLateDiscovery then
-		zoneName = zoneName .. " (while you were away)"
-	end
-    
-    if L.db.profile.toasts.hidePlayerNames then
-        f.text.fontString:SetFormattedText("%s was spotted!", itemDisplay)
+    if d.isSpecialMessage then
+        f.text.fontString:SetText(itemDisplay)
+        f.subtext:SetText(d.zoneNameOverride or "")
     else
-	    f.text.fontString:SetFormattedText("%s found %s!", d.fp or "Unknown", itemDisplay)
-    end
+        local zoneName = d.zoneNameOverride
+        if not zoneName then
+            zoneName = L.ResolveZoneDisplay(d.c, d.z, d.iz) or "an unknown zone"
+        end
+        if options.isLateDiscovery then
+            zoneName = zoneName .. " (while you were away)"
+        end
+        
+        if L.db.profile.toasts.hidePlayerNames then
+            f.text.fontString:SetFormattedText("%s was spotted!", itemDisplay)
+        else
+            f.text.fontString:SetFormattedText("%s found %s!", d.fp or "Unknown", itemDisplay)
+        end
 
-	f.subtext:SetText("in " .. tostring(zoneName))
+        f.subtext:SetText("in " .. tostring(zoneName))
+    end
+	
 	if not toastContainer:IsShown() then
 		toastContainer:Show()
 	end
 	f:SetAlpha(0.0)
 	f.startTime = GetTime()
 	f:Show()
-	layoutStacks()
+	Toast:_layoutStacks()
 	f:SetScript("OnUpdate", function(self)
 		local dt = GetTime() - (self.startTime or 0)
 		if dt < TOASTFADEIN then
@@ -555,7 +613,7 @@ local function renderToast(d, options)
 			if fade >= 1.0 then
 				self:SetScript("OnUpdate", nil)
 				self:Hide()
-				layoutStacks()
+				Toast:_layoutStacks()
 				if not anyShown() and not ticker.active then
 					toastContainer:Hide()
 				end
@@ -563,7 +621,7 @@ local function renderToast(d, options)
 		else
 			self:SetScript("OnUpdate", nil)
 			self:Hide()
-			layoutStacks()
+			Toast:_layoutStacks()
 			if not anyShown() and not ticker.active then
 				toastContainer:Hide()
 			end
@@ -821,6 +879,7 @@ function Toast:AddSpecialLine(text)
 end
 
 function Toast:OnInitialize()
+if L.LEGACY_MODE_ACTIVE then return end
 	ensureProfile()
 	self:ApplySettings()
 	

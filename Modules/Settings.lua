@@ -704,7 +704,7 @@ local function buildOptions()
                 args = {
                     intro_text = {
                         type = "description",
-                        name = "Hi there! \n\nI'm Skulltrail, and I'm thrilled to present LootCollector - my first-ever WoW addon! \nI'm over the moon that so many players are finding it useful! 😊\n\nA huge shoutout to all the amazing contributors for their incredible help and hard work. This addon wouldn't be what it is today without you! \nBig thanks to: |cffFFD700Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan|r, and all the awesome community helpers out there.\n\nIf you'd like to support me, I'd love to hear what you enjoy about LootCollector or any ideas for improvement. Feel free to drop me a message on Discord @Skulltrail!",
+                        name = "Hi there! \n\nI'm Skulltrail, and I'm thrilled to present LootCollector - my first-ever WoW addon! \nI'm over the moon that so many players are finding it useful! 😊\n\nA huge shoutout to all the amazing contributors for their incredible help and hard work. This addon wouldn't be what it is today without you! \nBig thanks to: |cffFFD700Deidre, Rhenyra, Morty, Markosz, Bandit Tech|r, and all the awesome community helpers out there.\n\nIf you'd like to support me, I'd love to hear what you enjoy about LootCollector or any ideas for improvement. Feel free to drop me a message on Discord @Skulltrail!",
                         fontSize = "large",
                         order = 10,
                     },
@@ -744,6 +744,25 @@ local function buildOptions()
 end
 
 function Settings:OnInitialize()
+	-- This function now runs in legacy mode to provide feedback.
+	
+	local function showLegacyMessage()
+		print("|cffff0000LootCollector is in Legacy Mode!|r")
+		print("|cffffff00Your database is from an older version and needs to be updated.|r")
+		print("  - Type |cff00ff00/lcpreserve|r to migrate your data now.")
+		print("  - Type |cffff7f00/reload|r to see the migration pop-up again.")
+	end
+
+	if L.LEGACY_MODE_ACTIVE then
+		-- Register commands with a legacy handler
+		self:RegisterChatCommand("lc", showLegacyMessage)
+		self:RegisterChatCommand("lootcollector", showLegacyMessage)
+		SLASH_LCLIST1 = "/lclist"
+		SlashCmdList["LCLIST"] = showLegacyMessage
+		return -- Stop further initialization
+	end
+
+	-- Normal initialization code (runs only if not in legacy mode)
 	if not L.db and L.db.profile then return end
 	ensureDefaults()
 

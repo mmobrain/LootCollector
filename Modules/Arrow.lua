@@ -128,6 +128,7 @@ function Arrow:OnPlayerLogin()
 end
 
 function Arrow:OnInitialize()
+if L.LEGACY_MODE_ACTIVE then return end
     self:RegisterMessage("LOOTCOLLECTOR_PLAYER_LOOTED_ITEM", "OnPlayerLootedItem")
     self:RegisterEvent("PLAYER_LOGIN", "OnPlayerLogin")
     

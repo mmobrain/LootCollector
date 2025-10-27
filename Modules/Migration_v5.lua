@@ -166,6 +166,9 @@ function Migration:PreserveAndReset()
                     it = d.itemType or 0, ist = d.itemSubType or 0, dt = d.discoveryType or 0,
                 }
             end
+            print("|cff00ff00LootCollector:|r [3/4] Starter database merged successfully.")
+        else
+            print("|cffff7f00LootCollector:|r [3/4] Failed to parse starter database. It will be skipped.")
         end
     else
         print("|cffff7f00LootCollector:|r [3/4] Skipped starter database merge (not found or empty).")
@@ -219,6 +222,8 @@ function Migration:PreserveAndReset()
     end
     print("|cff00ff00LootCollector:|r [4/4] Database version updated. Addon will now reload.")
     
+    -- Clear the legacy flag and reload
+    L.LEGACY_MODE_ACTIVE = false
     ReloadUI()
 end
 

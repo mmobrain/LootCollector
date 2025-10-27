@@ -1,13 +1,14 @@
 -- Detect.lua (3.3.5-safe)
 -- UNK.B64-UTF-8
 
-
 local L = LootCollector
 local Detect = L:NewModule("Detect", "AceEvent-3.0")
 
 local SCAN_TIP_NAME = "LootCollectorScanTip"
 local scanTip
 local LEGACY_DETECT_MODE = false 
+
+Detect.recentlyScannedNPCs = Detect.recentlyScannedNPCs or {} -- [npcGUID] = timestamp
 
 local FORBIDDEN_CITY_ZONES = {
     [1] = { 
@@ -45,6 +46,70 @@ Detect._expectingItemUntil = 0
 Detect._expectedItemLink = nil
 
 function Detect:Debug(msg, ...) return end
+
+-- Moved helper functions here to fix scope issue
+local function ParseItemID(link)
+  if not link then return nil end
+  return tonumber(link:match("item:(%d+)"))
+end
+
+local function ScanMerchant()
+  local items = {}
+  local n = GetMerchantNumItems()
+  if n == 0 then return items end
+  
+  for i = 1, n do
+    local link = GetMerchantItemLink(i)
+    local name, texture, price, quantity, numAvailable, isUsable, extendedCost = GetMerchantItemInfo(i)
+    local itemID = ParseItemID(link)
+
+    local costs = {}
+    if extendedCost then
+      local costKinds = GetMerchantItemCostInfo(i)
+      for j = 1, (costKinds or 0) do
+        local costTexture, costAmount, costLink, currencyName = GetMerchantItemCostItem(i, j)
+        local costItemID = ParseItemID(costLink)
+        costs[#costs+1] = {
+          amount = costAmount,
+          link = costLink,
+          itemID = costItemID,
+          currencyName = currencyName,
+          texture = costTexture,
+        }
+      end
+    end
+
+    if itemID then
+        items[#items+1] = {
+          index = i,
+          itemID = itemID,
+          link = link,
+          name = name,
+          price = price,
+          stack = quantity,
+          numAvailable = numAvailable,
+          isUsable = isUsable,
+          extendedCost = extendedCost,
+          costs = costs,
+        }
+    end
+  end
+  return items
+end
+
+local function GetNPCSubname(unit)
+  if not unit or not UnitExists(unit) then return nil end
+  NPCScanTip:ClearLines()
+  NPCScanTip:SetUnit(unit)
+  local line2 = _G["LootCollector_NPCScanTipTextLeft2"]
+  local text = line2 and line2:IsShown() and line2:GetText() or nil
+
+  -- Filter out level text
+  if text and (text:match("^Level %d") or tonumber(text:match("(%d+)"))) then
+    return nil
+  end
+  return text
+end
 
 local function EnsureScanTip()
   if scanTip then return end
@@ -110,73 +175,91 @@ Detect._ctx = {
   lastBuybackAt = nil,
 }
 
-local function GetNPCSubname(unit)
-  if not unit or not UnitExists(unit) then return nil end
-  NPCScanTip:ClearLines()
-  NPCScanTip:SetUnit(unit)
-  local line2 = _G["LootCollector_NPCScanTipTextLeft2"]
-  local text = line2 and line2:IsShown() and line2:GetText() or nil
+function Detect:ScanAndRecordVendor()
+    local unit = "npc"
+    if not UnitExists(unit) then return end
 
-  
-  if text and tonumber(text:match("(%d+)")) then
-    return nil
-  end
-  return text
+    local npcGUID = UnitGUID(unit)
+    if not npcGUID then return end
+
+    -- Prevents re-scanning the same vendor repeatedly in a short time
+    if self.recentlyScannedNPCs[npcGUID] and (time() - self.recentlyScannedNPCs[npcGUID] < 60) then
+        return
+    end
+    self.recentlyScannedNPCs[npcGUID] = time()
+
+    local merchantItems = ScanMerchant() -- This call is now valid
+    if #merchantItems == 0 then
+        return
+    end
+
+    local isBlackmarket = false
+    local sellsMysticScroll = false
+    local npcSubname = GetNPCSubname(unit)
+
+    if npcSubname and npcSubname:find("Blackmarket Artisan Supplies", 1, true) then
+        isBlackmarket = true
+    end
+
+    for _, itemData in ipairs(merchantItems) do
+        if itemData.name and itemData.name:find("Mystic Scroll", 1, true) then
+            sellsMysticScroll = true
+            break -- Found one, no need to check further
+        end
+    end
+
+    -- If the vendor qualifies, record it.
+    if isBlackmarket or sellsMysticScroll then
+        local now = time()
+        local px, py = GetPlayerMapPosition("player")
+        px = px or 0; py = py or 0
+        if (px == 0 and py == 0) and SetMapToCurrentZone then
+            SetMapToCurrentZone()
+            local nx, ny = GetPlayerMapPosition("player")
+            if nx and ny then px, py = nx, ny end
+        end
+        
+        local c = GetCurrentMapContinent and GetCurrentMapContinent() or 0
+        local z = GetCurrentMapZone and GetCurrentMapZone() or 0
+        local iz = 0
+        if z == 0 then
+            local ZL = L:GetModule("ZoneList", true)
+            if ZL and ZL.ResolveInstanceIz then
+                local live = GetRealZoneText() or GetZoneText()
+                iz = ZL:ResolveInstanceIz(live)
+            end
+        end
+        
+        local mapID = GetCurrentMapAreaID()
+        local Constants = L:GetModule("Constants", true)
+        
+        local discovery = {
+            i = -3, -- Generic non-real item ID
+            c = c,
+            z = z,
+            iz = iz,
+            mapID = mapID,
+            xy = { x = px, y = py },
+            t0 = now,
+            src = "merchant",
+            fp = UnitName("player"),
+            dt = Constants and Constants.DISCOVERY_TYPE.BLACKMARKET, 
+            vendorType = sellsMysticScroll and "MS" or "BM",
+            vendorItems = merchantItems,
+            vendorName = UnitName(unit),
+        }
+
+        local Core = L:GetModule("Core", true)
+        if Core and Core.HandleLocalLoot then
+            Core:HandleLocalLoot(discovery)
+        end
+    end
 end
 
 local function IsBlackmarketArtisan(unit)
   local sub = GetNPCSubname(unit)
   
   return sub and sub:find("Blackmarket Artisan Supplies", 1, true) ~= nil
-end
-
-local function ParseItemID(link)
-  if not link then return nil end
-  return tonumber(link:match("item:(%d+)"))
-end
-
-local function ScanMerchant()
-  local items = {}
-  local n = GetMerchantNumItems()
-  if n == 0 then return items end
-  
-  for i = 1, n do
-    local link = GetMerchantItemLink(i)
-    local name, texture, price, quantity, numAvailable, isUsable, extendedCost = GetMerchantItemInfo(i)
-    local itemID = ParseItemID(link)
-
-    local costs = {}
-    if extendedCost then
-      local costKinds = GetMerchantItemCostInfo(i)
-      for j = 1, (costKinds or 0) do
-        local costTexture, costAmount, costLink, currencyName = GetMerchantItemCostItem(i, j)
-        local costItemID = ParseItemID(costLink)
-        costs[#costs+1] = {
-          amount = costAmount,
-          link = costLink,
-          itemID = costItemID,
-          currencyName = currencyName,
-          texture = costTexture,
-        }
-      end
-    end
-
-    if itemID then
-        items[#items+1] = {
-          index = i,
-          itemID = itemID,
-          link = link,
-          name = name,
-          price = price,
-          stack = quantity,
-          numAvailable = numAvailable,
-          isUsable = isUsable,
-          extendedCost = extendedCost,
-          costs = costs,
-        }
-    end
-  end
-  return items
 end
 
 function Detect:OnNPCInteraction()
@@ -294,16 +377,18 @@ function Detect:OnLootClosed()
 end
 
 function Detect:OnInitialize()
+  if L.LEGACY_MODE_ACTIVE then return end
   
   self:RegisterEvent("LOOT_OPENED", "OnLootOpened")
   self:RegisterEvent("LOOT_CLOSED", "OnLootClosed")
   
   self:RegisterEvent("BAG_UPDATE", "OnBagUpdate")
 
-  self:RegisterEvent("GOSSIP_SHOW", function() self._ctx.lastGossipAt = time(); self:OnNPCInteraction() end)
+  self:RegisterEvent("GOSSIP_SHOW", function() self._ctx.lastGossipAt = time() end)
   self:RegisterEvent("GOSSIP_CLOSED", function() self._ctx.lastGossipAt = time(); self._expectingItemUntil = GetTime() + ITEM_EXPECTATION_WINDOW end)
-  self:RegisterEvent("MERCHANT_SHOW", function() self._ctx.lastMerchantAt = time(); self:OnNPCInteraction() end)
-  self:RegisterEvent("MERCHANT_UPDATE", function() self._ctx.lastMerchantAt = time(); self:OnNPCInteraction() end)
+  self:RegisterEvent("MERCHANT_SHOW", "ScanAndRecordVendor")
+  self:RegisterEvent("MERCHANT_UPDATE", "ScanAndRecordVendor")
+  self:RegisterEvent("MERCHANT_CLOSED", function() self._ctx.lastMerchantAt = nil end)
   self:RegisterEvent("MAIL_SHOW", function() self._ctx.mailOpen = true end)
   self:RegisterEvent("MAIL_CLOSED", function() self._ctx.mailOpen = false end)
   self:RegisterEvent("CHAT_MSG_LOOT", "OnChatMsgLoot")
@@ -341,9 +426,9 @@ local function classifySource(ctx, now)
   if _G.C_MysticEnchant and _G.C_MysticEnchant.HasNearbyMysticAltar and _G.C_MysticEnchant.HasNearbyMysticAltar() then return "mystic_altar" end
   if ctx.lastBuybackAt and (now - ctx.lastBuybackAt <= 3) then return "vendor_buyback" end
   if ctx.lastMerchantAt and (now - ctx.lastMerchantAt <= 5) then return "vendor" end
-  if ctx.lastLootOpenedAt and (now - ctx.lastLootOpenedAt <= 5) then return "world_loot" end
-  if ctx.lastGossipAt and (now - ctx.lastGossipAt <= 5) then return "npc_gossip" end
-  if ctx.lastEmoteAt and (now - ctx.lastEmoteAt <= 5) then return "emote_event" end
+  if ctx.lastLootOpenedAt and (now - ctx.lastLootOpenedAt <= 5) then return "world_loot" end -- sccepted source
+  if ctx.lastGossipAt and (now - ctx.lastGossipAt <= 5) then return "npc_gossip" end -- sccepted source
+  if ctx.lastEmoteAt and (now - ctx.lastEmoteAt <= 5) then return "emote_event" end -- sccepted source
   return "direct"
 end
 
@@ -359,34 +444,66 @@ function Detect:OnChatMsgLoot(_, msg)
   local now = time()
   
   local src = classifySource(self._ctx, now)
-  if src == "mail" or src == "quest_reward" or src == "trade" or src == "crafting" or src == "mystic_altar" or src == "vendor" or src == "bank" or src == "guild_bank" or src == "achievement" or src == "npc_gossip" then
+  if src == "mail" or src == "quest_reward" or src == "trade" or src == "crafting" or src == "mystic_altar" or src == "vendor" or src == "bank" or src == "guild_bank" or src == "achievement" then
       return
   end
   
-  if (now - lastLootContext.openedAt) > LOOT_VALIDITY_WINDOW then
+  -- If the source is world_loot, it must be from a recent loot window.
+  -- For other sources like npc_gossip, this check is irrelevant.
+  if src == "world_loot" and (now - lastLootContext.openedAt) > LOOT_VALIDITY_WINDOW then
       return
   end
 
-  if FORBIDDEN_CITY_ZONES[lastLootContext.c] and FORBIDDEN_CITY_ZONES[lastLootContext.c][lastLootContext.z] then
-      if self:IsMysticScroll(link, src) then 
-          return
+  -- For Mystic Scrolls, we must check for forbidden city zones ONLY if it's from world_loot.
+  -- Gossip-based scrolls are often in cities and should be allowed.
+  if src == "world_loot" then
+      if FORBIDDEN_CITY_ZONES[lastLootContext.c] and FORBIDDEN_CITY_ZONES[lastLootContext.c][lastLootContext.z] then
+          if self:IsMysticScroll(link, src) then 
+              return
+          end
       end
   end
 
-  if not self:Qualifies(link, "world_loot") then return end
+  -- Use the dynamically identified 'src' variable in the Qualifies check
+  if not self:Qualifies(link, src) then return end
 
   local last = self._recent[link] or 0
   if now - last < 1.0 then return end
   self._recent[link] = now
 
+  local c, z, iz, x, y
+  -- Use loot window coordinates for world loot, otherwise use current player position
+  if src == "world_loot" then
+      c, z, iz, x, y = lastLootContext.c, lastLootContext.z, lastLootContext.iz, lastLootContext.x, lastLootContext.y
+  else
+      local px, py = GetPlayerMapPosition("player")
+      x, y = px or 0, py or 0
+      if (x == 0 and y == 0) and SetMapToCurrentZone then
+          SetMapToCurrentZone()
+          local nx, ny = GetPlayerMapPosition("player")
+          if nx and ny then x, y = nx, ny end
+      end
+      c = GetCurrentMapContinent and GetCurrentMapContinent() or 0
+      z = GetCurrentMapZone and GetCurrentMapZone() or 0
+      local current_iz = 0
+      if z == 0 then
+          local ZL = L:GetModule("ZoneList", true)
+          if ZL and ZL.ResolveInstanceIz then
+              local live = GetRealZoneText() or GetZoneText()
+              current_iz = ZL:ResolveInstanceIz(live)
+          end
+      end
+      iz = current_iz
+  end
+
   local discovery = {
     il        = link,
-    c         = lastLootContext.c,
-    z         = lastLootContext.z,
-    iz        = lastLootContext.iz,
-    xy        = { x = lastLootContext.x, y = lastLootContext.y },
+    c         = c,
+    z         = z,
+    iz        = iz,
+    xy        = { x = x, y = y },
     t0        = now,
-    src       = "world_loot",
+    src       = src, 
     fp        = looter,
   }
 
@@ -501,4 +618,5 @@ function Detect:OnBagUpdate(event, bagID)
 end
 
 return Detect
+
 -- QSBBIEEgQSBBIEEgQSBBIEEgQQrwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5Kl

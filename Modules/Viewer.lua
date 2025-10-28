@@ -48,8 +48,9 @@ local GRID_LAYOUT = {
     NAME_WIDTH = 170,
     SLOT_WIDTH = 70,
     TYPE_WIDTH = 100,
-    CLASS_WIDTH = 100,
-    ZONE_WIDTH = 150,
+    CLASS_WIDTH = 60,
+    ZONE_WIDTH = 120,
+    LEVEL_WIDTH = 30,
     DATE_WIDTH = 100,
     FOUND_BY_WIDTH = 120,
 
@@ -1179,7 +1180,7 @@ function Viewer:ProcessScanQueueBatch()
                 local characterClass = GetItemCharacterClass(discovery.il, discovery.i)
 
                 -- Retrieves additional item information for Slot and Type.
-                local name, _, _, _, _, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.il, discovery.i)
+                local name, _, _, _, minLevel, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.il, discovery.i)
 
                 _tinsert(Cache.discoveries, {
                     guid = guid,
@@ -1191,6 +1192,7 @@ function Viewer:ProcessScanQueueBatch()
                     itemSubType = itemSubTypeVal,
                     equipLoc = equipLocVal,
                     characterClass = characterClass,
+                    minLevel = minLevel,
                 })
                 processedCount = processedCount + 1
 
@@ -1240,7 +1242,7 @@ function Viewer:UpdateAllDiscoveriesCacheSync()
                 local characterClass = GetItemCharacterClass(discovery.il, discovery.i)
 
                 -- Retrieves additional item information for Slot and Type.
-                local name, _, _, _, _, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.il,
+                local name, _, _, _, minLevel, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.il,
                     discovery.i)
 
                 _tinsert(Cache.discoveries, {
@@ -1253,6 +1255,7 @@ function Viewer:UpdateAllDiscoveriesCacheSync()
                     itemSubType = itemSubTypeVal,
                     equipLoc = equipLocVal,
                     characterClass = characterClass,
+                    minLevel = minLevel,
                 })
             end
         end
@@ -1445,6 +1448,9 @@ function Viewer:GetFilteredDiscoveries()
         elseif self.sortColumn == "foundBy" then
             a_val = a.discovery.fp or ""
             b_val = b.discovery.fp or ""
+        elseif self.sortColumn == "level" then
+            a_val = a.minLevel or 0
+            b_val = b.minLevel or 0
         else
             -- Defaults to sorting by GUID if sortColumn is unrecognized, to maintain a stable order.
             a_val = a.guid or ""
@@ -2146,10 +2152,29 @@ function Viewer:CreateWindow()
         Viewer:RefreshData()
     end)
 
+    -- Level column header.
+    local levelHeader = CreateFrame("Button", nil, headerFrame)
+    levelHeader:SetSize(GRID_LAYOUT.LEVEL_WIDTH, HEADER_HEIGHT)
+    levelHeader:SetPoint("LEFT", nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+    levelHeader:SetText("Level")
+    levelHeader:SetNormalFontObject("GameFontNormalSmall")
+    levelHeader:SetHighlightFontObject("GameFontHighlightSmall")
+    levelHeader:SetScript("OnClick", function()
+        if Viewer.sortColumn == "level" then
+            Viewer.sortAscending = not Viewer.sortAscending
+        else
+            Viewer.sortColumn = "level"
+            Viewer.sortAscending = true
+        end
+        Viewer.currentPage = 1
+        Viewer:UpdateSortHeaders()
+        Viewer:RefreshData()
+    end)
+
     -- Slot column header (visible for Equipment only).
     local slotHeader = CreateFrame("Button", nil, headerFrame)
     slotHeader:SetSize(GRID_LAYOUT.SLOT_WIDTH, HEADER_HEIGHT)
-    slotHeader:SetPoint("LEFT", nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+    slotHeader:SetPoint("LEFT", levelHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
     slotHeader:SetText("Slot")
     slotHeader:SetNormalFontObject("GameFontNormalSmall")
     slotHeader:SetHighlightFontObject("GameFontHighlightSmall")
@@ -2594,6 +2619,7 @@ function Viewer:CreateWindow()
     self.typeHeader = typeHeader
     self.classHeader = classHeader
     self.zoneHeader = zoneHeader
+    self.levelHeader = levelHeader
     self.dateHeader = dateHeader
     self.foundByHeader = foundByHeader
     self.clearAllBtn = clearAllBtn
@@ -2695,9 +2721,15 @@ function Viewer:CreateRows()
         typeText:SetJustifyH("LEFT")
         typeText:Hide()
 
+        -- Level column.
+        local levelText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        levelText:SetPoint("LEFT", nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        levelText:SetSize(GRID_LAYOUT.LEVEL_WIDTH, ROW_HEIGHT)
+        levelText:SetJustifyH("LEFT")
+
         -- Class column, visible for Mystic Scrolls only.
         local classText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        classText:SetPoint("LEFT", nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        classText:SetPoint("LEFT", levelText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         classText:SetSize(GRID_LAYOUT.CLASS_WIDTH, ROW_HEIGHT)
         classText:SetJustifyH("LEFT")
         classText:Hide()
@@ -2927,6 +2959,7 @@ function Viewer:CreateRows()
         row.typeText = typeText
         row.classText = classText
         row.zoneText = zoneText
+        row.levelText = levelText
         row.dateText = dateText
         row.foundByFrame = foundByFrame
         row.foundByText = foundByText
@@ -2984,6 +3017,7 @@ function Viewer:UpdateSortHeaders()
     setButtonTextColor(self.typeHeader, 1, 1, 1)
     setButtonTextColor(self.classHeader, 1, 1, 1)
     setButtonTextColor(self.zoneHeader, 1, 1, 1)
+    setButtonTextColor(self.levelHeader, 1, 1, 1)
     setButtonTextColor(self.dateHeader, 1, 1, 1)
     setButtonTextColor(self.foundByHeader, 1, 1, 1)
 
@@ -2996,24 +3030,27 @@ function Viewer:UpdateSortHeaders()
 
     -- Adjusts positions and sizes based on visibility using master controls.
     if isEquipmentView then
-        -- Equipment view: Name + Slot + Type + Zone + Date + Found By.
+        -- Equipment view: Name + Level + Slot + Type + Zone + Date + Found By.
         self.nameHeader:SetSize(GRID_LAYOUT.NAME_WIDTH, HEADER_HEIGHT)
-        self.slotHeader:SetPoint("LEFT", self.nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        self.levelHeader:SetPoint("LEFT", self.nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        self.slotHeader:SetPoint("LEFT", self.levelHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         self.typeHeader:SetPoint("LEFT", self.slotHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         self.zoneHeader:SetPoint("LEFT", self.typeHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         self.dateHeader:SetPoint("LEFT", self.zoneHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         self.foundByHeader:SetPoint("LEFT", self.dateHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
     elseif isMysticScrollsView then
-        -- Mystic Scrolls view: Name + Class + Zone + Date + Found By.
+        -- Mystic Scrolls view: Name + Level + Class + Zone + Date + Found By.
         self.nameHeader:SetSize(GRID_LAYOUT.NAME_WIDTH, HEADER_HEIGHT)
-        self.classHeader:SetPoint("LEFT", self.nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        self.levelHeader:SetPoint("LEFT", self.nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        self.classHeader:SetPoint("LEFT", self.levelHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         self.zoneHeader:SetPoint("LEFT", self.classHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         self.dateHeader:SetPoint("LEFT", self.zoneHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         self.foundByHeader:SetPoint("LEFT", self.dateHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
     else
-        -- Default view: Name + Zone + Date + Found By (wider name column).
+        -- Default view: Name + Level + Zone + Date + Found By (wider name column).
         self.nameHeader:SetSize(GRID_LAYOUT.NAME_WIDTH + 100, HEADER_HEIGHT) -- Wider for default view.
-        self.zoneHeader:SetPoint("LEFT", self.nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        self.levelHeader:SetPoint("LEFT", self.nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        self.zoneHeader:SetPoint("LEFT", self.levelHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         self.dateHeader:SetPoint("LEFT", self.zoneHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         self.foundByHeader:SetPoint("LEFT", self.dateHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
     end
@@ -3074,6 +3111,13 @@ function Viewer:UpdateSortHeaders()
             setButtonTextColor(self.zoneHeader, 1, 0.8, 0.2) -- Orange color for filtered columns.
         end
         self.zoneHeader:SetText("Zone" .. filterIndicator)
+    end
+
+    if self.sortColumn == "level" then
+        setButtonTextColor(self.levelHeader, 0.2, 0.8, 1)
+        self.levelHeader:SetText("Level" .. sortIndicator)
+    else
+        self.levelHeader:SetText("Level")
     end
 
     if self.sortColumn == "date" then
@@ -3204,7 +3248,8 @@ function Viewer:UpdateRows()
                 -- Adjusts column positions and widths for Equipment view using master controls.
                 row.nameFrame:SetSize(GRID_LAYOUT.NAME_WIDTH, ROW_HEIGHT)
                 row.nameText:SetSize(GRID_LAYOUT.NAME_WIDTH, ROW_HEIGHT)
-                row.slotText:SetPoint("LEFT", row.nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+                row.levelText:SetPoint("LEFT", row.nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+                row.slotText:SetPoint("LEFT", row.levelText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
                 row.typeText:SetPoint("LEFT", row.slotText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
                 row.zoneText:SetPoint("LEFT", row.typeText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
                 row.dateText:SetPoint("LEFT", row.zoneText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
@@ -3218,7 +3263,8 @@ function Viewer:UpdateRows()
                 -- Adjusts column positions and widths for Mystic Scrolls view using master controls.
                 row.nameFrame:SetSize(GRID_LAYOUT.NAME_WIDTH, ROW_HEIGHT)
                 row.nameText:SetSize(GRID_LAYOUT.NAME_WIDTH, ROW_HEIGHT)
-                row.classText:SetPoint("LEFT", row.nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+                row.levelText:SetPoint("LEFT", row.nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+                row.classText:SetPoint("LEFT", row.levelText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
                 row.zoneText:SetPoint("LEFT", row.classText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
                 row.dateText:SetPoint("LEFT", row.zoneText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
                 row.foundByFrame:SetPoint("LEFT", row.dateText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
@@ -3229,7 +3275,8 @@ function Viewer:UpdateRows()
                 -- Restores default column positions and widths for other views using master controls.
                 row.nameFrame:SetSize(GRID_LAYOUT.NAME_WIDTH + 100, ROW_HEIGHT) -- Wider for default view.
                 row.nameText:SetSize(GRID_LAYOUT.NAME_WIDTH + 100, ROW_HEIGHT)
-                row.zoneText:SetPoint("LEFT", row.nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+                row.levelText:SetPoint("LEFT", row.nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+                row.zoneText:SetPoint("LEFT", row.levelText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
                 row.dateText:SetPoint("LEFT", row.zoneText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
                 row.foundByFrame:SetPoint("LEFT", row.dateText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
             end
@@ -3238,6 +3285,11 @@ function Viewer:UpdateRows()
             local zoneText = GetLocalizedZoneName(discovery)
             row.zoneText:SetText(zoneText)
             row.zoneText:SetAlpha(alpha)
+
+            -- Displays level information.
+            local levelText = data.minLevel or 0
+            row.levelText:SetText(levelText > 0 and tostring(levelText) or "")
+            row.levelText:SetAlpha(alpha)
 
             -- Displays date information.
             local timestamp = tonumber(discovery.t0) or 0
@@ -3474,11 +3526,12 @@ function Viewer:AddDiscoveryToCache(guid, discovery)
             data.characterClass = GetItemCharacterClass(discovery.il, discovery.i)
 
             -- Retrieves additional item information.
-            local name, _, _, _, _, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.il,
+            local name, _, _, _, minLevel, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.il,
                 discovery.i)
             data.itemType = itemTypeVal
             data.itemSubType = itemSubTypeVal
             data.equipLoc = equipLocVal
+            data.minLevel = minLevel
 
             -- Invalidates the filtered cache to force a refresh.
             Cache.filteredResults = {}
@@ -3495,7 +3548,7 @@ function Viewer:AddDiscoveryToCache(guid, discovery)
     local characterClass = GetItemCharacterClass(discovery.il, discovery.i)
 
     -- Retrieves additional item information.
-    local name, _, _, _, _, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.il,
+    local name, _, _, _, minLevel, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.il,
         discovery.i)
 
     _tinsert(Cache.discoveries, {
@@ -3508,6 +3561,7 @@ function Viewer:AddDiscoveryToCache(guid, discovery)
         itemSubType = itemSubTypeVal,
         equipLoc = equipLocVal,
         characterClass = characterClass,
+        minLevel = minLevel,
     })
 
     -- Limit cache size to prevent memory leaks

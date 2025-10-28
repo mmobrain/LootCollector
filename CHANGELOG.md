@@ -1,9 +1,22 @@
+## **LootCollector 0.5.5 - New command + Fixes **
+
+Highlights
+- **`/lctoggle`  New command**  
+Toggles visibility of Map and Minimap discoveries (you can keybind it too!)
+
+Fixes
+Database cleanup and optimization to ensure stability and performance.
+Improved the WF tooltip with richer details.
+Fixed tracking and auto-tracking functionality to now work correctly in all starter zones*.
+
+Database Update: Updated starter database to 1760+ discoveries.
+
 ## **LootCollector 0.5.4 - Fixes **
 Mainly related to the new player experience with the addon.
 Changed item and vendor detection.
 A bunch of other fixes.
 
-Database Update: Updated starter database to 1650 discoveries.
+Database Update: Updated starter database to 1640+ discoveries.
 
 ## **LootCollector 0.5.3 - Enhanced WF Tooltip + Fixes**
 Highlights

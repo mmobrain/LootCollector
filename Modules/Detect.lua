@@ -47,7 +47,7 @@ Detect._expectedItemLink = nil
 
 function Detect:Debug(msg, ...) return end
 
--- Moved helper functions here to fix scope issue
+
 local function ParseItemID(link)
   if not link then return nil end
   return tonumber(link:match("item:(%d+)"))
@@ -104,7 +104,7 @@ local function GetNPCSubname(unit)
   local line2 = _G["LootCollector_NPCScanTipTextLeft2"]
   local text = line2 and line2:IsShown() and line2:GetText() or nil
 
-  -- Filter out level text
+  
   if text and (text:match("^Level %d") or tonumber(text:match("(%d+)"))) then
     return nil
   end
@@ -188,7 +188,7 @@ function Detect:ScanAndRecordVendor()
     end
     self.recentlyScannedNPCs[npcGUID] = time()
 
-    local merchantItems = ScanMerchant() -- This call is now valid
+    local merchantItems = ScanMerchant()
     if #merchantItems == 0 then
         return
     end
@@ -262,11 +262,90 @@ local function IsBlackmarketArtisan(unit)
   return sub and sub:find("Blackmarket Artisan Supplies", 1, true) ~= nil
 end
 
+
+local function FindNearbyVendor(newVendor)
+    if not (L.db and L.db.global and L.db.global.discoveries) then return nil end
+    if not (newVendor.vendorName and newVendor.z) then return nil end
+
+    -- A reasonable threshold for coordinates being "the same"
+    local COORD_THRESHOLD = 0.03
+
+    local newX = newVendor.xy and L:Round4(newVendor.xy.x) or 0
+    local newY = newVendor.xy and L:Round4(newVendor.xy.y) or 0
+
+    for guid, existingVendor in pairs(L.db.global.discoveries) do
+        -- Check if it's a vendor and matches name, type, and zone
+        if existingVendor.vendorName and
+           existingVendor.vendorName == newVendor.vendorName and
+           (existingVendor.vendorType == newVendor.vendorType) and
+           (tonumber(existingVendor.z) == tonumber(newVendor.z)) and
+           (tonumber(existingVendor.c) == tonumber(newVendor.c)) then
+
+            local existingX = existingVendor.xy and L:Round4(existingVendor.xy.x) or 0
+            local existingY = existingVendor.xy and L:Round4(existingVendor.xy.y) or 0
+
+            -- Check if coordinates are close enough
+            if math.abs(newX - existingX) < COORD_THRESHOLD and math.abs(newY - existingY) < COORD_THRESHOLD then
+                return existingVendor -- Found a match
+            end
+        end
+    end
+    return nil -- No match found
+end
+
+
+local function MergeVendorData(existing, new)
+
+    existing.ls = math.max(tonumber(existing.ls) or 0, tonumber(new.t0) or 0)
+    existing.st = math.max(tonumber(existing.st) or 0, tonumber(new.t0) or 0)
+
+    
+    if new.fp and new.fp ~= "Unknown" then existing.fp = new.fp end
+
+    -- Merge vendorItems, avoiding duplicates by itemID
+    if new.vendorItems and #new.vendorItems > 0 then
+        existing.vendorItems = existing.vendorItems or {}
+        local itemLookup = {}
+        for _, item in ipairs(existing.vendorItems) do
+            if item.itemID then itemLookup[item.itemID] = true end
+        end
+
+        for _, item in ipairs(new.vendorItems) do
+            if item.itemID and not itemLookup[item.itemID] then
+                table.insert(existing.vendorItems, item)
+                itemLookup[item.itemID] = true
+            end
+        end
+    end
+    
+    
+    existing.mc = (tonumber(existing.mc) or 1) + 1
+
+    
+    if (tonumber(new.t0) or 0) > (tonumber(existing.ls) or 0) then
+        existing.xy = new.xy
+    end
+    
+    L:SendMessage("LOOTCOLLECTOR_DISCOVERY_UPDATED", "update", existing.g, existing)
+    
+    return true 
+end
+
+
 function Detect:OnNPCInteraction()
     local unitToCheck = "npc"
     if not UnitExists(unitToCheck) then return end
 
+    
+    local npcGUID = UnitGUID(unitToCheck)
+    if not npcGUID then return end
+    if self.recentlyScannedNPCs[npcGUID] and (time() - self.recentlyScannedNPCs[npcGUID]) < 10 then
+        return
+    end
+    self.recentlyScannedNPCs[npcGUID] = time()
+
     local merchantItems = ScanMerchant()
+    if not merchantItems or #merchantItems == 0 then return end
     
     local isMSVendor = false
     local isBMVendor = IsBlackmarketArtisan(unitToCheck)
@@ -280,18 +359,9 @@ function Detect:OnNPCInteraction()
         end
     end
 
-    if not isMSVendor and not isBMVendor then
-        return
-    end
+    if not isMSVendor and not isBMVendor then return end
 
-    local vendorType, placeholderLink
-    if isMSVendor then
-        vendorType = "MS"
-        placeholderLink = string.format("|cffa335ee|Hitem:-4:0:0:0:0:0:0:0:0|h[Mystic Scroll Vendor]|h|r")
-    elseif isBMVendor then
-        vendorType = "BM"
-        placeholderLink = string.format("|cff663300|Hitem:-3:0:0:0:0:0:0:0:0|h[Blackmarket Supplies]|h|r")
-    end
+    local vendorType = isMSVendor and "MS" or "BM"
 
     local now = time()
     local px, py = GetPlayerMapPosition("player")
@@ -308,35 +378,49 @@ function Detect:OnNPCInteraction()
     if z == 0 then
         local ZL = L:GetModule("ZoneList", true)
         if ZL and ZL.ResolveInstanceIz then
-            local live = GetRealZoneText() or GetZoneText()
-            iz = ZL:ResolveInstanceIz(live)
+            iz = ZL:ResolveInstanceIz(GetRealZoneText() or GetZoneText())
         end
     end
     
     local mapID = GetCurrentMapAreaID()
-
     local Constants = L:GetModule("Constants", true)
-    local discovery = {
-        il = placeholderLink,
-        i = (vendorType == "MS" and -4 or -3),
+    
+    local potentialDiscovery = {
         c = c,
         z = z,
         iz = iz,
-        mapID = mapID, 
         xy = { x = px, y = py },
         t0 = now,
-        src = "merchant",
+        vendorType = vendorType,
+        vendorName = UnitName(unitToCheck),
+        vendorItems = merchantItems,
         fp = UnitName("player"),
         dt = Constants and Constants.DISCOVERY_TYPE.BLACKMARKET,
-        vendorType = vendorType,
-        vendorItems = merchantItems,
-        vendorName = UnitName(unitToCheck),
     }
 
-    local Core = L:GetModule("Core", true)
-    if Core and Core.HandleLocalLoot then
-        Core:HandleLocalLoot(discovery)
+    -- Check for an existing vendor before creating a new one
+    local existingVendor = FindNearbyVendor(potentialDiscovery)
+    if existingVendor then
+        MergeVendorData(existingVendor, potentialDiscovery)
+        -- Broadcast the merged data if needed*
+        local Comm = L:GetModule("Comm", true)
+        if Comm and Comm.QueueBroadcast then
+            Comm:QueueBroadcast(existingVendor)
+        end
+    else
+        -- It's a new vendor, pass it to Core to be added and broadcasted*
+        -- Need to add the placeholder item info for Core:HandleLocalLoot
+        potentialDiscovery.i = (vendorType == "MS" and -400000 or -300000) - mapID
+        potentialDiscovery.il = string.format("|cffa335ee|Hitem:%d:0:0:0:0:0:0:0:0|h[%s Vendor]|h|r", potentialDiscovery.i, vendorType)
+
+        local Core = L:GetModule("Core", true)
+        if Core and Core.HandleLocalLoot then
+            Core:HandleLocalLoot(potentialDiscovery)
+        end
     end
+
+    local Map = L:GetModule("Map", true)
+    if Map and Map.Update then Map:Update() end
 end
 
 function Detect:OnLootOpened()
@@ -452,9 +536,8 @@ function Detect:OnChatMsgLoot(_, msg)
   if src == "world_loot" and (now - lastLootContext.openedAt) > LOOT_VALIDITY_WINDOW then
       return
   end
+  
 
-  -- [FIX] Universal Forbidden City Check for Mystic Scrolls
-  -- This block runs for ALL Mystic Scrolls, regardless of source.
   if self:IsMysticScroll(link, src) then
       local event_c, event_z
       

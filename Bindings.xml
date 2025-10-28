@@ -1,0 +1,5 @@
+<Bindings>
+    <Binding name="Toggle Discoveries" description="Toggles the display of all discoveries on the world map and minimap." header="LootCollector">
+        LootCollector:ToggleAllDiscoveries()
+    </Binding>
+</Bindings>

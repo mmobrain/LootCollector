@@ -967,6 +967,30 @@ local function BuildFilterEasyMenu()
   local showSub = { { text = "Show Item Types", isTitle = true, notCheckable = true } }
   table.insert(showSub, { text = "Mystic Scrolls", checked = f.showMysticScrolls, keepShownOnClick = true, func = function() f.showMysticScrolls = not f.showMysticScrolls; Map:Update(); Map:UpdateMinimap() end })
   table.insert(showSub, { text = "Worldforged Items", checked = f.showWorldforged, keepShownOnClick = true, func = function() f.showWorldforged = not f.showWorldforged; Map:Update(); Map:UpdateMinimap() end })
+  
+table.insert(showSub, {
+  text = "Enhanced WF Toltip",
+  checked = (LootCollector.db and LootCollector.db.profile and LootCollector.db.profile.enhancedWFTooltip) and true or false,
+  keepShownOnClick = true,
+  func = function()
+    if not (LootCollector and LootCollector.db and LootCollector.db.profile) then return end
+    LootCollector.db.profile.enhancedWFTooltip = not (LootCollector.db.profile.enhancedWFTooltip and true or false)
+
+    local Tooltip = LootCollector:GetModule("Tooltip", true)
+    if Tooltip and Tooltip.ApplySetting then
+      Tooltip:ApplySetting()
+    else
+      _G.ItemUpgradeTooltipDB = _G.ItemUpgradeTooltipDB or {}
+      _G.ItemUpgradeTooltipDB.enabled = LootCollector.db.profile.enhancedWFTooltip and true or false
+    end
+
+    if Map then
+      if Map.Update then Map:Update() end
+      if Map.UpdateMinimap then Map:UpdateMinimap() end
+    end
+  end
+})
+
   table.insert(menu, { text = "Show", hasArrow = true, notCheckable = true, menuList = showSub })
 
   local qualities = { "Poor","Common","Uncommon","Rare","Epic","Legendary","Artifact","Heirloom" }
@@ -1344,8 +1368,8 @@ function Map:EnsureMinimapTicker()
   
   -- Custom starter zones that have WorldMapSize but need fallback calculation
   local customZones = {
-    [1] = { [45] = true, [25] = true, [24] = true, [1] = true },  -- Kalimdor starters
-    [2] = { [29] = true, [9] = true, [39] = true, [11] = true }   -- Eastern Kingdoms starters
+    --[1] = { [45] = true, [25] = true, [24] = true, [1] = true },  -- Kalimdor starters
+    --[2] = { [29] = true, [9] = true, [39] = true, [11] = true }   -- Eastern Kingdoms starters
   }
   
   self._mmTicker = CreateFrame("Frame")

@@ -1,7 +1,3 @@
--- LootCollector.lua
--- UNK.B64.UTF-8
-
-
 local AceAddon     = LibStub("AceAddon-3.0")
 local AceEvent     = LibStub("AceEvent-3.0")
 local AceComm      = LibStub("AceComm-3.0")
@@ -9,6 +5,8 @@ local AceDB        = LibStub("AceDB-3.0")
 
 local LootCollector = AceAddon:NewAddon("LootCollector", "AceEvent-3.0", "AceComm-3.0")
 _G.LootCollector = LootCollector
+
+BINDING_HEADER_LOOTCOLLECTOR = "LootCollector"
 
 LootCollector.addonPrefix = "BBLC25AM"
 LootCollector.chatChannel = "BBLC25C"
@@ -51,12 +49,11 @@ StaticPopupDialogs["LOOTCOLLECTOR_SHOW_DISCOVERY_REQUEST"] = {
       
       local Core = LootCollector:GetModule("Core", true)
       if Core and Core.AddDiscovery then
-        
-        
-        Core:AddDiscovery(data, { isNetwork = true, op = "SHOW" })
+        -- Add discovery with suppressToast flag to prevent toast from delaying map update
+        Core:AddDiscovery(data, { isNetwork = true, op = "SHOW", suppressToast = true })
       end
   
-      
+      -- Immediately focus on the discovery
       local Map = LootCollector:GetModule("Map", true)
       if Map and Map.FocusOnDiscovery then
         Map:FocusOnDiscovery(data)
@@ -75,6 +72,7 @@ StaticPopupDialogs["LOOTCOLLECTOR_SHOW_DISCOVERY_REQUEST"] = {
     whileDead = 1,
     hideOnEscape = 1,
   }
+
 
 StaticPopupDialogs["LOOTCOLLECTOR_OPTIONAL_DB_UPDATE"] = {
   text = "LootCollector has detected a starter database (version %s).\n\n%s\n\nWould you like to merge it with your existing data?",
@@ -131,7 +129,8 @@ local dbDefaults = {
         paused = false,
         offeredOptionalDB = nil, -- Flag for one-time offer
         minQuality = 2,
-        checkOnlySingleItemLoot = true,
+	    checkOnlySingleItemLoot = true,
+	    enhancedWFTooltip = true,
         mapFilters = { 
             hideAll = false, 
             hideFaded = false, 
@@ -412,8 +411,7 @@ function LootCollector:OnInitialize()
         StaticPopup_Show("LOOTCOLLECTOR_MIGRATE_DB")
         return 
     end
-
-
+    
     self.db = LibStub("AceDB-3.0"):New("LootCollectorDB_Asc", dbDefaults, true)
     
     if _G.LootCollectorDB_Asc then
@@ -423,7 +421,7 @@ function LootCollector:OnInitialize()
     self.channelReady = false 
     
     self.name = "LootCollector"
-    self.Version = "alpha-0.5.4"
+    self.Version = "alpha-0.5.5"
     
     -- *** PER-CHARACTER MIGRATION FINALIZER & VERIFIER ***
     if self.db.profile and self.db.profile.preservedLootedData_v6 then
@@ -522,6 +520,11 @@ function LootCollector:OnInitialize()
             print("|cffff7f00LootCollector:|r Arrow module not available.")
         end
     end
+
+    SLASH_LOOTCOLLECTORTOGGLE1 = "/lctoggle"
+    SlashCmdList["LOOTCOLLECTORTOGGLE"] = function()
+        LootCollector:ToggleAllDiscoveries()
+    end
 end
 
 function LootCollector:IsPaused()
@@ -543,6 +546,30 @@ function LootCollector:TogglePause()
     if not (self.db and self.db.profile) then return end
     self.db.profile.paused = not self.db.profile.paused
     if self.db.profile.paused then print("|cffff7f00LootCollector:|r Processing is now |cffff0000PAUSED|r. Messages will be queued.") else print("|cff00ff00LootCollector:|r Processing is now |cff00ff00RESUMED|r."); self:ProcessPauseQueues() end
+end
+
+function LootCollector:ToggleAllDiscoveries()
+    if not (self.db and self.db.profile and self.db.profile.mapFilters) then return end
+
+    local filters = self:GetFilters()
+    filters.hideAll = not filters.hideAll
+
+    if filters.hideAll then
+        print("|cffff7f00LootCollector:|r All discoveries are now |cffff0000HIDDEN|r on the Map and Minimap.")
+    else
+        print("|cff00ff00LootCollector:|r All discoveries are now |cff00ff00SHOWN|r on the Map and Minimap.")
+    end
+
+    -- Refresh map and minimap
+    local Map = self:GetModule("Map", true)
+    if Map then
+        if Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
+            Map:Update()
+        end
+        if Map.UpdateMinimap then
+            Map:UpdateMinimap()
+        end
+    end
 end
 
 function LootCollector:IsZoneIgnored()
@@ -600,3 +627,15 @@ SlashCmdList["LCHISTORY"] = function()
         print("|cffff7f00LootCollector:|r HistoryTab module not available.")
     end
 end
+
+SLASH_LCCLEANUP1 = "/lccdb"
+SlashCmdList["LCCLEANUP"] = function()
+    local Core = LootCollector:GetModule("Core", true)
+    if Core and Core.RunManualDatabaseCleanup then
+        Core:RunManualDatabaseCleanup()
+    else
+        print("|cffff7f00LootCollector:|r Core module not available.")
+    end
+end
+
+-- QSBBIEEgQSBBIEEgQSBBIEEgQQrwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5Kl

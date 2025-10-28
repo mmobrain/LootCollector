@@ -567,8 +567,141 @@ function Core:DeduplicateItems(mysticScrollsKeepOldest)
     return wfRemoved, msRemoved
 end
 
+-- Deduplicate vendors within the same zone by merging nearby vendors with same name
+function Core:DeduplicateVendorsPerZone()
+    if not (L.db and L.db.global and L.db.global.discoveries) then return 0 end
+    
+    local discoveries = L.db.global.discoveries
+    local COORD_THRESHOLD = 0.03
+    
+    -- Group vendors by zone and vendor name
+    local vendorGroups = {}
+    for guid, d in pairs(discoveries) do
+        if d and d.vendorName and d.vendorType then
+            local key = string.format("%d:%d:%s:%s", d.c or 0, d.z or 0, d.vendorName, d.vendorType)
+            vendorGroups[key] = vendorGroups[key] or {}
+            table.insert(vendorGroups[key], guid)
+        end
+    end
+    
+    local guidsToRemove = {}
+    local mergedCount = 0
+    
+    -- Process each vendor group
+    for _, guids in pairs(vendorGroups) do
+        if #guids > 1 then
+            -- Sort by most recent timestamp (ls) descending
+            table.sort(guids, function(a, b)
+                local aTime = tonumber(discoveries[a].ls) or 0
+                local bTime = tonumber(discoveries[b].ls) or 0
+                return aTime > bTime
+            end)
+            
+            local i = 1
+            while i <= #guids do
+                local keepGuid = guids[i]
+                local keepVendor = discoveries[keepGuid]
+                local keepX = keepVendor.xy and L:Round4(keepVendor.xy.x) or 0
+                local keepY = keepVendor.xy and L:Round4(keepVendor.xy.y) or 0
+                
+                local j = i + 1
+                while j <= #guids do
+                    local checkGuid = guids[j]
+                    local checkVendor = discoveries[checkGuid]
+                    local checkX = checkVendor.xy and L:Round4(checkVendor.xy.x) or 0
+                    local checkY = checkVendor.xy and L:Round4(checkVendor.xy.y) or 0
+                    
+                    -- Check if coordinates are close enough to be the same vendor
+                    if math.abs(keepX - checkX) < COORD_THRESHOLD and math.abs(keepY - checkY) < COORD_THRESHOLD then
+                        -- Merge vendorItems from checkVendor into keepVendor
+                        if checkVendor.vendorItems and #checkVendor.vendorItems > 0 then
+                            keepVendor.vendorItems = keepVendor.vendorItems or {}
+                            local itemLookup = {}
+                            for _, item in ipairs(keepVendor.vendorItems) do
+                                if item.itemID then itemLookup[item.itemID] = true end
+                            end
+                            
+                            for _, item in ipairs(checkVendor.vendorItems) do
+                                if item.itemID and not itemLookup[item.itemID] then
+                                    table.insert(keepVendor.vendorItems, item)
+                                    itemLookup[item.itemID] = true
+                                end
+                            end
+                        end
+                        
+                        -- Update merge count
+                        keepVendor.mc = (tonumber(keepVendor.mc) or 1) + 1
+                        
+                        -- Mark for removal
+                        table.insert(guidsToRemove, checkGuid)
+                        table.remove(guids, j)
+                        mergedCount = mergedCount + 1
+                    else
+                        j = j + 1
+                    end
+                end
+                
+                i = i + 1
+            end
+        end
+    end
+    
+    -- Remove duplicate vendors
+    if #guidsToRemove > 0 then
+        for _, guid in ipairs(guidsToRemove) do
+            discoveries[guid] = nil
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
+        end
+    end
+    
+    return mergedCount
+end
+
+-- Remove all discoveries with invalid zone data (z=0 and iz=0)
+function Core:PurgeInvalidZoneDiscoveries()
+    if not (L.db and L.db.global and L.db.global.discoveries) then return 0 end
+    
+    local discoveries = L.db.global.discoveries
+    local guidsToRemove = {}
+    
+    for guid, d in pairs(discoveries) do
+        if d then
+            local z = tonumber(d.z) or 0
+            local iz = tonumber(d.iz) or 0
+            
+            
+            if z == 0 and iz == 0 then
+                table.insert(guidsToRemove, guid)
+            end
+        end
+    end
+    
+    local removedCount = #guidsToRemove
+    if removedCount > 0 then
+        for _, guid in ipairs(guidsToRemove) do
+            discoveries[guid] = nil
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
+        end
+    end
+    
+    return removedCount
+end
+
+
 function Core:RunManualDatabaseCleanup()
     print("|cff00ff00LootCollector:|r Starting manual database cleanup...")
+
+    -- NEW: Remove discoveries with invalid zone data (z=0 and iz=0)
+    local invalidZoneRemoved = self:PurgeInvalidZoneDiscoveries()
+    if invalidZoneRemoved > 0 then
+        print(string.format("|cff00ff00LootCollector:|r Purged %d entries with invalid zone data.", invalidZoneRemoved))
+    end
+
+    -- NEW: Deduplicate vendors per zone
+    local vendorsMerged = self:DeduplicateVendorsPerZone()
+    if vendorsMerged > 0 then
+        print(string.format("|cff00ff00LootCollector:|r Merged %d duplicate vendor entries.", vendorsMerged))
+    end
 
     local zeroCoordRemoved = self:PurgeZeroCoordDiscoveries()
     if zeroCoordRemoved > 0 then
@@ -577,7 +710,6 @@ function Core:RunManualDatabaseCleanup()
 
     local cityGuidsToRemove = {}
     for guid, d in pairs(L.db.global.discoveries or {}) do
-        
         local zoneName = L:ResolveZoneDisplay(d.c, d.z, d.iz)
         if zoneName and cityZonesToPurge[zoneName] then
             table.insert(cityGuidsToRemove, guid)
@@ -587,7 +719,6 @@ function Core:RunManualDatabaseCleanup()
     if cityRemoved > 0 then
         for _, guid in ipairs(cityGuidsToRemove) do
             L.db.global.discoveries[guid] = nil
-            -- Notifies Viewer of removed discovery
             L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
         end
         print(string.format("|cff00ff00LootCollector:|r Purged %d entries found in city zones.", cityRemoved))
@@ -614,7 +745,7 @@ function Core:RunManualDatabaseCleanup()
     L.db.global.manualCleanupRunCount = (L.db.global.manualCleanupRunCount or 0) + 1
     print(string.format("|cffffff00LootCollector:|r Manual cleanup has now been run %d time(s).", L.db.global.manualCleanupRunCount))
 
-    if (zeroCoordRemoved + cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved) == 0 then
+    if (invalidZoneRemoved + vendorsMerged + zeroCoordRemoved + cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved) == 0 then
         print("|cff00ff00LootCollector:|r No items needed purging or deduplication.")
     else
         print("|cff00ff00LootCollector:|r Manual cleanup complete.")
@@ -624,6 +755,7 @@ function Core:RunManualDatabaseCleanup()
         end
     end
 end
+
 
 function Core:RunInitialCleanup()
     local zeroCoordRemoved = self:PurgeZeroCoordDiscoveries()
@@ -1033,6 +1165,7 @@ function Core:OnInitialize()
         Core:ScanDatabaseForUncachedItems()
         Core:EnsureCachePump()
     end)
+	
 end
 
 function Core:Qualifies(linkOrQuality)
@@ -1418,6 +1551,20 @@ end
 function Core:AddDiscovery(discoveryData, options)
     options = options or {}
     local op = options.op or "DISC"
+	
+	 if options.isNetwork then
+
+        if not (discoveryData and discoveryData.xy and discoveryData.c and discoveryData.z and (discoveryData.il or discoveryData.i)) then
+            return -- Silently drop malformed packet
+        end
+        
+        -- Reject if zone information is invalid (z and iz are both 0)
+        local z = tonumber(discoveryData.z) or 0
+        local iz = tonumber(discoveryData.iz) or 0
+        if z == 0 and iz == 0 then
+            return -- Silently drop packet with invalid zone data
+        end
+    end
 
     if L:IsZoneIgnored() and options.isNetwork then
         return
@@ -1454,9 +1601,9 @@ function Core:AddDiscovery(discoveryData, options)
     
     if options.isNetwork then
         if isBlackmarket then
-            -- Process vendors immediately
+            -- Process vendors immediately*
         elseif self:IsItemFullyCached(itemID) then
-            -- Process cached items immediately
+            -- Process cached items immediately*
         else
             -- Defer processing for uncached items
             local firstDelay = math.random(5, 25)
@@ -1593,8 +1740,13 @@ function Core:AddDiscovery(discoveryData, options)
             db[newRecord.g] = newRecord
             
             L:SendMessage("LootCollector_DiscoveriesUpdated", "add", newRecord.g, newRecord)
-            
-            local toast = L:GetModule("Toast", true)
+			if not options.suppressToast then
+				local toast = L:GetModule("Toast", true)
+				if toast and toast.Show then 
+					toast:Show(newRecord, false, options) 
+				end
+			end
+                        
             if toast and toast.Show then toast:Show(newRecord, false, options) end
         else
             if incoming_fp ~= existing.fp then
@@ -1610,7 +1762,7 @@ function Core:AddDiscovery(discoveryData, options)
                     local Comm = L:GetModule("Comm", true)
                     if Comm and Comm.BroadcastCorrection then
                         self:UpdateConsensusWinner(existing)
-                        local winner_data = existing.fp_votes[existing.fp] -- This line no longer errors
+                        local winner_data = existing.fp_votes[existing.fp]
                         
                         Comm:BroadcastCorrection({
                             i = existing.i, c = existing.c, z = existing.z,

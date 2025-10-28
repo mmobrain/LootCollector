@@ -453,7 +453,7 @@ function ImportExport:ApplyImport(parsed, mode, withOverlays, skipBlacklist, ski
         end
     end
 
-    -- *** CORRECTED FIX: Ensure schema version is set on the root global table after any import ***
+    
     if _G.LootCollectorDB_Asc then
         _G.LootCollectorDB_Asc._schemaVersion = 6
     end

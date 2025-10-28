@@ -207,12 +207,11 @@ function Toast:ShowSpecialMessage(iconTexture, titleText, subtitleText)
 	end
 	if not toastContainer then return end
 
-    -- This function is for trusted, local-only messages.
-    -- It does not use the queue and displays immediately.
+   
 
     local f = self:acquireToast()
 
-    f.text.discoveryData = nil -- No discovery data associated with this
+    f.text.discoveryData = nil 
 	f.icon:SetTexture(iconTexture or "Interface\\Icons\\INV_Misc_Book_09")
     f.text.fontString:SetText(titleText or "LootCollector Notification")
 	f.subtext:SetText(subtitleText or "")

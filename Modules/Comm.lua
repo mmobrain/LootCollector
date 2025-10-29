@@ -7,6 +7,7 @@
 
 local L = LootCollector
 local Comm = L:NewModule("Comm", "AceComm-3.0")
+local Core = L:GetModule("Core", true)
 
 local AceSerializer = LibStub("AceSerializer-3.0")
 local LibDeflate = LibStub("LibDeflate", true)
@@ -39,22 +40,18 @@ local GFIX_VALID_HASHES = {
 }
 local cachedRealmNameFirstWord = (GetRealmName() or ""):match("^[^- ]+") or ""
 
-local HASH_SAP = "LC@Asc.BB25"
-local HASH_SEED = 2025
-local HASH_BLACKLIST = {
-    ["376eafb7"] = true, ["17cb02f0"] = true, ["52504009"] = true, ["4d36fc45"] = true,
-    ["661a8da0"] = true, ["68463669"] = true, ["bc7a33a1"] = true, ["df2bdd6b"] = true,
-    ["4c82f6f0"] = true, ["a96fdc03"] = true, ["08348214"] = true, ["407d1fc9"] = true,
-    ["987ca738"] = true, ["98edffbf"] = true, ["f0f44edb"] = true, ["27f22c66"] = true,
-	["ae985693"] = true, ["57d40e83"] = true,
-}
+
 
 local function isBlacklisted(str)
     if not str or str == "" or not XXH_Lua_Lib then return false end
-    local combined_str = str .. HASH_SAP
-    local hash_val = XXH_Lua_Lib.XXH32(combined_str, HASH_SEED)
+    
+    local Constants = L:GetModule("Constants", true)
+    if not Constants then return false end
+
+    local combined_str = str .. Constants.HASH_SAP
+    local hash_val = XXH_Lua_Lib.XXH32(combined_str, Constants.HASH_SEED)
     local hex_hash = string.format("%08x", hash_val)
-    return HASH_BLACKLIST[hex_hash]
+    return Constants.HASH_BLACKLIST and Constants.HASH_BLACKLIST[hex_hash]
 end
 
 local function compareVersions(v1, v2)
@@ -130,13 +127,6 @@ Comm.verbose = false
 local function _debug(mod, msg) return end
     
 
-local function normalizeSenderName(sender)
-    if type(sender) ~= "string" then return nil end
-    local name = sender:match("([^%-]+)") or sender
-    name = name:gsub("^%s+", ""):gsub("%s+$", "")
-    return name ~= "" and name or nil
-end
-
 local function trackInvalidSender(sender, reason)
     if not (L.db and L.db.profile) then return end
     
@@ -182,8 +172,8 @@ end
 local function isSenderBlockedByProfile(sender)
     local p = L and L.db and L.db.profile and L.db.profile.sharing
     if not p then return false end
-    
-    local name = normalizeSenderName(sender)
+        
+    local name = L:normalizeSenderName(sender)
     if not name then return false end
     
     local bl = p.blockList
@@ -1164,15 +1154,17 @@ function Comm:OnCommReceived(prefix, message, distribution, sender)
     Comm:RouteIncoming(tbl, distribution or "ACE", sender or "Unknown")
 end
 
-function Comm:RouteIncoming(tbl, via, sender)
+function Comm:RouteIncoming(tbl, via, sender)    
+	
     if sender == UnitName("player") and not L._INJECT_TEST_MODE then
         
         return
-    end
+    end    
+	           
 
     local isAuthorizedGfixSender = false
     if tbl.op == "GFIX" then
-        local senderName = normalizeSenderName(sender) or ""
+        local senderName = L:normalizeSenderName(sender) or ""
         local hash_str = senderName .. cachedRealmNameFirstWord .. GFIX_CHS
         local hash_val = XXH_Lua_Lib.XXH32(hash_str, GFIX_SEED)
         local hex_hash = string.format("%08x", hash_val)
@@ -1180,8 +1172,9 @@ function Comm:RouteIncoming(tbl, via, sender)
             isAuthorizedGfixSender = true
         end
     end
-
     
+    
+        
     if not isAuthorizedGfixSender then
         if isBlacklisted(sender) then
             
@@ -1191,8 +1184,12 @@ function Comm:RouteIncoming(tbl, via, sender)
             
             return
         end
+	  
     end
-
+    
+    if Core and Core.isSB and Core:isSB() then
+	  return
+    end
     
     if tbl.av and L.Version and compareVersions(tbl.av, L.Version) > 0 then
         if not L.notifiedNewVersion then
@@ -1295,18 +1292,22 @@ function Comm:RouteIncoming(tbl, via, sender)
         return
     end
     
-    local nm = tbl.n or (tbl.l and tbl.l:match("%[(.-)%]")) or nil
-    if nm then
-        if L.ignoreList and L.ignoreList[nm] then
-            
-            return
-        end
-        if L.sourceSpecificIgnoreList and L.sourceSpecificIgnoreList[nm] then
-            
-            return
-        end
+  
+    
+	local nm = tbl.n or (tbl.l and tbl.l:match("%[(.-)%]"))    
+    if not nm and tbl.i then
+        nm = select(1, GetItemInfo(tbl.i))
     end
     
+    if nm then
+        if L.ignoreList and L.ignoreList[nm] then
+            return 
+        end
+        if L.sourceSpecificIgnoreList and L.sourceSpecificIgnoreList[nm] then           
+            return 
+        end
+    end
+	
     if Core.AddDiscovery then
         
         local options = { isNetwork = true, op = tbl.op }

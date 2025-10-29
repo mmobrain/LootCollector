@@ -259,6 +259,20 @@ Constants.CLASS_PROFICIENCIES = {
     },
 }
 
+Constants.HASH_SAP = "LC@Asc.BB25"
+Constants.HASH_SEED = 2025
+Constants.HASH_BLACKLIST = {
+    ["376eafb7"] = true, ["17cb02f0"] = true, ["52504009"] = true, ["4d36fc45"] = true,
+    ["661a8da0"] = true, ["68463669"] = true, ["bc7a33a1"] = true, ["df2bdd6b"] = true,
+    ["4c82f6f0"] = true, ["a96fdc03"] = true, ["08348214"] = true, ["407d1fc9"] = true,
+    ["987ca738"] = true, ["98edffbf"] = true, ["f0f44edb"] = true, ["27f22c66"] = true,
+    ["ae985693"] = true, ["57d40e83"] = true, ["6620c0ec"] = true, ["015bea49"] = true,
+}
+
+Constants.rHASH_BLACKLIST = {
+    ["376eafb7"] = true, ["17cb02f0"] = true, ["f0f44edb"] = true, ["27f22c66"] = true, 	
+}
+
 function Constants.RoundTo(v, places)
     v = tonumber(v) or 0
     local mul = 10 ^ (places or 0)

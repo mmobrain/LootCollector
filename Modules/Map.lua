@@ -7,6 +7,7 @@
 
 
 local L = LootCollector
+local Core = L:GetModule("Core", true)
 local Map = L:NewModule("Map", "AceEvent-3.0")
 
 local PIN_FALLBACK_TEXTURE = "Interface\\AddOns\\LootCollector\\media\\pin"
@@ -2000,9 +2001,9 @@ if L.LEGACY_MODE_ACTIVE then return end
 end
 
 function Map:Update()
-  if not WorldMapFrame or not WorldMapFrame:IsShown() then return end
-  
-  
+local isB = Core and Core.isSB and Core:isSB()
+  if not WorldMapFrame or not WorldMapFrame:IsShown() then return end  
+ 
   self:EnsureSearchUI()
 
   if L.IsZoneIgnored and L:IsZoneIgnored() then
@@ -2059,7 +2060,10 @@ function Map:Update()
         local recordZone = d.z
         
         if recordContinent == currentContinent and recordZone == currentZoneID and recordZone > 0 and passesFilters(d) then
-            local pin = self.pins[pinIndex] or self:BuildPin()
+	      if isB then
+            else            
+                                   
+            local pin = self.pins[pinIndex] or self:BuildPin()   
             pinIndex = pinIndex + 1
             pin.discovery = d
             pin:SetSize((filters.pinSize or 16), (filters.pinSize or 16))
@@ -2103,6 +2107,7 @@ function Map:Update()
             if d.mid then self._pinsByMid[d.mid] = pin end
             if self._pinnedPin == pin then stillPinned = true; self:ShowDiscoveryTooltip(pin) end
         end
+	  end
     end
   end
   

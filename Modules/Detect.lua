@@ -524,6 +524,9 @@ function Detect:OnChatMsgLoot(_, msg)
   local looter = playerName or UnitName("player")
 
   if looter ~= UnitName("player") then return end
+  if FORBIDDEN_CITY_ZONES[event_c] and FORBIDDEN_CITY_ZONES[event_c][event_z] then
+      return 
+  end
   
   local now = time()
   
@@ -537,34 +540,28 @@ function Detect:OnChatMsgLoot(_, msg)
       return
   end
   
+  -- First, check if the item is one we should even track.
+  if not self:Qualifies(link, src) then return end
 
-  if self:IsMysticScroll(link, src) then
-      local event_c, event_z
-      
-      -- Determine the location of the event based on its source
-      if src == "world_loot" then
-          event_c, event_z = lastLootContext.c, lastLootContext.z
-      else
-          -- For gossip or other direct-to-bag sources, use the player's current zone
-          event_c = GetCurrentMapContinent and GetCurrentMapContinent() or 0
-          event_z = GetCurrentMapZone and GetCurrentMapZone() or 0
-      end
-
-      -- Now, perform the universal block for forbidden cities
-      if FORBIDDEN_CITY_ZONES[event_c] and FORBIDDEN_CITY_ZONES[event_c][event_z] then
-          return -- Block ALL Mystic Scrolls in forbidden cities.
-      end
+  -- Now that we know it's a valid item, determine its location.
+  local event_c, event_z
+  if src == "world_loot" then
+      event_c, event_z = lastLootContext.c, lastLootContext.z
+  else
+      -- For gossip or other direct-to-bag sources, use the player's current zone
+      event_c = GetCurrentMapContinent and GetCurrentMapContinent() or 0
+      event_z = GetCurrentMapZone and GetCurrentMapZone() or 0
   end
 
-  -- Continue with qualification checks for Worldforged items or valid Mystic Scrolls
-  if not self:Qualifies(link, src) then return end
+  
+  
 
   local last = self._recent[link] or 0
   if now - last < 1.0 then return end
   self._recent[link] = now
 
   local c, z, iz, x, y
-  -- Use loot window coordinates for world loot, otherwise use current player position*
+  -- Use loot window coordinates for world loot, otherwise use current player position
   if src == "world_loot" then
       c, z, iz, x, y = lastLootContext.c, lastLootContext.z, lastLootContext.iz, lastLootContext.x, lastLootContext.y
   else

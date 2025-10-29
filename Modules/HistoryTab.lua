@@ -2,6 +2,7 @@
 -- History list UI for LootCollector with v5 protocol awareness.
 -- Shows discoveries, instance-aware zone display (iz), ACK counts, and status changes based on deletion votes.
 -- 3.3.5a-safe, uses FauxScrollFrame for performance and compatibility.
+-- possibly to remove in future
 -- UNK.B64.UTF-8
 
 
@@ -66,7 +67,7 @@ function HistoryTab:_ResolveZoneDisplay(rec)
     
     if z == 0 then
         return (ZoneList and ZoneList.ResolveIz and ZoneList:ResolveIz(iz)) or (GetRealZoneText and GetRealZoneText()) or "Unknown Instance"
-    else
+    else    
         return (ZoneList and ZoneList.GetZoneName and ZoneList:GetZoneName(c, z)) or "Unknown Zone"
     end
 end

@@ -151,6 +151,23 @@ local function restoreContainerPosition(f)
 	end
 end
 
+function Toast:ClearQueue()
+    if not queue and not anonBuffer then return 0 end
+    
+    local clearedCount = (#queue or 0) + (#anonBuffer or 0)
+    
+    if queue then
+        wipe(queue)
+    end
+    if anonBuffer then
+        wipe(anonBuffer)
+    end
+        
+    anonWindowEnds = nil
+    
+    return clearedCount
+end
+
 local function anyShown()
 	for _, t in ipairs(toasts) do
 		if t:IsShown() then return true end
@@ -208,6 +225,7 @@ function Toast:ShowSpecialMessage(iconTexture, titleText, subtitleText)
 	if not toastContainer then return end
 
    
+	
 
     local f = self:acquireToast()
 

@@ -1,0 +1,12 @@
+To report bugs for the LootCollector addon include this key info for effective reports:
+
+What: Clear description of the bug and expected vs. actual behavior.
+Steps to reproduce: Exact sequence to trigger it reliably.
+Where/When: Location in-game (zone, coords if relevant), server, time/date it occurred.
+Addon version: Check via in-game addon menu
+WoW client language: e.g., enUS
+Screenshots/videos: Of the issue, error popups, map/database glitches, etc.
+Additional helpful details:
+Other addons installed/enabled (disable others to test if conflict).
+Lua errors: Copy full error text.
+Your settings: e.g., sharing enabled? TomTom installed?

@@ -9,6 +9,7 @@ local addonName = "ItemUpgradeTooltip"
 local printPrefix = "|cff33ff99ItemUpgradeTooltip:|r "
 
 
+
 local inHandler = false
 
 -- Quality color codes
@@ -557,6 +558,10 @@ end
 
 -- Main tooltip hook
 local function OnTooltipSetItem(tooltip)
+    local Core = L:GetModule("Core", true)
+    if Core and Core.isSB and Core:isSB() then
+        return
+    end
     if inHandler then return end
 
     if not (L and L.db and L.db.profile and L.db.profile.enhancedWFTooltip) then

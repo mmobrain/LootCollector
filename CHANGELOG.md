@@ -1,3 +1,8 @@
+## **LootCollector 0.5.6 - Fixes **
+Bunch of fixes
+
+Database Update: Updated starter database to 1840+ discoveries.
+
 ## **LootCollector 0.5.5 - New command + Fixes **
 
 Highlights

@@ -538,29 +538,47 @@ local function buildOptions()
 							return L.db and L.db.profile and L.db.profile.sharing and L.db.profile.sharing.enabled
 						end,
 						set = function(_, v)
-							if not L.db and L.db.profile then return end
+							if not L.db or not L.db.profile then return end
 							L.db.profile.sharing = L.db.profile.sharing or {}
-							L.db.profile.sharing.enabled = (v and true or false)
+							L.db.profile.sharing.enabled = v
+
 							local Comm = L:GetModule("Comm", true)
-							if Comm then
-								if v then
-									
-                                    if L.channelReady then
-                                        if Comm.EnsureChannelJoined then
-                                            Comm:EnsureChannelJoined()
-                                        end
-                                    else
-                                        print("|cffff7f00LootCollector:|r Sharing will be fully enabled after the initial login delay.")
-                                    end
-								else
-									if Comm.LeavePublicChannel then
-										Comm:LeavePublicChannel()
+
+							if v then
+								-- Logic for ENABLING sharing
+								print("|cff00ff00LootCollector:|r Sharing enabled.")
+								if Comm then
+									if L.channelReady then
+										if Comm.EnsureChannelJoined then Comm:EnsureChannelJoined() end
+									else
+										print("|cffff7f00LootCollector:|r Sharing will be fully enabled after the initial login delay.")
 									end
-                                    
-                                    if Comm._rateLimitQueue and #Comm._rateLimitQueue > 0 then
-                                        wipe(Comm._rateLimitQueue)
-                                    end
 								end
+							else
+								-- Logic for DISABLING sharing
+								if Comm and Comm.LeavePublicChannel then
+									Comm:LeavePublicChannel()
+								end
+
+								local clearedBroadcasts = 0
+								local Core = L:GetModule("Core", true)
+								if Core and Core.pendingBroadcasts then
+									for _ in pairs(Core.pendingBroadcasts) do clearedBroadcasts = clearedBroadcasts + 1 end
+									wipe(Core.pendingBroadcasts)
+								end
+
+								if Comm and Comm._rateLimitQueue then
+									clearedBroadcasts = clearedBroadcasts + #Comm._rateLimitQueue
+									wipe(Comm._rateLimitQueue)
+								end
+
+								local clearedToasts = 0
+								local Toast = L:GetModule("Toast", true)
+								if Toast and Toast.ClearQueue then
+									clearedToasts = Toast:ClearQueue()
+								end
+
+								print(string.format("|cffff7f00LootCollector:|r Sharing disabled. Cleared %d pending broadcasts and %d pending notifications.", clearedBroadcasts, clearedToasts))
 							end
 						end,
 					},

@@ -22,6 +22,10 @@ LootCollector.ignoreList = {
     ["Felforged Mystic Scroll: Unlock Legendary"] = true,
     ["Felforged Mystic Scroll: Unlock Epic"] = true,
     ["Enigmatic Mystic Scroll"] = true,
+    ["Friendly Sludgemonster"] = true,
+    ["Worldforged Key Fragment"] = true,
+    ["Worldforged Key"] = true,
+	["The \"Kodo Egg\""] = true,	
 }
 
 LootCollector.sourceSpecificIgnoreList = {
@@ -104,7 +108,7 @@ StaticPopupDialogs["LOOTCOLLECTOR_OPTIONAL_DB_UPDATE"] = {
 }
 
 StaticPopupDialogs["LOOTCOLLECTOR_MIGRATE_DB"] = {
-  text = "|cffff0000LootCollector: Action Required|r\n\nYour database is out of date and the addon is running in a limited |cffff7f00Legacy Mode|r.\n\nTo unlock all features, you must migrate your data. Your per-character looted history will be preserved.",
+  text = "|cffff0000LootCollector: Action Required|r\n\nYour database is out of date and the addon is running in a limited |cffff7f00Legacy Mode|r.\n\nTo unlock all features, you must migrate your data. Your per-character looted history will be preserved. All other data is discarded! ME data is limited in this release!",
   button1 = "Migrate Now",
   button2 = "Ask Me Later",
   OnAccept = function()
@@ -192,6 +196,12 @@ local dbDefaults = {
 
 function LootCollector._debug(module, message) return end
     
+function LootCollector:normalizeSenderName(sender)
+    if type(sender) ~= "string" then return nil end
+    local name = sender:match("([^%-]+)") or sender
+    name = name:gsub("^%s+", ""):gsub("%s+$", "")
+    return name ~= "" and name or nil
+end
 
 function LootCollector:Round2(v)
     v = tonumber(v) or 0
@@ -236,12 +246,6 @@ function LootCollector:ScheduleAfter(seconds, func)
     }
 end
 
-local function GetZoneName(continent, zoneID, zn)
-  local z = tonumber(zoneID) or 0
-  if z == 0 and zn and zn ~= "" then return zn end
-  if L.GetZoneName then return L.GetZoneName(continent, zoneID) end
-  return "Unknown Zone"
-end
 
 function LootCollector.ResolveZoneDisplay(continent, zoneID, iz)
     local ZoneList = LootCollector:GetModule("ZoneList", true)
@@ -249,10 +253,10 @@ function LootCollector.ResolveZoneDisplay(continent, zoneID, iz)
     local z = tonumber(zoneID) or 0
     local inst = tonumber(iz) or 0
 
-    if ZoneList then
-        if ZoneList.GetZoneName then
-            return ZoneList:GetZoneName(c, z, nil, inst)
-        end
+    if z == 0 then
+        return (ZoneList and ZoneList.ResolveIz and ZoneList:ResolveIz(inst)) or (GetRealZoneText and GetRealZoneText()) or "Unknown Instance"
+    else
+        return (ZoneList and ZoneList.GetZoneName and ZoneList:GetZoneName(c, z)) or "Unknown Zone"
     end
 
     return "Unknown Zone"
@@ -421,7 +425,7 @@ function LootCollector:OnInitialize()
     self.channelReady = false 
     
     self.name = "LootCollector"
-    self.Version = "alpha-0.5.5"
+    self.Version = "alpha-0.5.6"
     
     -- *** PER-CHARACTER MIGRATION FINALIZER & VERIFIER ***
     if self.db.profile and self.db.profile.preservedLootedData_v6 then

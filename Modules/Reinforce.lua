@@ -13,7 +13,12 @@ local CONFIRMATION_THRESHOLD = 7
 local GRACE_SEC, MIN_SPACING, JITTER_MIN, JITTER_MAX = 1200, 3.40, 5, 30
 local now = time
 
+-- MODIFIED: Reinforce.queue is now used as a dictionary { [guid] = { fireAt, guid } }
 Reinforce.queue, Reinforce.lastSendAt, Reinforce.scanAccum, Reinforce.scanPeriod = {}, 0, 0, 60
+Reinforce.scanNextKey = nil
+Reinforce.scanInProgress = false
+local SCAN_CHUNK_SIZE = 300       -- Records to process per tick during a scan
+local MAX_ENQUEUE_PER_SCAN = 10 -- Max items to add to the reinforcement queue during a single full scan cycle
 
 local function buildGuid3(c,z,i,x,y) return tostring(c or 0).."-"..tostring(z or 0).."-"..tostring(i or 0).."-"..string.format("%.2f",L:Round2(x or 0)).."-"..string.format("%.2f",L:Round2(y or 0)) end
 local function selfName() return UnitName("player") or "?" end
@@ -47,6 +52,7 @@ local function ensurePerDiscoveryFields(d)
     end
 end
 
+-- MODIFIED: Replaced linear array search with O(1) dictionary lookup.
 function Reinforce:HandleConfirmation(norm)
     if not norm or not norm.xy then return end
     local db = L.db.global.discoveries or {}
@@ -57,24 +63,17 @@ function Reinforce:HandleConfirmation(norm)
 
     local t = tonumber(norm.t0) or now()
 
-    
-    
-    
     d.at = now() 
     recomputeNextDue(d) 
     
-    
-    for i = #Reinforce.queue, 1, -1 do
-        if Reinforce.queue[i].guid == guid then
-            table.remove(Reinforce.queue, i)
-            d.pendingAnnounce = nil 
-        end
+    -- O(1) removal from queue
+    if Reinforce.queue[guid] then
+        d.pendingAnnounce = nil 
+        Reinforce.queue[guid] = nil
     end
 
-    
     d.mc = (d.mc or 1) + 1
 
-    
     if d.s == "UNCONFIRMED" then
         if d.mc >= CONFIRMATION_THRESHOLD then
             d.s = "CONFIRMED"
@@ -155,30 +154,38 @@ local function discoveryPayloadFrom(d)
     }
 end
 
+-- MODIFIED: Use GUID as the key for the dictionary.
 local function enqueue(d)
     local jitter = randint(JITTER_MIN, JITTER_MAX)
     local fireAt = math.max(now(), (tonumber(d.nd) or now())) + jitter
-    table.insert(Reinforce.queue, {fireAt = fireAt, guid = d.g})
+    Reinforce.queue[d.g] = {fireAt = fireAt, guid = d.g}
     d.pendingAnnounce = fireAt
 end
 
+-- MODIFIED: Iterate with pairs() over the dictionary and remove by key.
 local function drainQueueOnce()
     local Comm = L:GetModule("Comm", true)
     if not Comm or not Comm.BroadcastReinforcement then return end
     local tnow = now()
     if (tnow - Reinforce.lastSendAt) < MIN_SPACING then return end
     
-    local bestIdx, bestFireAt = nil, nil
-    for i, q in ipairs(Reinforce.queue) do
-        if not bestFireAt or q.fireAt < bestFireAt then
-            bestFireAt = q.fireAt
-            bestIdx = i
+    -- Check if the queue is empty
+    if not next(Reinforce.queue) then return end
+    
+    local bestGuid, bestFireAt = nil, nil
+    for guid, q_entry in pairs(Reinforce.queue) do
+        if not bestFireAt or q_entry.fireAt < bestFireAt then
+            bestFireAt = q_entry.fireAt
+            bestGuid = guid
         end
     end
     
-    if not bestIdx or bestFireAt > tnow then return end
+    if not bestGuid or bestFireAt > tnow then return end
     
-    local q = table.remove(Reinforce.queue, bestIdx)
+    -- Retrieve and remove the *best* entry
+    local q = Reinforce.queue[bestGuid]
+    Reinforce.queue[bestGuid] = nil
+    
     local db = L.db.global.discoveries or {}
     local d = db[q.guid]
     if not d or (tonumber(d.ac) or 0) >= MAX_STEPS then return end
@@ -194,19 +201,49 @@ local function drainQueueOnce()
     Reinforce.lastSendAt = tnow
 end
 
-local function scanAndEnqueue()
+local function startScan()
+    if Reinforce.scanInProgress then return end
+    Reinforce.scanInProgress = true
+    Reinforce.scanNextKey = nil 
+    Reinforce.enqueuedThisCycle = 0
+end
+
+local function processScanChunk()
+    if not Reinforce.scanInProgress then return end
+    
     local db = L.db.global.discoveries or {}
-    local added = 0
-    for guid, d in pairs(db) do
-        if type(d) == "table" then
-            if added >= 10 then break end
-            d.g = guid
-            if shouldEnqueue(d) then
-                enqueue(d)
-                added = added + 1
+    if not next(db) then
+        Reinforce.scanInProgress = false
+        return
+    end
+
+    local processedInChunk = 0
+    local currentKey = Reinforce.scanNextKey
+
+    while processedInChunk < SCAN_CHUNK_SIZE do
+        local key, value = next(db, currentKey)
+
+        if not key then
+            
+            Reinforce.scanInProgress = false
+            Reinforce.scanNextKey = nil
+            return
+        end
+
+        if type(value) == "table" then
+            value.g = key 
+            if (Reinforce.enqueuedThisCycle or 0) < MAX_ENQUEUE_PER_SCAN and shouldEnqueue(value) then
+                enqueue(value)
+                Reinforce.enqueuedThisCycle = (Reinforce.enqueuedThisCycle or 0) + 1
             end
         end
+
+        processedInChunk = processedInChunk + 1
+        currentKey = key 
     end
+    
+    
+    Reinforce.scanNextKey = currentKey
 end
 
 local tickerFrame = nil
@@ -231,14 +268,19 @@ function Reinforce:OnEnable()
             Reinforce.scanAccum = Reinforce.scanAccum + e
             if Reinforce.scanAccum >= Reinforce.scanPeriod then
                 Reinforce.scanAccum = 0
-                scanAndEnqueue()
+                startScan()
             end
+            
+            if Reinforce.scanInProgress then
+                processScanChunk()
+            end
+            
             drainQueueOnce()
         end)
     end
     
     if C_Timer and C_Timer.After then
-        C_Timer.After(5, scanAndEnqueue)
+        C_Timer.After(5, startScan)
     end
 end
 

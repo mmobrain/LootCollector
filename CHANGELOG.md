@@ -1,3 +1,9 @@
+## **LootCollector 0.5.7 - Performance optimizations + Fix **
+Several performance optimizations that may improve the addon's performance. 
+Fix for disappearing tooltip.
+
+Database Update: Updated starter database to 2k+ discoveries.
+
 ## **LootCollector 0.5.6 - Fixes **
 Bunch of fixes
 

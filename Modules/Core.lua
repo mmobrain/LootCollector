@@ -64,6 +64,8 @@ local function ScheduleAfter(seconds, func)
     }
 end
 
+-- DEPRECATED: This name-based list is incorrect for localization. It is replaced by cityZoneIDsToPurge. Keeping commented for now.
+--[[
 local cityZonesToPurge = {
     ["Stormwind City"] = true,
     ["Ironforge"] = true,
@@ -73,6 +75,27 @@ local cityZonesToPurge = {
     ["Undercity"] = true,
     ["Shattrath City"] = true,
     ["Dalaran"] = true,
+}
+--]]
+
+-- NEW: ID-based lookup for purging city zones. This is language-independent.
+local cityZoneIDsToPurge = {
+    [1] = { -- Kalimdor
+        [10] = true, -- Darnassus
+        [22] = true, -- Orgrimmar
+        [41] = true, -- Thunder Bluff
+    },
+    [2] = { -- Eastern Kingdoms
+        [23] = true, -- Ironforge
+        [37] = true, -- Stormwind City
+        [46] = true, -- Undercity
+    },
+    [3] = { -- Outland
+        [6] = true, -- Shattrath City
+    },
+    [4] = { -- Northrend
+        [3] = true, -- Dalaran
+    }
 }
 
 local guidPrefixesToPurge = {
@@ -731,7 +754,7 @@ function Core:PurgeInvalidZoneDiscoveries()
     return removedCount
 end
 
-
+-- MODIFIED: Replaced name-based city purge with ID-based logic.
 function Core:RunManualDatabaseCleanup()
     print("|cff00ff00LootCollector:|r Starting manual database cleanup...")
 
@@ -754,8 +777,8 @@ function Core:RunManualDatabaseCleanup()
 
     local cityGuidsToRemove = {}
     for guid, d in pairs(L.db.global.discoveries or {}) do
-        local zoneName = L:ResolveZoneDisplay(d.c, d.z, d.iz)
-        if zoneName and cityZonesToPurge[zoneName] then
+        -- Use numerical IDs directly instead of resolving to a localized name
+        if d and d.c and d.z and cityZoneIDsToPurge[d.c] and cityZoneIDsToPurge[d.c][d.z] then
             table.insert(cityGuidsToRemove, guid)
         end
     end
@@ -800,14 +823,14 @@ function Core:RunManualDatabaseCleanup()
     end
 end
 
-
+-- MODIFIED: Replaced name-based city purge with ID-based logic.
 function Core:RunInitialCleanup()
     local zeroCoordRemoved = self:PurgeZeroCoordDiscoveries()
 
     local cityGuidsToRemove = {}
     for guid, d in pairs(L.db.global.discoveries or {}) do
-        local zoneName = L:ResolveZoneDisplay(d.c, d.z, d.iz)
-        if zoneName and cityZonesToPurge[zoneName] then
+        -- Use numerical IDs directly instead of resolving to a localized name
+        if d and d.c and d.z and cityZoneIDsToPurge[d.c] and cityZoneIDsToPurge[d.c][d.z] then
             table.insert(cityGuidsToRemove, guid)
         end
     end
@@ -833,6 +856,7 @@ function Core:RunInitialCleanup()
     end
 end
 
+-- MODIFIED: Replaced name-based city purge with ID-based logic.
 function Core:RunAutomaticOnLoginCleanup()
     local totalRemoved = 0
     
@@ -855,8 +879,8 @@ function Core:RunAutomaticOnLoginCleanup()
     -- Purge discoveries from city zones
     local cityGuidsToRemove = {}
     for guid, d in pairs(L.db.global.discoveries or {}) do
-        local zoneName = L:ResolveZoneDisplay(d.c, d.z, d.iz)
-        if zoneName and cityZonesToPurge[zoneName] then
+        -- Use numerical IDs directly instead of resolving to a localized name
+        if d and d.c and d.z and cityZoneIDsToPurge[d.c] and cityZoneIDsToPurge[d.c][d.z] then
             table.insert(cityGuidsToRemove, guid)
         end
     end
@@ -1660,10 +1684,9 @@ function Core:AddDiscovery(discoveryData, options)
       if discoveryData then
         local c = tonumber(discoveryData.c) or 0
         local z = tonumber(discoveryData.z) or 0
-        local iz = tonumber(discoveryData.iz) or 0
-        local zoneName = self:_ResolveZoneDisplay(c, z, iz)
-        if zoneName and cityZonesToPurge[zoneName] then	  
-            return 	 
+        -- MODIFIED: Check against the ID-based city list
+        if cityZoneIDsToPurge[c] and cityZoneIDsToPurge[c][z] then
+            return 
         end
       end
 	  

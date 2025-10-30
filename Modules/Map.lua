@@ -534,17 +534,19 @@ function Map:EnsureHoverButton()
 end
 
 function Map:GetBMItemLine(parentTooltip)
+    -- Safely reuse frames from a simple pool.
     for _, lineFrame in ipairs(self._bmItemLines) do
         if not lineFrame:IsShown() then
+            -- Ensure it's parented to the correct tooltip for this showing.
             if lineFrame:GetParent() ~= parentTooltip then
                 lineFrame:SetParent(parentTooltip)
-                
                 lineFrame:SetSize(parentTooltip:GetWidth() - 20, BM_LINE_HEIGHT)
             end
             return lineFrame
         end
     end
 
+    -- Create a new line if the pool is empty.
     local lineFrame = CreateFrame("Button", nil, parentTooltip)
     lineFrame:SetSize(parentTooltip:GetWidth() - 20, BM_LINE_HEIGHT)
     lineFrame:SetFrameLevel(parentTooltip:GetFrameLevel() + 1)
@@ -561,7 +563,6 @@ function Map:GetBMItemLine(parentTooltip)
 
     lineFrame:SetScript("OnEnter", function(self)
         if self.itemLink then
-            
             ItemRefTooltip:SetOwner(self, "ANCHOR_RIGHT")
             ItemRefTooltip:SetHyperlink(self.itemLink)
             ItemRefTooltip:Show()
@@ -577,9 +578,13 @@ function Map:GetBMItemLine(parentTooltip)
 end
 
 function Map:ShowBlackmarketTooltip(d, anchorFrame)
-    local mapSize = WORLDMAP_SETTINGS and WORLDMAP_SETTINGS.size
-    local useWorldMapTooltip = (mapSize and (mapSize == WORLDMAP_QUESTLIST_SIZE or mapSize == WORLDMAP_FULLMAP_SIZE))
-    local tooltip = useWorldMapTooltip and WorldMapTooltip or GameTooltip
+    -- Ensure custom tooltip frame exists. If not, create it once.
+    if not self._vendorTooltip then
+        self._vendorTooltip = CreateFrame("GameTooltip", "LootCollectorVendorTooltip", UIParent, "GameTooltipTemplate")
+        self._vendorTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    end
+
+    local tooltip = self._vendorTooltip
     
     tooltip:SetOwner(anchorFrame, "ANCHOR_RIGHT")
     tooltip:ClearLines()
@@ -625,13 +630,17 @@ function Map:ShowBlackmarketTooltip(d, anchorFrame)
         return
     end
 
-    tooltip:Show() 
+    tooltip:Show() -- Show before resizing to get initial height
 
     local listHeight = #items * BM_LINE_HEIGHT
     tooltip:SetHeight(tooltip:GetHeight() + listHeight)
     
+    -- Anchor to the 8th line, which is usually the one after the standard content xD
     local anchorLine = _G[tooltip:GetName().."TextLeft8"] 
-    if not anchorLine then tooltip:Show(); return end
+    if not anchorLine then -- Fallback if the tooltip has fewer lines
+        tooltip:Show()
+        return
+    end
     
     local lastLine = nil
     for i, itemData in ipairs(items) do
@@ -803,11 +812,17 @@ function Map:HideDiscoveryTooltip()
   if ItemRefTooltip then ItemRefTooltip:Hide() end
   if self._hoverBtn then self._hoverBtn:Hide(); self._hoverBtnItemLink = nil end
 
+  -- NEW: Ensure our custom tooltip is hidden as well.
+  if self._vendorTooltip and self._vendorTooltip:IsShown() then
+    self._vendorTooltip:Hide()
+  end
+
   if WorldMapPOIFrame and self._oldAllowBlobTooltip ~= nil then
       WorldMapPOIFrame.allowBlobTooltip = self._oldAllowBlobTooltip
       self._oldAllowBlobTooltip = nil
   end
 end
+
 
 StaticPopupDialogs["LOOTCOLLECTOR_REMOVE_BM_VENDOR"] = {
   text = "Do you want to remove this Blackmarket vendor pin from your local database? This action will not be broadcast to other players.",
@@ -1903,101 +1918,99 @@ function Map:UpdateGuildCache()
 end
 
 function Map:OnInitialize()
-if L.LEGACY_MODE_ACTIVE then return end
-  if not (L.db and L.db.profile and L.db.global and L.db.char) then return end
-  self:EnsureFilterUI()
-  self:EnsureMinimapTicker()
+    if L.LEGACY_MODE_ACTIVE then return end
+    if not (L.db and L.db.profile and L.db.global and L.db.char) then return end
+    self:EnsureFilterUI()
+    self:EnsureMinimapTicker()
 
-  
-  self:RegisterEvent("FRIENDLIST_UPDATE", "UpdateFriendCache")
-  self:RegisterEvent("GUILD_ROSTER_UPDATE", "UpdateGuildCache")
-  
-  
-  C_Timer.After(3, function()
-      if ShowFriends then ShowFriends() end
-      if GuildRoster then GuildRoster() end
-  end)
+    
+    self:RegisterEvent("FRIENDLIST_UPDATE", "UpdateFriendCache")
+    self:RegisterEvent("GUILD_ROSTER_UPDATE", "UpdateGuildCache")
+    
+    
+    C_Timer.After(3, function()
+        if ShowFriends then ShowFriends() end
+        if GuildRoster then GuildRoster() end
+    end)
 
-  
-  GameTooltip:HookScript("OnHide", function()
-      if Map._bmItemLines then
-          for _, lineFrame in ipairs(Map._bmItemLines) do
-              lineFrame:Hide()
-          end
-      end
-      if ItemRefTooltip then
-          ItemRefTooltip:Hide()
-      end
-  end)
+    
+    -- MODIFIED: The problematic hook is now empty. We leave it in place in case it's needed for other features,
+    -- but the logic causing the vendor tooltip and sticky tooltip bugs is completely gone.
+    GameTooltip:HookScript("OnHide", function()
+        -- This hook no longer needs to manage the Black Market item lines
+        -- because they are now children of a separate, addon-owned tooltip.
+        -- This fixes both the "leaking" tooltip bug and the bug where
+        -- clicked item tooltips (ItemRefTooltip) were being closed prematurely.
+    end)
 
-  if WorldMapDetailFrame then
-    WorldMapDetailFrame:SetScript("OnMouseDown", function()
-        if Map._pinnedPin then
-            Map._pinnedPin = nil
-            Map:HideDiscoveryTooltip()
-        end
-        
-        local menuHost = _G["LootCollectorFilterMenuHost"]
-        if menuHost and UIDropDownMenu_IsVisible(menuHost) then
-            local isOverMenu = MouseIsOver(menuHost)
-            for i = 1, UIDROPDOWNMENU_MAXLEVELS do
-                local dropdown = _G["DropDownList"..i]
-                if dropdown and dropdown:IsShown() and MouseIsOver(dropdown) then
-                    isOverMenu = true
-                    break
+    if WorldMapDetailFrame then
+        WorldMapDetailFrame:SetScript("OnMouseDown", function()
+            if Map._pinnedPin then
+                Map._pinnedPin = nil
+                Map:HideDiscoveryTooltip()
+            end
+            
+            local menuHost = _G["LootCollectorFilterMenuHost"]
+            if menuHost and UIDropDownMenu_IsVisible(menuHost) then
+                local isOverMenu = MouseIsOver(menuHost)
+                for i = 1, UIDROPDOWNMENU_MAXLEVELS do
+                    local dropdown = _G["DropDownList"..i]
+                    if dropdown and dropdown:IsShown() and MouseIsOver(dropdown) then
+                        isOverMenu = true
+                        break
+                    end
+                end
+                if not isOverMenu then
+                    CloseDropDownMenus()
                 end
             end
-            if not isOverMenu then
-                CloseDropDownMenus()
+        end)
+    end
+
+    if WorldMapFrame and hooksecurefunc then
+        hooksecurefunc(WorldMapFrame, "Show", function()
+            Map:EnsureSearchUI()
+            if Map._searchFrame and not L.db.profile.mapFilters.hideSearchBar then Map._searchFrame:Show() end
+            
+            
+            Map:EnsureShowToDialog()
+            if Map._showToDialog then
+                Map._showToDialog:SetParent(WorldMapFrame)
+                Map._showToDialog:SetFrameLevel(WorldMapFrame:GetFrameLevel() + 50)
             end
-        end
-    end)
-  end
 
-  if WorldMapFrame and hooksecurefunc then
-    hooksecurefunc(WorldMapFrame, "Show", function()
-        Map:EnsureSearchUI()
-        if Map._searchFrame and not L.db.profile.mapFilters.hideSearchBar then Map._searchFrame:Show() end
-        
-        
-        Map:EnsureShowToDialog()
-        if Map._showToDialog then
-            Map._showToDialog:SetParent(WorldMapFrame)
-            Map._showToDialog:SetFrameLevel(WorldMapFrame:GetFrameLevel() + 50)
-        end
+            
+            if Map._searchResultsFrame then
+                Map._searchResultsFrame:SetParent(WorldMapFrame)
+                Map._searchResultsFrame:SetFrameLevel(WorldMapFrame:GetFrameLevel() + 51)
+            end
+        end)
+        hooksecurefunc(WorldMapFrame, "Hide", function()
+          if Map._pinnedPin then
+            Map._pinnedPin = nil
+            Map:HideDiscoveryTooltip()
+          end
+          if Map._searchFrame then Map._searchFrame:Hide() end
+          if Map._searchBox then Map._searchBox:SetText("") end
+          if Map._searchResultsFrame and Map._searchResultsFrame:IsShown() then
+            
+          end
+          
+          
+          if Map._showToDialog then
+              Map._showToDialog:SetParent(UIParent)
+              Map._showToDialog:ClearAllPoints()
+              Map._showToDialog:SetPoint("CENTER")
+          end
 
-        
-        if Map._searchResultsFrame then
-            Map._searchResultsFrame:SetParent(WorldMapFrame)
-            Map._searchResultsFrame:SetFrameLevel(WorldMapFrame:GetFrameLevel() + 51)
-        end
-    end)
-    hooksecurefunc(WorldMapFrame, "Hide", function()
-      if Map._pinnedPin then
-        Map._pinnedPin = nil
-        Map:HideDiscoveryTooltip()
-      end
-      if Map._searchFrame then Map._searchFrame:Hide() end
-      if Map._searchBox then Map._searchBox:SetText("") end
-      if Map._searchResultsFrame and Map._searchResultsFrame:IsShown() then
-        
-      end
-      
-      
-      if Map._showToDialog then
-          Map._showToDialog:SetParent(UIParent)
-          Map._showToDialog:ClearAllPoints()
-          Map._showToDialog:SetPoint("CENTER")
-      end
-
-      
-      if Map._searchResultsFrame then
-          Map._searchResultsFrame:SetParent(UIParent)
-          Map._searchResultsFrame:ClearAllPoints()
-          Map._searchResultsFrame:SetPoint("CENTER")
-      end
-    end)
-  end
+          
+          if Map._searchResultsFrame then
+              Map._searchResultsFrame:SetParent(UIParent)
+              Map._searchResultsFrame:ClearAllPoints()
+              Map._searchResultsFrame:SetPoint("CENTER")
+          end
+        end)
+    end
 end
 
 function Map:Update()

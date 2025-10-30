@@ -1,6 +1,6 @@
 -- Modules/Tooltip.lua
 -- Project Ascension 3.3.5a
--- LootCollector-integrated “Enhanced WF Tooltip” (ported from ItemUpgradeTooltip with 3.3.5-safe scanning)
+-- LootCollector-integrated "Enhanced WF Tooltip" (ported from ItemUpgradeTooltip with 3.3.5-safe scanning)
 
 local L = LootCollector
 local Tooltip = L:NewModule("Tooltip", "AceEvent-3.0")

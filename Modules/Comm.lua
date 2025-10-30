@@ -124,6 +124,12 @@ Comm._seq = 0
 Comm._seen = {}
 Comm.verbose = false
 
+-- MODIFIED@301025: Added queue and batch processing constants
+Comm._incomingMessageQueue = {}
+local PROCESS_INTERVAL = 0.2 -- How often to process the queue
+local BATCH_SIZE = 5       -- How many messages to process at once
+Comm._processTimer = 0
+
 local function _debug(mod, msg) return end
     
 
@@ -759,6 +765,26 @@ local function _bucketTake()
     return false
 end
 
+-- NEW: Batch processor function
+function Comm:_processIncomingQueue()
+    -- Re-get Core module instance in case it wasn't ready on init
+    if not Core then Core = L:GetModule("Core", true) end
+    if not Core or not Core.AddDiscovery then return end
+    if not self._incomingMessageQueue or #self._incomingMessageQueue == 0 then return end
+
+    local processedCount = 0
+    -- Process up to BATCH_SIZE messages
+    while processedCount < BATCH_SIZE and #self._incomingMessageQueue > 0 do
+        local entry = table.remove(self._incomingMessageQueue, 1)
+        if entry and entry.data and entry.options then
+            -- The actual call to the expensive function is now throttled
+            Core:AddDiscovery(entry.data, entry.options)
+            processedCount = processedCount + 1
+        end
+    end
+end
+
+-- MODIFIED: OnUpdate to include the new batch processor
 function Comm:OnUpdate(elapsed)
     if self._delayQueue and #self._delayQueue > 0 then
         local tnow = now()
@@ -774,18 +800,27 @@ function Comm:OnUpdate(elapsed)
         end
     end
     
-    if not self._rateLimitQueue or #self._rateLimitQueue == 0 then return end
-    if not _bucketTake() then return end
+    if not self._rateLimitQueue or #self._rateLimitQueue == 0 then
+        -- No outgoing messages, but still process incoming
+    else
+        if _bucketTake() then
+            local entry = table.remove(self._rateLimitQueue, 1)
+            if entry and entry.wire then
+                local sent = _sendWireToNetwork(entry.wire)
+                if not sent then
+                    table.insert(self._rateLimitQueue, 1, entry) -- Re-queue at the front if send failed
+                end
+            end
+        end
+    end
     
-    local entry = table.remove(self._rateLimitQueue, 1)
-    if not entry or not entry.wire then return end
-    
-    local sent = _sendWireToNetwork(entry.wire)
-    if not sent then
-        table.insert(self._rateLimitQueue, entry)
+    -- NEW: Batch processor for incoming messages
+    self._processTimer = (self._processTimer or 0) + elapsed
+    if self._processTimer >= PROCESS_INTERVAL then
+        self:_processIncomingQueue()
+        self._processTimer = 0
     end
 end
-
 
 
 local function _lc_isPlausiblePayload(msg)
@@ -1154,10 +1189,10 @@ function Comm:OnCommReceived(prefix, message, distribution, sender)
     Comm:RouteIncoming(tbl, distribution or "ACE", sender or "Unknown")
 end
 
+-- MODIFIED@301025: RouteIncoming to queue DISC and CONF messages
 function Comm:RouteIncoming(tbl, via, sender)    
 	
     if sender == UnitName("player") and not L._INJECT_TEST_MODE then
-        
         return
     end    
 	           
@@ -1229,6 +1264,7 @@ function Comm:RouteIncoming(tbl, via, sender)
         return
     end
     
+    -- Handle immediate op types first
     if tbl.op == "ACK" then
         if Core.HandleAck then Core:HandleAck(tbl, sender, via) end
         return
@@ -1255,9 +1291,6 @@ function Comm:RouteIncoming(tbl, via, sender)
             vendorItemIDs = tbl.vendorItemIDs,
         }
         
-        
-        
-        
         StaticPopup_Show("LOOTCOLLECTOR_SHOW_DISCOVERY_REQUEST", sender, normalizedShowData.il, normalizedShowData)
         return
     elseif tbl.op == "GFIX" then
@@ -1275,8 +1308,7 @@ function Comm:RouteIncoming(tbl, via, sender)
         end
         return
     end
-    
-    
+
     
     local norm = _normalizeForCore(tbl, sender, self)
     if not norm then
@@ -1308,15 +1340,11 @@ function Comm:RouteIncoming(tbl, via, sender)
         end
     end
 	
-    if Core.AddDiscovery then
-        
-        local options = { isNetwork = true, op = tbl.op }
-        Core:AddDiscovery(norm, options)
-
-        if tbl.op == "CONF" then
-            L:SendMessage("LOOTCOLLECTOR_CONFIRMATION_RECEIVED", norm)
-        end
-    end
+    
+    table.insert(self._incomingMessageQueue, {
+        data = norm,
+        options = { isNetwork = true, op = tbl.op }
+    })
 end
 
 function Comm:OnInitialize()
@@ -1359,13 +1387,14 @@ function Comm:OnEnable()
     self:EnsureChannelJoined()
 end
 
+
 function Comm:ClearCaches()
     wipe(self._seen)
     self._rateLimitQueue = {}
     self._delayQueue = {}
+    self._incomingMessageQueue = {}
     self._bucketTokens = self.RATE_LIMIT_COUNT
     self._bucketLastFill = now()
 end
 
 return Comm
--- QSBBIEEgQSBBIEEgQSBBIEEgQQrwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5Kl

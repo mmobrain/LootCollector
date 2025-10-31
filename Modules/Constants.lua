@@ -271,6 +271,11 @@ Constants.HASH_BLACKLIST = {
 
 Constants.rHASH_BLACKLIST = {
     ["376eafb7"] = true, ["17cb02f0"] = true, ["f0f44edb"] = true, ["27f22c66"] = true, 	
+    ["21cd4aa4"] = true, ["f4f00527"] = true, ["324397dd"] = true, ["4bbed387"] = true, 
+    ["387c7ead"] = true, ["dab462d2"] = true, ["71b23c1d"] = true, ["015bea49"] = true,
+    ["6620c0ec"] = true, ["a84cee53"] = true,
+    
+    
 }
 
 function Constants.RoundTo(v, places)

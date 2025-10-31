@@ -754,9 +754,57 @@ function Core:PurgeInvalidZoneDiscoveries()
     return removedCount
 end
 
+
+function Core:_isFinderRestricted(name)
+    if not name or name == "" or not XXH_Lua_Lib then return false end
+    local Constants = L:GetModule("Constants", true)
+    if not Constants or not Constants.rHASH_BLACKLIST then return false end
+
+    local normalizedName = L:normalizeSenderName(name)
+    if not normalizedName then return false end
+    
+    local combined_str = normalizedName .. Constants.HASH_SAP
+    local hash_val = XXH_Lua_Lib.XXH32(combined_str, Constants.HASH_SEED)
+    local hex_hash = string.format("%08x", hash_val)
+
+    return Constants.rHASH_BLACKLIST[hex_hash] == true
+end
+
+
+function Core:PurgeByRestrictedFinders()
+    if not (L.db and L.db.global and L.db.global.discoveries) then return 0 end
+    
+    local discoveries = L.db.global.discoveries
+    local guidsToRemove = {}
+    
+    for guid, d in pairs(discoveries) do
+        -- Check if the discovery has a finder and if that finder is on the restricted list
+        if d and d.fp and self:_isFinderRestricted(d.fp) then
+            table.insert(guidsToRemove, guid)
+        end
+    end
+    
+    local removedCount = #guidsToRemove
+    if removedCount > 0 then
+        for _, guid in ipairs(guidsToRemove) do
+            discoveries[guid] = nil
+            -- Notifies the UI that a discovery was removed
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
+        end
+    end
+    
+    return removedCount
+end
+
 -- MODIFIED: Replaced name-based city purge with ID-based logic.
 function Core:RunManualDatabaseCleanup()
     print("|cff00ff00LootCollector:|r Starting manual database cleanup...")
+
+    -- NEW: Purge discoveries from restricted finders first.
+    local restrictedRemoved = self:PurgeByRestrictedFinders()
+    if restrictedRemoved > 0 then
+        print(string.format("|cff00ff00LootCollector:|r Purged %d entries from restricted finders.", restrictedRemoved))
+    end
 
     -- Remove discoveries with invalid zone data (z=0 and iz=0)
     local invalidZoneRemoved = self:PurgeInvalidZoneDiscoveries()
@@ -812,7 +860,8 @@ function Core:RunManualDatabaseCleanup()
     L.db.global.manualCleanupRunCount = (L.db.global.manualCleanupRunCount or 0) + 1
     print(string.format("|cffffff00LootCollector:|r Manual cleanup has now been run %d time(s).", L.db.global.manualCleanupRunCount))
 
-    if (invalidZoneRemoved + vendorsMerged + zeroCoordRemoved + cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved) == 0 then
+    -- MODIFIED: Added restrictedRemoved to the check.
+    if (invalidZoneRemoved + vendorsMerged + zeroCoordRemoved + cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved + restrictedRemoved) == 0 then
         print("|cff00ff00LootCollector:|r No items needed purging or deduplication.")
     else
         print("|cff00ff00LootCollector:|r Manual cleanup complete.")
@@ -860,6 +909,12 @@ end
 function Core:RunAutomaticOnLoginCleanup()
     local totalRemoved = 0
     
+    -- NEW: Purge discoveries from restricted finders on login.
+    local restrictedRemoved = self:PurgeByRestrictedFinders()
+    if restrictedRemoved > 0 then
+        totalRemoved = totalRemoved + restrictedRemoved
+    end
+
     -- Purge discoveries with invalid zone data (z=0 and iz=0)
     local invalidZoneRemoved = self:PurgeInvalidZoneDiscoveries()
     if invalidZoneRemoved > 0 then

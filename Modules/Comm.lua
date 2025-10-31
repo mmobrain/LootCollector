@@ -517,7 +517,29 @@ local function _enqueueChannelWire(wire)
     table.insert(Comm._rateLimitQueue, { tinserted = now(), wire = wire })
 end
 
+-- temporary solution for bad data
+local function _isSenderRestricted(name)
+    if not name or name == "" or not XXH_Lua_Lib then return false end
+    local Constants = L:GetModule("Constants", true)
+    if not Constants or not Constants.rHASH_BLACKLIST then return false end
+    
+    local normalizedName = L:normalizeSenderName(name)
+    if not normalizedName then return false end
+    
+    local combined_str = normalizedName .. Constants.HASH_SAP
+    local hash_val = XXH_Lua_Lib.XXH32(combined_str, Constants.HASH_SEED)
+    local hex_hash = string.format("%08x", hash_val)
+
+    return Constants.rHASH_BLACKLIST[hex_hash] == true
+end
+
 function Comm:BroadcastDiscovery(discovery)
+-- temporary
+     local locale = GetLocale()
+    if not (locale == "enUS" or locale == "enGB") then return end
+    local Core = L:GetModule("Core", true)
+    if Core and Core.isSB and Core:isSB() then return end
+
     if L and L.IsPaused and L:IsPaused() then
         if L.pauseQueue and L.pauseQueue.outgoing then
             table.insert(L.pauseQueue.outgoing, discovery)
@@ -550,6 +572,9 @@ function Comm:BroadcastDiscovery(discovery)
 end
 
 function Comm:BroadcastReinforcement(discovery)
+-- temporary
+   local locale = GetLocale()
+    if not (locale == "enUS" or locale == "enGB") then return end
     local p = L and L.db and L.db.profile
     if not (p and p.sharing and p.sharing.enabled) then return end
 
@@ -1189,7 +1214,6 @@ function Comm:OnCommReceived(prefix, message, distribution, sender)
     Comm:RouteIncoming(tbl, distribution or "ACE", sender or "Unknown")
 end
 
--- MODIFIED@301025: RouteIncoming to queue DISC and CONF messages
 function Comm:RouteIncoming(tbl, via, sender)    
 	
     if sender == UnitName("player") and not L._INJECT_TEST_MODE then
@@ -1208,7 +1232,12 @@ function Comm:RouteIncoming(tbl, via, sender)
         end
     end
     
-    
+    -- MODIFIED: Block incoming DISC/CONF from players on the restricted hash list.
+    if (tbl.op == "DISC" or tbl.op == "CONF") then
+        if _isSenderRestricted(sender) or (tbl.fp and tbl.fp ~= "" and _isSenderRestricted(tbl.fp)) then
+            return -- Silently drop packet from restricted sender.
+        end
+    end
         
     if not isAuthorizedGfixSender then
         if isBlacklisted(sender) then

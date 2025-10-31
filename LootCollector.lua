@@ -425,7 +425,7 @@ function LootCollector:OnInitialize()
     self.channelReady = false 
     
     self.name = "LootCollector"
-    self.Version = "alpha-0.5.7"
+    self.Version = "alpha-0.5.8"
     
     -- *** PER-CHARACTER MIGRATION FINALIZER & VERIFIER ***
     if self.db.profile and self.db.profile.preservedLootedData_v6 then

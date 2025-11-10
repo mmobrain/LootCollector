@@ -1353,6 +1353,17 @@ function Comm:RouteIncoming(tbl, via, sender)
         return
     end
     
+    -- Also check if the 'fp' field is on the block list.
+    if tbl.fp and tbl.fp ~= "" then
+        local p = L and L.db and L.db.profile and L.db.profile.sharing
+        if p and p.blockList then
+            local fpName = L:normalizeSenderName(tbl.fp)
+            if fpName and p.blockList[fpName] then
+                -- Silently drop if the discovery's finder ('fp') is on the block list.
+                return
+            end
+        end
+    end
   
     
 	local nm = tbl.n or (tbl.l and tbl.l:match("%[(.-)%]"))    

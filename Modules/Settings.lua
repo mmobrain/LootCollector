@@ -689,7 +689,7 @@ local function buildOptions()
 						width = "full",
 						order = 30,
 						name = "Blocked Players",
-						desc = "One player per line. Ignored for all communication.",
+						desc = "One player per line. Blocks messages sent from these players or discoveries originally found by them.",
 						get = function()
 							return listToString(L.db.profile.sharing.blockList)
 						end,
@@ -697,6 +697,20 @@ local function buildOptions()
 							stringToList(v, L.db.profile.sharing.blockList)
 						end,
 					},
+                    purgeBlockedData = {
+                        type = "execute",
+                        name = "Purge Blocked Players Data",
+                        desc = "Removes all discoveries from your database where the original finder ('fp') is on your block list.",
+                        order = 30.1,
+                        func = function()
+                            local Core = L:GetModule("Core", true)
+                            if Core and Core.PurgeDiscoveriesFromBlockedPlayers then
+                                Core:PurgeDiscoveriesFromBlockedPlayers()
+                            else
+                                print("|cffff7f00LootCollector:|r Core module not available to perform purge.")
+                            end
+                        end,
+                    },
 					whiteList = {
 						type = "input",
 						multiline = 5,

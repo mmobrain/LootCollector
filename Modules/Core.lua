@@ -388,6 +388,50 @@ function Core:isSB()
     return false
 end
 
+function Core:PurgeDiscoveriesFromBlockedPlayers()
+    if not (L.db and L.db.profile and L.db.profile.sharing and L.db.profile.sharing.blockList and L.db.global and L.db.global.discoveries) then
+        print("|cffff7f00LootCollector:|r Block list is empty or database is not ready.")
+        return 0
+    end
+
+    local blockList = L.db.profile.sharing.blockList
+    if not next(blockList) then
+        print("|cffff7f00LootCollector:|r Block list is empty. Nothing to purge.")
+        return 0
+    end
+
+    local discoveries = L.db.global.discoveries
+    local guidsToRemove = {}
+    
+    for guid, d in pairs(discoveries) do
+        if d and d.fp then
+            local fpName = L:normalizeSenderName(d.fp)
+            if fpName and blockList[fpName] then
+                table.insert(guidsToRemove, guid)
+            end
+        end
+    end
+    
+    local removedCount = #guidsToRemove
+    if removedCount > 0 then
+        for _, guid in ipairs(guidsToRemove) do
+            discoveries[guid] = nil
+            -- Notifies the UI that a discovery was removed
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
+        end
+        print(string.format("|cff00ff00LootCollector:|r Purged %d discoveries from blocked players.", removedCount))
+        -- Refresh map if it's open
+        local Map = L:GetModule("Map", true)
+        if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
+            Map:Update()
+        end
+    else
+        print("|cff00ff00LootCollector:|r No discoveries found from players on your block list.")
+    end
+
+    return removedCount
+end
+
 local PURGE_VERSION = "EmbossedScroll_v1"
 function Core:PurgeEmbossedScrolls()
     if L.db.global.purgeEmbossedState == 2 then
@@ -502,6 +546,8 @@ function Core:PurgeByGUIDPrefix()
     end
     return #toDel
 end
+
+
 
 function Core:RemapLootedHistoryV6()
   

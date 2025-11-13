@@ -140,6 +140,7 @@ Map.WorldMapSize = {
         [14] = { height = 2687.51, width = 4031.24, xOffset = 20459.46, yOffset = 7472.20 },
         [16] = { height = 2314.59, width = 3470.83, xOffset = 16636.55, yOffset = 19116.00 },
         [17] = { height = 3283.34, width = 4925.00, xOffset = 20259.46, yOffset = 2534.68 },
+		[18] = { width = 5766.67, height = 3843.33, xOffset = -409.17, yOffset = -1733.33 },
         [19] = { height = 2200.00, width = 3300.00, xOffset = 21055.29, yOffset = 5309.69 },
         [22] = { height = 2133.34, width = 3199.99, xOffset = 17105.30, yOffset = 10776.38 },
         [27] = { height = 1839.58, width = 2758.33, xOffset = 20165.71, yOffset = 15663.90 },

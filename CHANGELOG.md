@@ -1,3 +1,34 @@
+## **LootCollector 0.5.90 - Realm Buckets & Stability Overhaul**
+
+### **Highlights**
+*   **Realm Buckets (Database Isolation):**
+    *   Completely restructured the database to store discoveries and vendors separately per Realm (e.g., *Bronzebeard* / *Malfurion* vs *Elune*). This prevents data corruption and "bleeding" when switching between Seasonal and Main realms.
+    *   Includes an automatic **Migration System** that moves your existing data to the correct realm bucket upon login.
+*   **Zone ID Standardization:**
+    *   The addon now enforces stricter Zone ID validation using modern MapIDs instead of legacy indexes.
+    *   Added an automatic repair tool (`/lcczfix`) to detect and correct records with invalid Continent-Zone mismatches.
+    *   Introduced **Tombstones with Expiration**: When a bad record is fixed, a "tombstone" is created to prevent older data from syncing back to you for a set duration.
+*   **Mystic Scroll discoveries are once again shared! Automatic vendor sharing is still on the to-do list, but you can share them manually with the "Show to" feature.
+
+### **Fixes**
+*Too many but still not enough :p*
+
+### **Technical & Optimizations**
+*   **Database Accessors:** Refactored every module (`Core`, `Map`, `Viewer`, `DBSync`, etc.) to use secure accessors (`GetDiscoveriesDB`) instead of accessing global tables directly. This improves stability and supports the new Realm Bucket architecture.
+*   **Network Security:** Strengthened validation for incoming data packets to reject malformed zone IDs immediately.
+
+### **Feature Refinements**
+*   **World Map:** Clarified interaction logic. For best results, use `/script WorldMapFrame:Show()` or a map addon (like Magnify/ElvUI) to enable full interactivity (Context Menus, Proximity Lists) which are restricted in the default protected map mode.
+*   **Vendor Tracking:** Improved logic for associating specific inventories with Black Market vendors in the database.
+
+*Database Update: Updated starter database to include verified coordinates for the latest content.*
+
+## **LootCollector 0.5.8/0.5.81 - Fixes **
+
+Some emergency fixes.
+Expanded block list functionality.
+Added option to delete data from blocked players.
+
 ## **LootCollector 0.5.7 - Performance optimizations + Fix **
 Several performance optimizations that may improve the addon's performance. 
 Fix for disappearing tooltip.

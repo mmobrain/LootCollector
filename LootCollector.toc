@@ -1,17 +1,16 @@
 ## Interface: 30300
-## Title: |ce5cc80ffLootCollector|r |cffff5555[alpha.0.5.81]
+## Title: |ce5cc80ffLootCollector|r |cffff5555[alpha.0.5.90]
 ## Notes: Community-driven addon enables players to collaboratively discover and share locations of lootable objects, enriching exploration and boosting gameplay efficiency. Designed for Ascension.Bronzebeard by Skulltrail. |cffffffffContributors:|r |cffffff00Deidre, Rhenyra, Morty, Markosz, Bandit Tech|r. |cffffffffAlpha Top Collectors:|r |cffffff00Morty, Laya, Brokenheart, Mie, Rhen, Aaltrix, Insanestar, Harrydn, Blutact|r.
 ## Author: Skulltrail
 ## Contributors: Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan
 ## AlphaTopCollectors: Morty, Laya, Brokenheart, Mie, Rhen, Aaltrix, Insanestar, Harrydn, Blutact
-## Version: alpha 0.5.81
+## Version: alpha 0.5.90
 ## SavedVariables: LootCollectorDB_Asc
-## OptionalDeps: Ace3, TomTom
+## OptionalDeps: Ace3, TomTom, AtlasLoot_Cache
 
 Bindings.xml
 
 # Load Libraries
-libs\Astrolabe\Load.xml
 libs\LibStub\LibStub.lua
 libs\Ace3\AceAddon-3.0\AceAddon-3.0.xml
 libs\Ace3\AceEvent-3.0\AceEvent-3.0.xml
@@ -33,7 +32,7 @@ LootCollector.lua
 #Core constants
 Modules\Constants.lua
 #migration early
-Modules\Migration_v5.lua
+#Modules\Migration_v5.lua
 
 # Data and resolution helpers early
 Modules\ZoneList.lua
@@ -49,8 +48,8 @@ Modules\Moderation.lua
 Modules\DBSync.lua
 
 # Map/UI and behavior modules
+Modules\ProximityList.lua
 Modules\Map.lua
-Modules\CustomZoneData.lua
 Modules\Arrow.lua
 Modules\Settings.lua
 Modules\Toast.lua
@@ -59,3 +58,8 @@ Modules\ImportExport.lua
 Modules\Viewer.lua
 Modules\MinimapButton.lua
 Modules\Tooltip.lua
+
+
+# Developer tools
+DebugSim.lua
+DevCommands.lua

@@ -1,7 +1,3 @@
--- Moderation.lua
--- Discovery moderation, ACK aggregation, and ON HOLD threshold logic for v5 protocol.
--- Includes session-based anti-spam for ACK packets.
--- UNK.B64.UTF-8
 
 
 local L = LootCollector
@@ -95,4 +91,3 @@ function Moderation:OnInitialize()
 end
 
 return Moderation
--- QSBBIEEgQSBBIEEgQSBBIEEgQQrwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5Kl

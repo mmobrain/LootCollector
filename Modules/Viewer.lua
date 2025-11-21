@@ -1,10 +1,14 @@
--- Viewer.lua
--- Provides a comprehensive interface for browsing, searching, filtering, and managing discoveries
+
 
 local L = LootCollector
 local Viewer = L:NewModule("Viewer")
 
--- Constants for source and quality name mapping
+function ViewerSetSelectedRow(row)
+    if Viewer and Viewer.SetSelectedRow then
+        Viewer:SetSelectedRow(row)
+    end
+end
+
 local SOURCE_NAMES = {
     ["world_loot"] = "World Drop",
     ["mail"] = "Mail",
@@ -28,63 +32,84 @@ local QUALITY_NAMES = {
     [7] = "Heirloom"
 }
 
--- Upvalues
+local CLASS_ABBREVIATIONS_REVERSE = {
+  ["wa"] = "WARRIOR", ["pa"] = "PALADIN", ["hu"] = "HUNTER", ["ro"] = "ROGUE",
+  ["pr"] = "PRIEST", ["dk"] = "DEATHKNIGHT", ["sh"] = "SHAMAN", ["ma"] = "MAGE",
+  ["lo"] = "WARLOCK", ["dr"] = "DRUID",
+}
+
+local CLASS_OPTIONS = {
+  "WARRIOR","PALADIN","HUNTER","ROGUE","PRIEST","DEATHKNIGHT","SHAMAN","MAGE","WARLOCK","DRUID",
+}
+
+Viewer.lootedFilterState = nil 
+
 local time = time or os.time
 
--- Window layout constants
-local WINDOW_WIDTH = 900
+local WINDOW_WIDTH = 968
 local WINDOW_HEIGHT = 630
 local ROW_HEIGHT = 20
 local HEADER_HEIGHT = 25
 local BUTTON_HEIGHT = 22
-local BUTTON_WIDTH = 120
+local BUTTON_WIDTH = 80
 local CONTEXT_MENU_WIDTH = 200
 local FRAME_LEVEL = 1
 local FRAME_STRATA = "MEDIUM"
 
--- Grid layout constants
 local GRID_LAYOUT = {
-    -- Column widths
-    NAME_WIDTH = 170,
-    SLOT_WIDTH = 70,
-    TYPE_WIDTH = 100,
-    CLASS_WIDTH = 60,
-    ZONE_WIDTH = 120,
-    LEVEL_WIDTH = 30,
-    DATE_WIDTH = 100,
+    
+    NAME_WIDTH = 246,
+    LEVEL_WIDTH = 26,
+    SLOT_WIDTH = 90,
+    TYPE_WIDTH = 130,
+    CLASS_WIDTH = 70,
+    ZONE_WIDTH = 150,       
     FOUND_BY_WIDTH = 120,
+    VENDOR_NAME_WIDTH = 250,
+    VENDOR_ZONE_WIDTH = 200,
+    VENDOR_INVENTORY_WIDTH = 100,
 
-    -- Spacing between columns
+    
     COLUMN_SPACING = 5,
 }
 
--- UI State
-Viewer.window = nil
-Viewer.scrollFrame = nil
-Viewer.rows = {}
-Viewer.currentFilter = "equipment" -- "equipment", "mystic_scrolls"
-Viewer.searchTerm = ""
-Viewer.sortColumn = "name"         -- "name", "slot", "type", "zone", "date", "foundBy"
-Viewer.sortAscending = true
+local ROW_FONT_NAME = "LootCollectorViewerRowFont"
+local ROW_FONT_SIZE = 13
+
+Viewer.window         = nil
+Viewer.scrollFrame    = nil
+Viewer.rows           = {}
+Viewer.selectedRow    = nil
+Viewer.currentFilter  = "equipment" 
+Viewer.searchTerm     = ""
+Viewer.sortColumn     = "name"      
+Viewer.sortAscending  = true
 Viewer.pendingMapAreaID = nil
 
--- Pagination
-Viewer.currentPage = 1
-Viewer.itemsPerPage = 50
-Viewer.totalItems = 0
+Viewer.currentPage    = 1
+Viewer.itemsPerPage   = 50
+Viewer.totalItems     = 0
 
--- Column filters
-Viewer.columnFilters = {
-    equipment = { slot = {}, type = {} },
-    mystic_scrolls = { class = {} },
-    zone = {},
-    source = {},
-    quality = {},
-    looted = {},
+Viewer.columnFilters  = {
+    eq       = { slot = {}, type = {}, class = {} },
+    ms       = { class = {} },
+    zone     = {},
+    source   = {},
+    quality  = {},
+    looted   = {},
     duplicates = false,
 }
 
--- Utility functions
+Viewer.vendorInventoryFrame = nil      
+Viewer.vendorInventoryLines = nil      
+Viewer.selectedVendorGuid   = nil      
+
+local function VDebug(msg)
+    if L and L._debug then
+        L._debug("Viewer-Debug", msg)
+    end
+end
+
 local _next = next
 local _getmt, _setmt = getmetatable, setmetatable
 local _rawlen = rawlen or function(x) return #x end
@@ -97,10 +122,8 @@ local _strfind = string.find
 local _strmatch = string.match
 local _strgsub = string.gsub
 
--- Timer management
-local activeTimers = {} -- Track active timers for cleanup
+local activeTimers = {} 
 
--- Creates a shallow copy of a table, preserving its metatable if present.
 local function copy(t)
     local out = {}
     for k, v in _next, t do out[k] = v end
@@ -109,7 +132,6 @@ local function copy(t)
     return out
 end
 
--- Timer management for cleanup
 local function createTimer(delay, callback)
     local timer = C_Timer.After(delay, callback)
     _tinsert(activeTimers, timer)
@@ -122,7 +144,6 @@ local function clearAllTimers()
     end
 end
 
--- Memory-efficient string concatenation for large operations
 local function concatStrings(...)
     local args = { ... }
     local result = {}
@@ -136,7 +157,6 @@ local function concatStrings(...)
     return _tconcat(result)
 end
 
--- Returns the number of elements in a table.
 local function size(t)
     if t[1] ~= nil then
         return _rawlen(t)
@@ -146,7 +166,6 @@ local function size(t)
     return n
 end
 
--- Returns a new array containing all keys from the input table.
 local function keys(t)
     local out = {}
     local i = 0
@@ -157,7 +176,6 @@ local function keys(t)
     return out
 end
 
--- Returns a new array containing all values from the input table.
 local function values(t)
     local out = {}
     local i = 0
@@ -168,7 +186,6 @@ local function values(t)
     return out
 end
 
--- Filter function
 local function filter(array, predicate)
     local n = _rawlen(array)
     local wi = 1
@@ -183,29 +200,39 @@ local function filter(array, predicate)
     return array
 end
 
--- Forward declarations for cascading filter functions
-local GetCascadedFilterContext, GetFilteredDatasetForUniqueValues, GetUniqueValues, GetItemInfoSafe
+local function GetQualityColor(quality)
+    quality = tonumber(quality)
+    if not quality then return 1, 1, 1 end
+    if _G.GetItemQualityColor then
+        local r, g, b = _G.GetItemQualityColor(quality)
+        if r and g and b then return r, g, b end
+    end
+    if _G.ITEM_QUALITY_COLORS and _G.ITEM_QUALITY_COLORS[quality] then
+        local c = _G.ITEM_QUALITY_COLORS[quality]
+        return c.r or 1, c.g or 1, c.b or 1
+    end
+    return 1, 1, 1
+end
 
--- Unified caching system
 local Cache = {
-    -- Main discoveries cache with processed data
+    
     discoveries = {},
     discoveriesBuilt = false,
     discoveriesBuilding = false,
 
-    -- Item info cache (reusing L.itemInfoCache but with better structure)
+    
     itemInfo = {},
 
-    -- Character class detection cache
+    
     characterClass = {},
 
-    -- Worldforged detection cache
+    
     worldforged = {},
 
-    -- Zone name cache
+    
     zoneNames = {},
 
-    -- Unique values cache for filter dropdowns
+    
     uniqueValues = {
         slot = {},
         type = {},
@@ -214,22 +241,32 @@ local Cache = {
     },
     uniqueValuesValid = false,
 
-    -- Filtered results cache
+    
     filteredResults = {},
     lastFilterState = nil,
 
-    -- Cache for tracking duplicate itemIDs
+    
     duplicateItems = {},
 
-    -- Cleanup tracking
+    
     _cleanupRequired = false,
 }
 
--- Retrieves item information safely, utilizing a unified cache.
+L.itemInfoCache = L.itemInfoCache or {}
+
+local function GetItemTypeIDs(itemType, itemSubType)
+    local Constants = L:GetModule("Constants", true)
+    if not Constants then return 0, 0 end
+    
+    local it = Constants.ITEM_TYPE_TO_ID[itemType] or 0
+    local ist = Constants.ITEM_SUBTYPE_TO_ID[itemSubType] or 0
+    return it, ist
+end
+
 local function GetItemInfoSafe(itemLink, itemID)
     if not itemLink then return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil end
 
-    -- Check unified cache first
+    
     if itemID and Cache.itemInfo[itemID] then
         return unpack(Cache.itemInfo[itemID])
     end
@@ -240,25 +277,24 @@ local function GetItemInfoSafe(itemLink, itemID)
     if itemID then
         Cache.itemInfo[itemID] = { name, link, quality, itemLevel, minLevel, itemType, itemSubType, stackCount, equipLoc,
             texture, sellPrice }
-        -- Ensures backward compatibility with the old itemInfoCache.
+        
         L.itemInfoCache[itemID] = Cache.itemInfo[itemID]
     end
 
     return name, link, quality, itemLevel, minLevel, itemType, itemSubType, stackCount, equipLoc, texture, sellPrice
 end
 
--- Retrieves the localized zone name for a given discovery, utilizing a unified cache.
 local function GetLocalizedZoneName(discovery)
     if not discovery then
         return "Unknown Zone"
     end
 
-    -- Core.lua stores continent (c), zone (z), and instance zone (iz)
+    
     local c = tonumber(discovery.c) or 0
     local z = tonumber(discovery.z) or 0
     local iz = tonumber(discovery.iz) or 0
 
-    -- Create a cache key from c, z, iz
+    
     local cacheKey = string.format("%d:%d:%d", c, z, iz)
     if Cache.zoneNames[cacheKey] then
         return Cache.zoneNames[cacheKey]
@@ -268,16 +304,328 @@ local function GetLocalizedZoneName(discovery)
     local localizedZoneName = "Unknown Zone"
 
     if ZoneList and ZoneList.GetZoneName then
-        -- Use ZoneList to resolve zone name from c, z, iz
+        
         localizedZoneName = ZoneList:GetZoneName(c, z, iz) or "Unknown Zone"
     end
 
-    -- Stores the resolved zone name in the cache.
+    
     Cache.zoneNames[cacheKey] = localizedZoneName
     return localizedZoneName
 end
 
--- Generates a context table for cascading filters, excluding a specified column.
+local localClassScanTip = CreateFrame("GameTooltip", "LootCollectorClassScanTooltip", UIParent, "GameTooltipTemplate")
+localClassScanTip:SetOwner(UIParent, "ANCHOR_NONE")
+
+local VALID_CLASSES = {
+    ["Warrior"] = true, ["Paladin"] = true, ["Hunter"] = true,
+    ["Rogue"] = true, ["Priest"] = true, ["Shaman"] = true,
+    ["Mage"] = true, ["Warlock"] = true, ["Druid"] = true
+}
+
+local function GetItemCharacterClass(itemLink, itemID)
+    if not itemLink or not itemID then return "" end
+
+    
+    local cached = Cache.characterClass[itemID]
+    if cached ~= nil then
+        return cached
+    end
+
+    local characterClass = ""
+    localClassScanTip:SetHyperlink(itemLink)
+    
+    local line2Text = _G["LootCollectorClassScanTooltipTextLeft2"]:GetText()
+    if line2Text then
+        
+        local plainText = line2Text:match("^|c%x%x%x%x%x%x%x%x(.+)|r$") or line2Text
+        
+        local className = plainText:match("^%s*(.-)%s*$")
+        
+        
+        if VALID_CLASSES[className] then
+            characterClass = line2Text
+        end
+    end
+
+    Cache.characterClass[itemID] = characterClass
+    return characterClass
+end
+
+local localWorldforgedScanTip = CreateFrame("GameTooltip", "LootCollectorViewerScanTip", UIParent, "GameTooltipTemplate")
+localWorldforgedScanTip:SetOwner(UIParent, "ANCHOR_NONE")
+
+local function IsWorldforged(itemLink)
+    if not itemLink then return false end
+
+    
+    local cached = Cache.worldforged[itemLink]
+    if cached ~= nil then
+        return cached
+    end
+
+    
+    local Core = L:GetModule("Core", true)
+    local tooltip, tooltipName
+    
+    if Core and Core._scanTip then
+        tooltip = Core._scanTip
+        tooltipName = "LootCollectorCoreScanTipTextLeft"
+    else
+        if not localWorldforgedScanTip then
+            localWorldforgedScanTip = CreateFrame("GameTooltip", "LootCollectorViewerScanTip", UIParent, "GameTooltipTemplate")
+            localWorldforgedScanTip:SetOwner(UIParent, "ANCHOR_NONE")
+        end
+        tooltip = localWorldforgedScanTip
+        tooltipName = "LootCollectorViewerScanTipTextLeft"
+    end
+
+    tooltip:ClearLines()
+    tooltip:SetHyperlink(itemLink)
+
+    
+    local isWorldforged = false
+    for i = 2, 5 do
+        local text = _G[tooltipName .. i]:GetText()
+        if text and _strfind(text, "orldforged", 1, true) then
+            isWorldforged = true
+            break
+        end
+    end
+
+    Cache.worldforged[itemLink] = isWorldforged
+    return isWorldforged
+end
+
+local function IsMysticScroll(itemName)
+    return itemName and _strfind(itemName, "Mystic Scroll", 1, true) ~= nil
+end
+
+function Viewer:EnsureVendorInventoryPanel()
+    if self.vendorInventoryFrame then
+        return
+    end
+
+    if not (self.window and self.scrollFrame) then
+        
+        return
+    end
+
+    local parent   = self.window
+    local listArea = self.scrollFrame
+
+    
+    
+    local f = CreateFrame("Frame", "LootCollectorViewerVendorInventory", parent)
+
+    
+    f:SetFrameStrata(FRAME_STRATA or "DIALOG")
+    f:SetFrameLevel((parent:GetFrameLevel() or 1) + 5)
+    f:EnableMouse(true)
+    f:SetToplevel(true)
+
+    f:SetPoint("TOPRIGHT",    listArea, "TOPRIGHT",   -2, 0)
+    f:SetPoint("BOTTOMRIGHT", listArea, "BOTTOMRIGHT", -2, 0)
+    f:SetWidth(260)
+
+    
+    f:SetBackdrop({
+        bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile     = true, tileSize = 16, edgeSize = 12,
+        insets   = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    f:SetBackdropColor(0, 0, 0, 0.85)
+
+    
+    f.title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    f.title:SetPoint("TOPLEFT", 10, -8)
+    f.title:SetWidth(240)
+    f.title:SetJustifyH("LEFT")
+    f.title:SetText("Vendor Inventory")
+
+    
+    local invScroll = CreateFrame("ScrollFrame", nil, f, "FauxScrollFrameTemplate")
+    invScroll:SetPoint("TOPLEFT", f.title, "BOTTOMLEFT", 0, -8)
+    invScroll:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -26, 0)
+
+    f.itemLines = {}
+     for i = 1, 18 do 
+        local line = CreateFrame("Button", nil, f)
+        line:SetHeight(20)
+        
+        
+        line:SetPoint("RIGHT", invScroll, "RIGHT", 0, 0)
+        line:SetPoint("LEFT", invScroll, "LEFT", 8, 0)
+        
+        if i == 1 then
+            line:SetPoint("TOPLEFT", invScroll, "TOPLEFT", 8, 0)
+        else
+            line:SetPoint("TOPLEFT", f.itemLines[i-1], "BOTTOMLEFT", 0, 0)
+        end
+        
+        line.icon = line:CreateTexture(nil, "ARTWORK")
+        line.icon:SetSize(18, 18)
+        line.icon:SetPoint("LEFT", 0, 0)
+        line.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+
+        line.text = line:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        line.text:SetPoint("LEFT", line.icon, "RIGHT", 4, 0)
+        line.text:SetPoint("RIGHT", 0, 0)
+        line.text:SetJustifyH("LEFT")
+        line.text:SetText("")
+
+        line.itemLink         = nil
+        line.parentVendorData = nil
+
+        line:SetScript("OnEnter", function(self)
+            if self.itemLink then
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetHyperlink(self.itemLink)
+                GameTooltip:Show()
+            end
+        end)
+
+        line:SetScript("OnLeave", function(self)
+            GameTooltip:Hide()
+        end)
+
+        line:SetScript("OnClick", function(self)
+	    
+	    if IsShiftKeyDown() then
+		  if self.parentVendorData then
+			Viewer:ShowOnMap(self.parentVendorData)
+		  end
+		  return
+	    end
+
+	    
+	    
+	    if self.itemLink then
+		  HandleModifiedItemClick(self.itemLink)
+	    end
+end)
+
+        line:Hide()
+        f.itemLines[i] = line
+    end
+    
+    
+    local function refreshInventory()
+        if Viewer.selectedVendorGuid then
+            local dbVendors = L:GetVendorsDB()
+            local d = dbVendors and dbVendors[Viewer.selectedVendorGuid]
+            
+            if d and d.vendorItems then
+                f.title:SetText(d.vendorName .. "'s Inventory")
+                
+                local numItems = #d.vendorItems
+                FauxScrollFrame_Update(invScroll, numItems, 18, 20)
+                local offset = FauxScrollFrame_GetOffset(invScroll)
+                
+                for i = 1, 18 do
+                    local line = f.itemLines[i]
+                    local idx = offset + i
+                    if idx <= numItems then
+                        local itemData = d.vendorItems[idx]
+                        if itemData then
+                            local _, _, _, _, _, _, _, _, _, texture = GetItemInfo(itemData.link)
+                            line.icon:SetTexture(texture or "Interface\\Icons\\INV_Misc_QuestionMark")
+                            line.text:SetText(itemData.link)
+                            line.itemLink = itemData.link
+                            line.parentVendorData = d
+                            line:Show()
+                        else
+                            line:Hide()
+                        end
+                    else
+                        line:Hide()
+                    end
+                end
+            else
+                f.title:SetText("Vendor Inventory")
+                FauxScrollFrame_Update(invScroll, 0, 18, 20)
+                for _, line in ipairs(f.itemLines) do line:Hide() end
+            end
+        else
+            f.title:SetText("Select a vendor to view inventory")
+            FauxScrollFrame_Update(invScroll, 0, 18, 20)
+            for _, line in ipairs(f.itemLines) do line:Hide() end
+        end
+    end
+
+    
+    invScroll:SetScript("OnVerticalScroll", function(s, dlt)
+        FauxScrollFrame_OnVerticalScroll(s, dlt, 20, refreshInventory)
+    end)
+    
+    
+    f.refreshInventory = refreshInventory
+
+    f.scrollFrame   = invScroll 
+    f.vendorItems   = {}
+
+    self.vendorInventoryFrame = f
+    self.vendorInventoryLines = f.itemLines
+
+    f:Hide()
+end
+
+function Viewer:UpdateVendorInventoryScroll()
+    if self.vendorInventoryFrame and self.vendorInventoryFrame.refreshInventory then
+        self.vendorInventoryFrame.refreshInventory()
+    end
+end
+
+function Viewer:ShowVendorInventoryForDiscovery(discovery)
+    if not discovery then
+        return
+    end
+
+    self:EnsureVendorInventoryPanel()
+    local f     = self.vendorInventoryFrame
+    local lines = self.vendorInventoryLines
+
+    if not f or not lines then
+        return
+    end
+
+    
+    if not discovery.vendorItems or type(discovery.vendorItems) ~= "table" then
+        self.selectedVendorGuid = discovery.g
+        f.vendorItems           = {}
+        f.vendorData            = discovery
+        f.title:SetText("Vendor Inventory")
+        self:UpdateVendorInventoryScroll()
+        f:Show()
+        return
+    end
+
+    self.selectedVendorGuid = discovery.g
+    f.vendorItems           = discovery.vendorItems
+    f.vendorData            = discovery
+
+    
+    local vendorName = discovery.vendorName or "Unknown Vendor"
+    local zoneName   = GetLocalizedZoneName and GetLocalizedZoneName(discovery) or nil
+
+    if zoneName and zoneName ~= "" and zoneName ~= "Unknown Zone" then
+        f.title:SetText(vendorName .. " – " .. zoneName)
+    else
+        f.title:SetText(vendorName .. " Inventory")
+    end
+
+    
+    if f.scrollFrame then
+        f.scrollFrame.offset = 0
+        f.scrollFrame:SetVerticalScroll(0)
+    end
+
+    self:UpdateVendorInventoryScroll()
+    f:Show()
+end
+
+local GetCascadedFilterContext, GetFilteredDatasetForUniqueValues, GetUniqueValues
+
 GetCascadedFilterContext = function(excludeColumn)
     local context = {
         currentFilter = Viewer.currentFilter,
@@ -285,43 +633,46 @@ GetCascadedFilterContext = function(excludeColumn)
         excludeColumn = excludeColumn
     }
 
-    -- Populates active column filters, excluding the column being generated.
     context.activeFilters = {}
 
-    if Viewer.currentFilter == "equipment" then
-        if excludeColumn ~= "slot" and size(Viewer.columnFilters.equipment.slot) > 0 then
-            context.activeFilters.slot = Viewer.columnFilters.equipment.slot
+    if Viewer.currentFilter == "eq" then
+        if excludeColumn ~= "slot" and size(Viewer.columnFilters.eq.slot) > 0 then
+            context.activeFilters.slot = Viewer.columnFilters.eq.slot
         end
-        if excludeColumn ~= "type" and size(Viewer.columnFilters.equipment.type) > 0 then
-            context.activeFilters.type = Viewer.columnFilters.equipment.type
+        if excludeColumn ~= "type" and size(Viewer.columnFilters.eq.type) > 0 then
+            context.activeFilters.type = Viewer.columnFilters.eq.type
         end
-    elseif Viewer.currentFilter == "mystic_scrolls" then
-        if excludeColumn ~= "class" and size(Viewer.columnFilters.mystic_scrolls.class) > 0 then
-            context.activeFilters.class = Viewer.columnFilters.mystic_scrolls.class
+        
+        if excludeColumn ~= "class" and size(Viewer.columnFilters.eq.class) > 0 then
+            context.activeFilters.class = Viewer.columnFilters.eq.class
+        end
+    elseif Viewer.currentFilter == "ms" then
+        if excludeColumn ~= "class" and size(Viewer.columnFilters.ms.class) > 0 then
+            context.activeFilters.class = Viewer.columnFilters.ms.class
         end
     end
 
-    -- Includes global zone filter if not the excluded column.
+    
     if excludeColumn ~= "zone" and size(Viewer.columnFilters.zone) > 0 then
         context.activeFilters.zone = Viewer.columnFilters.zone
     end
 
-    -- Includes global source filter if not the excluded column.
+    
     if excludeColumn ~= "source" and size(Viewer.columnFilters.source) > 0 then
         context.activeFilters.source = Viewer.columnFilters.source
     end
 
-    -- Includes global quality filter if not the excluded column.
+    
     if excludeColumn ~= "quality" and size(Viewer.columnFilters.quality) > 0 then
         context.activeFilters.quality = Viewer.columnFilters.quality
     end
 
-    -- Includes global looted filter if not the excluded column.
+    
     if excludeColumn ~= "looted" and size(Viewer.columnFilters.looted) > 0 then
         context.activeFilters.looted = Viewer.columnFilters.looted
     end
 
-    -- Includes global duplicates filter if not the excluded column.
+    
     if excludeColumn ~= "duplicates" and Viewer.columnFilters.duplicates then
         context.activeFilters.duplicates = { enabled = true }
     end
@@ -329,57 +680,143 @@ GetCascadedFilterContext = function(excludeColumn)
     return context
 end
 
--- Applies cascading filters to the discovery cache to generate a filtered dataset for unique value extraction.
+local function removeFromSpecialFrames(windowName)
+    for i = #UISpecialFrames, 1, -1 do
+        if UISpecialFrames[i] == windowName then
+            _tremove(UISpecialFrames, i)
+            return true
+        end
+    end
+    return false
+end
+
+local function addToSpecialFrames(windowName)
+    
+    for i = 1, #UISpecialFrames do
+        if UISpecialFrames[i] == windowName then
+            return false 
+        end
+    end
+    _tinsert(UISpecialFrames, windowName)
+    return true
+end
+
 GetFilteredDatasetForUniqueValues = function(context)
     local filteredData = filter(values(Cache.discoveries), function(data)
-        -- Applies the main filter based on the current viewer filter setting.
-        if context.currentFilter == "equipment" then
-            if data.isMystic then return false end
-        elseif context.currentFilter == "mystic_scrolls" then
-            if not data.isMystic then return false end
+        
+        if context.currentFilter == "eq" then
+            if data.isVendor or data.isMystic then return false end
+        elseif context.currentFilter == "ms" then
+            if data.isVendor or not data.isMystic then return false end
+        elseif context.currentFilter == "bmv" then
+            if not data.isVendor or data.vendorType ~= "BM" then return false end
+        elseif context.currentFilter == "msv" then
+            if not data.isVendor or data.vendorType ~= "MS" then return false end
         end
 
-        -- Applies the search term filter to item names and localized zone names.
+        
         if context.searchTerm and context.searchTerm ~= "" then
             local searchLower = _strlower(context.searchTerm)
-            local nameMatch = _strfind(_strlower(data.itemName or ""), searchLower, 1, true)
+            local nameMatch = false
+            if data.isVendor then
+                nameMatch = _strfind(_strlower(data.vendorName or ""), searchLower, 1, true)
+            else
+                nameMatch = _strfind(_strlower(data.itemName or ""), searchLower, 1, true)
+            end
+            
             local zoneName = GetLocalizedZoneName(data.discovery)
             local zoneMatch = _strfind(_strlower(zoneName), searchLower, 1, true)
             if not (nameMatch or zoneMatch) then return false end
         end
 
-        -- Applies active column filters for 'slot'.
+        
         if context.activeFilters.slot then
             local slotValue = data.equipLoc and _G[data.equipLoc] or ""
             if not context.activeFilters.slot[slotValue] then return false end
         end
 
-        -- Applies active column filters for 'type'.
+        
         if context.activeFilters.type then
             local typeValue = data.itemSubType or ""
             if not context.activeFilters.type[typeValue] then return false end
         end
 
-        -- Applies active column filters for 'class'.
+        
         if context.activeFilters.class then
-            local classValue = data.characterClass or ""
-            if not context.activeFilters.class[classValue] then return false end
+            if context.currentFilter == "eq" then
+                
+                local Constants = L:GetModule("Constants", true)
+                if Constants and Constants.CLASS_PROFICIENCIES then
+                    local subTypeID = data.ist
+                    local typeID = data.it
+                    
+                    if subTypeID and typeID and subTypeID > 0 and typeID > 0 then
+                        local canUse = false
+                        for classFilterName, _ in pairs(context.activeFilters.class) do
+                             
+                             local classToken = nil
+                             if _G.LOCALIZED_CLASS_NAMES_MALE then
+                                 for token, locName in pairs(_G.LOCALIZED_CLASS_NAMES_MALE) do
+                                     if locName == classFilterName then classToken = token; break end
+                                 end
+                             end
+                             if not classToken and _G.LOCALIZED_CLASS_NAMES_FEMALE then
+                                 for token, locName in pairs(_G.LOCALIZED_CLASS_NAMES_FEMALE) do
+                                     if locName == classFilterName then classToken = token; break end
+                                 end
+                             end
+                             if not classToken then classToken = string.upper(classFilterName) end
+                             
+                             local profs = Constants.CLASS_PROFICIENCIES[classToken]
+                             if profs then
+                                 local list = nil
+                                 if typeID == Constants.ITEM_TYPE_TO_ID["Armor"] then list = profs.armor
+                                 elseif typeID == Constants.ITEM_TYPE_TO_ID["Weapon"] then list = profs.weapons end
+                                 
+                                 if list then
+                                     for _, allowedID in ipairs(list) do
+                                         if subTypeID == allowedID then canUse = true; break end
+                                     end
+                                 else
+                                     canUse = true 
+                                 end
+                             end
+                             if canUse then break end
+                        end
+                        if not canUse then return false end
+                    else
+                        
+                        return false
+                    end
+                end
+            else
+                
+                local classValue = data.characterClass or ""
+                if data.cl and data.cl ~= "cl" then
+                    local classToken = CLASS_ABBREVIATIONS_REVERSE[data.cl]
+                    if classToken then
+                        classValue = (_G.LOCALIZED_CLASS_NAMES_MALE and _G.LOCALIZED_CLASS_NAMES_MALE[classToken]) or classToken
+                    end
+                end
+                if classValue == "" then classValue = data.characterClass or "" end
+                if not context.activeFilters.class[classValue] then return false end
+            end
         end
 
-        -- Applies active column filters for 'zone'.
+        
         if context.activeFilters.zone then
             local zoneValue = GetLocalizedZoneName(data.discovery)
             if not context.activeFilters.zone[zoneValue] then return false end
         end
 
-        -- Applies global source filter.
+        
         if context.activeFilters.source then
             local source = data.discovery.src or "unknown"
             local sourceValue = SOURCE_NAMES[source] or source
             if not context.activeFilters.source[sourceValue] then return false end
         end
 
-        -- Applies global quality filter.
+        
         if context.activeFilters.quality then
             local _, _, quality = GetItemInfoSafe(data.discovery.il, data.discovery.i)
             if not quality then
@@ -390,15 +827,16 @@ GetFilteredDatasetForUniqueValues = function(context)
             end
         end
 
-        -- Applies global looted filter.
-        if context.activeFilters.looted then
-            local lootedValue = Viewer:IsLootedByChar(data.guid) and "Looted" or "Not Looted"
-            if not context.activeFilters.looted[lootedValue] then return false end
+        
+        if Viewer.lootedFilterState ~= nil then
+            local isLooted = Viewer:IsLootedByChar(data.guid)
+            if Viewer.lootedFilterState == true and not isLooted then return false end
+            if Viewer.lootedFilterState == false and isLooted then return false end
         end
 
-        -- Applies global duplicates filter.
+        
         if context.activeFilters.duplicates then
-            -- Only shows discoveries with a duplicate count greater than one.
+            
             if not Cache.duplicateItems[data.discovery.i] or Cache.duplicateItems[data.discovery.i] <= 1 then
                 return false
             end
@@ -410,17 +848,16 @@ GetFilteredDatasetForUniqueValues = function(context)
     return filteredData
 end
 
--- Generates unique values for a specified column, supporting cascading filters.
 GetUniqueValues = function(column)
-    -- Generates a cache key that includes the filter context.
+    
     local context = GetCascadedFilterContext(column)
     local cacheKey = column .. ":" .. context.currentFilter .. ":" .. context.searchTerm
 
-    -- Appends active filters to the cache key.
+    
     local filterKeys = {}
     for filterType, filters in pairs(context.activeFilters) do
         if filterType == "duplicates" then
-            -- Handles the duplicates filter as a special case.
+            
             _tinsert(filterKeys, filterType .. "=enabled")
         else
             local sortedKeys = keys(filters)
@@ -432,7 +869,7 @@ GetUniqueValues = function(column)
         cacheKey = cacheKey .. ":" .. _tconcat(filterKeys, "|")
     end
 
-    -- Checks if cached values exist for the current context.
+    
     if not Cache.uniqueValuesContext then
         Cache.uniqueValuesContext = {}
     end
@@ -440,18 +877,32 @@ GetUniqueValues = function(column)
     if Cache.uniqueValuesContext[cacheKey] then
         return Cache.uniqueValuesContext[cacheKey]
     end
+    
+    
+    
+    
+    if column == "class" and Viewer.currentFilter == "eq" then
+         local values = {}
+         for _, classToken in ipairs(CLASS_OPTIONS) do
+             local locName = (_G.LOCALIZED_CLASS_NAMES_MALE and _G.LOCALIZED_CLASS_NAMES_MALE[classToken]) or classToken
+             _tinsert(values, locName)
+         end
+         _tsort(values)
+         Cache.uniqueValuesContext[cacheKey] = values
+         return values
+    end
 
-    -- Retrieves the filtered dataset for this context.
+    
     local filteredDataset = GetFilteredDatasetForUniqueValues(context)
     local values = {}
     local seen = {}
 
-    -- For the 'zone' column, deduplicates by c:z:iz key and retrieves localized names.
+    
     if column == "zone" then
         local ZoneList = L:GetModule("ZoneList", true)
         local zoneByKey = {}
 
-        -- Collects zones by c:z:iz key from the filtered dataset.
+        
         for _, data in ipairs(filteredDataset) do
             local discovery = data.discovery
             if discovery then
@@ -466,7 +917,7 @@ GetUniqueValues = function(column)
             end
         end
 
-        -- Retrieves localized zone names.
+        
         for key, zoneData in pairs(zoneByKey) do
             local localizedZoneName = GetLocalizedZoneName(zoneData)
 
@@ -476,14 +927,39 @@ GetUniqueValues = function(column)
             end
         end
     else
-        -- Extracts values for other columns from the filtered dataset.
-        local columnExtractor = {
+        
+        local NUMERIC_SOURCE_MAP = {
+            [0] = "world_loot",
+            [1] = "npc_gossip",
+            [2] = "emote_event",
+            [3] = "direct",
+        }
+
+        
+       local columnExtractor = {
             slot = function(data) return data.equipLoc and _G[data.equipLoc] or "" end,
             type = function(data) return data.itemSubType or "" end,
-            class = function(data) return data.characterClass or "" end,
+            
+            class = function(data)
+                if data.cl and data.cl ~= "cl" then
+                    local classToken = CLASS_ABBREVIATIONS_REVERSE[data.cl]
+                    if classToken then
+                        return _G.LOCALIZED_CLASS_NAMES_MALE[classToken] or _G.LOCALIZED_CLASS_NAMES_FEMALE[classToken] or ""
+                    end
+                end
+                
+                return data.characterClass or ""
+            end,
             source = function(data)
-                local source = data.discovery.src or "unknown"
-                return SOURCE_NAMES[source] or source
+                local raw = data.discovery.src
+                
+                if type(raw) == "number" then
+                    raw = NUMERIC_SOURCE_MAP[raw] or "unknown"
+                end
+                
+                local sourceKey = raw or "unknown"
+                
+                return SOURCE_NAMES[sourceKey] or tostring(sourceKey)
             end,
             quality = function(data)
                 local _, _, quality = GetItemInfoSafe(data.discovery.il, data.discovery.i)
@@ -507,9 +983,9 @@ GetUniqueValues = function(column)
         end
     end
 
-    -- Sorts values based on column type.
+    
     if column == "quality" then
-        -- Sorts quality values by rarity order (highest to lowest).
+        
         local qualityOrder = {
             ["Heirloom"] = 7,
             ["Artifact"] = 6,
@@ -525,57 +1001,43 @@ GetUniqueValues = function(column)
         _tsort(values, function(a, b)
             local aOrder = qualityOrder[a] or 999
             local bOrder = qualityOrder[b] or 999
-            return aOrder > bOrder -- Higher rarity first
+            return aOrder > bOrder 
         end)
     else
-        -- Default alphabetical sorting for other columns.
+        
         _tsort(values)
     end
 
-    -- Caches the results with a context key.
+    
     Cache.uniqueValuesContext[cacheKey] = values
 
     return values
 end
 
--- Tooltip for class scanning.
-local localClassScanTip = CreateFrame("GameTooltip", "LootCollectorClassScanTooltip", UIParent, "GameTooltipTemplate")
-localClassScanTip:SetOwner(UIParent, "ANCHOR_NONE")
-
--- Initializes itemInfoCache for backward compatibility.
-L.itemInfoCache = L.itemInfoCache or {}
-
--- Tooltip for IsWorldforged fallback.
-local localWorldforgedScanTip = CreateFrame("GameTooltip", "LootCollectorViewerScanTip", UIParent, "GameTooltipTemplate")
-localWorldforgedScanTip:SetOwner(UIParent, "ANCHOR_NONE")
-
--- Processing state for deferred full database scan.
 local scanQueue = {}
 local scanCursor = 0
 local scanProgressCallback = nil
 
--- Status constants (matching Core.lua).
 local STATUS_UNCONFIRMED = "UNCONFIRMED"
 local STATUS_CONFIRMED = "CONFIRMED"
 local STATUS_FADING = "FADING"
 local STATUS_STALE = "STALE"
 
--- Detects if the discovery data has changed since last cache build.
 local function HasDataChanged()
-    if not L.db or not L.db.global or not L.db.global.discoveries then
+    
+    local discoveries = L:GetDiscoveriesDB()
+    if not discoveries then
         return false
     end
 
-    -- Count the number of discoveries as a simple change detection mechanism
     local currentCount = 0
-    for _ in pairs(L.db.global.discoveries) do
+    for _ in pairs(discoveries) do
         currentCount = currentCount + 1
     end
 
-    -- Store the count in the cache for comparison
     if not Cache.lastDiscoveryCount then
         Cache.lastDiscoveryCount = currentCount
-        return true -- First time, consider it changed
+        return true 
     end
 
     local hasChanged = Cache.lastDiscoveryCount ~= currentCount
@@ -586,37 +1048,58 @@ local function HasDataChanged()
     return hasChanged
 end
 
--- Creates a reusable context menu.
+function Viewer:SetUIEnabled(enabled)
+    if not self.window or not self.interactiveElements then return end
+
+    for _, element in ipairs(self.interactiveElements) do
+        if element then
+            if enabled then
+                element:Enable()
+            else
+                element:Disable()
+            end
+        end
+    end
+
+    
+    if self.searchClearBtn then
+        if enabled then
+            self.searchClearBtn:Enable()
+        else
+            self.searchClearBtn:Disable()
+        end
+    end
+end
+
 local function CreateContextMenu(anchor, title, buttons, options)
     options = options or {}
     local menuWidth = options.width or CONTEXT_MENU_WIDTH
-    local menuHeight = options.height or (20 + 5 + (25 * #buttons) + 20) -- title + separator + buttons + padding
+    local menuHeight = options.height or (20 + 5 + (25 * #buttons) + 20) 
 
-    -- Closes any existing context menu.
+    
     if Viewer.contextMenu then
         Viewer.contextMenu:Hide()
         Viewer.contextMenu = nil
     end
 
-    -- Creates the context menu frame.
+    
     local contextMenu = CreateFrame("Frame", "LootCollectorViewerContextMenu", Viewer.window)
     contextMenu:SetSize(menuWidth, menuHeight)
 
-    -- Positions the context menu at the mouse cursor or anchor.
+    
     if anchor.mouseX and anchor.mouseY then
         local uiScale = UIParent:GetEffectiveScale()
         contextMenu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT",
             anchor.mouseX / uiScale, anchor.mouseY / uiScale)
     else
-        -- Fallback to the right side of the anchor.
+        
         contextMenu:SetPoint("LEFT", anchor, "RIGHT", 5, 0)
     end
 
     contextMenu:SetFrameStrata("TOOLTIP")
     contextMenu:EnableMouse(true)
 
-
-    -- Sets the background for the context menu.
+    
     contextMenu:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -627,23 +1110,23 @@ local function CreateContextMenu(anchor, title, buttons, options)
     })
     contextMenu:SetBackdropColor(0.05, 0.05, 0.05, 0.98)
 
-    -- Sets the title of the context menu.
+    
     local titleText = contextMenu:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     titleText:SetPoint("TOPLEFT", 10, -10)
     titleText:SetText(title)
     titleText:SetTextColor(1, 1, 1)
 
-    -- Draws a separator line.
+    
     local separator = contextMenu:CreateTexture(nil, "OVERLAY")
     separator:SetSize(menuWidth - 20, 1)
     separator:SetPoint("TOPLEFT", 10, -30)
     separator:SetColorTexture(0.5, 0.5, 0.5, 0.8)
 
-    -- Creates and positions the buttons within the context menu.
+    
     local lastButton = nil
     for i, buttonData in ipairs(buttons) do
         local btn = CreateFrame("Button", nil, contextMenu, "UIPanelButtonTemplate")
-        btn:SetSize(menuWidth - 20, 20) -- Uses full menu width minus padding.
+        btn:SetSize(menuWidth - 20, 20) 
         btn:SetFrameLevel(contextMenu:GetFrameLevel() + 1)
         if lastButton then
             btn:SetPoint("TOPLEFT", lastButton, "BOTTOMLEFT", 0, -5)
@@ -661,14 +1144,14 @@ local function CreateContextMenu(anchor, title, buttons, options)
         lastButton = btn
     end
 
-    -- Adds a mouse leave event to close the context menu with a slight delay.
+    
     contextMenu:SetScript("OnLeave", function(self)
-        -- Small delay to prevent accidental closing when moving between buttons.
+        
         createTimer(0.1, function()
             if Viewer.contextMenu and Viewer.contextMenu:IsShown() then
                 local contextMenuMouseOver = Viewer.contextMenu:IsMouseOver()
                 local anchorMouseOver = anchor:IsMouseOver()
-                -- Checks if the mouse is still over the context menu or its parent.
+                
                 if not contextMenuMouseOver and not anchorMouseOver then
                     Viewer.contextMenu:Hide()
                     Viewer.contextMenu = nil
@@ -680,7 +1163,7 @@ local function CreateContextMenu(anchor, title, buttons, options)
     contextMenu:Show()
     Viewer.contextMenu = contextMenu
 
-    -- Closes the context menu when clicking outside its bounds.
+    
     local function OnMouseDown(self, button)
         if Viewer.contextMenu and not Viewer.contextMenu:IsMouseOver() and not anchor:IsMouseOver() then
             Viewer.contextMenu:Hide()
@@ -690,7 +1173,7 @@ local function CreateContextMenu(anchor, title, buttons, options)
 
     UIParent:SetScript("OnMouseDown", OnMouseDown)
 
-    -- Cleans up the OnMouseDown script when the context menu is hidden.
+    
     contextMenu:SetScript("OnHide", function()
         UIParent:SetScript("OnMouseDown", nil)
     end)
@@ -698,16 +1181,14 @@ local function CreateContextMenu(anchor, title, buttons, options)
     return contextMenu
 end
 
--- Defines the maximum number of dropdown levels.
 local MAX_LEVELS = 4
 local lastAnchor = {}
 
--- Estimates the height of a dropdown list.
 local function GetEstimatedListHeight(list)
     local h = list:GetHeight()
     if h and h > 0 then return h end
 
-    -- Attempts to sum real button heights if available.
+    
     local name = list:GetName()
     local total = 0
     if name then
@@ -721,11 +1202,10 @@ local function GetEstimatedListHeight(list)
     end
     if total > 0 then return total end
 
-    -- Provides a fallback estimate for the list height.
+    
     return (list.numButtons or 20) * (list.buttonHeight or 16)
 end
 
--- Checks if the anchor is set to the cursor or mouse position.
 local function IsCursorAnchor(anchor)
     if not anchor then return false end
     if type(anchor) == "string" then
@@ -735,7 +1215,6 @@ local function IsCursorAnchor(anchor)
     return false
 end
 
--- Repositions the dropdown list to ensure it stays on screen, preferring to drop downwards.
 local function RepositionList(level, dropDownFrame, anchorTo)
     local list = _G["DropDownList" .. (tonumber(level) or 1)]
     if not list then return end
@@ -744,7 +1223,7 @@ local function RepositionList(level, dropDownFrame, anchorTo)
     local screenBottom = (UIParent and UIParent:GetBottom()) or 0
 
     if IsCursorAnchor(anchorTo) then
-        -- Anchors the list to the cursor position, expanding downwards.
+        
         local x, y = GetCursorPosition()
         local scale = UIParent:GetEffectiveScale()
         x = x / scale
@@ -755,14 +1234,14 @@ local function RepositionList(level, dropDownFrame, anchorTo)
         return
     end
 
-    -- Determines the anchor frame, prioritizing the provided dropDownFrame.
+    
     local anchorFrame = nil
     if type(anchorTo) == "table" and anchorTo.GetBottom then
         anchorFrame = anchorTo
     elseif dropDownFrame and dropDownFrame.GetBottom then
         anchorFrame = dropDownFrame
     elseif type(anchorTo) == "string" then
-        -- If anchor is a string token, use dropDownFrame if available, otherwise fallback to UIParent.
+        
         anchorFrame = dropDownFrame or UIParent
     else
         anchorFrame = dropDownFrame or UIParent
@@ -797,14 +1276,13 @@ for i = 1, MAX_LEVELS do
     end
 end
 
--- Helper functions for managing standard WoW dropdown menus.
 local function ShowColumnFilterDropdown(column, anchor, values)
-    -- Closes any existing dropdown.
+    
     HideDropDownMenu(1)
 
-    -- Checks if values are empty and attempts a fallback.
+    
     if not values or #values == 0 then
-        -- Attempts to retrieve values without cascading filters.
+        
         local fallbackValues = {}
         if Cache.discoveriesBuilt then
             local seen = {}
@@ -812,7 +1290,7 @@ local function ShowColumnFilterDropdown(column, anchor, values)
                 local ZoneList = L:GetModule("ZoneList", true)
                 local zoneByKey = {}
 
-                -- Collects zones by c:z:iz key from the cached discoveries.
+                
                 for _, data in ipairs(Cache.discoveries) do
                     local discovery = data.discovery
                     if discovery then
@@ -827,7 +1305,7 @@ local function ShowColumnFilterDropdown(column, anchor, values)
                     end
                 end
 
-                -- Retrieves localized zone names.
+                
                 for key, zoneData in pairs(zoneByKey) do
                     local localizedZoneName = GetLocalizedZoneName(zoneData)
                     if localizedZoneName and localizedZoneName ~= "" and not seen[localizedZoneName] then
@@ -836,10 +1314,27 @@ local function ShowColumnFilterDropdown(column, anchor, values)
                     end
                 end
             else
+                
+                local NUMERIC_SOURCE_MAP = { [0]="world_loot", [1]="npc_gossip", [2]="emote_event", [3]="direct" }
+                
                 local columnExtractor = {
                     slot = function(data) return data.equipLoc and _G[data.equipLoc] or "" end,
                     type = function(data) return data.itemSubType or "" end,
-                    class = function(data) return data.characterClass or "" end
+                    class = function(data) return data.characterClass or "" end,
+                    source = function(data)
+                        local raw = data.discovery.src
+                        if type(raw) == "number" then raw = NUMERIC_SOURCE_MAP[raw] or "unknown" end
+                        local sourceKey = raw or "unknown"
+                        return SOURCE_NAMES[sourceKey] or tostring(sourceKey)
+                    end,
+                    quality = function(data)
+                        local _, _, quality = GetItemInfoSafe(data.discovery.il, data.discovery.i)
+                        if not quality then return "Unknown" end
+                        return QUALITY_NAMES[quality] or ("Quality " .. tostring(quality))
+                    end,
+                    looted = function(data)
+                        return Viewer:IsLootedByChar(data.guid) and "Looted" or "Not Looted"
+                    end
                 }
 
                 local extractor = columnExtractor[column]
@@ -859,50 +1354,54 @@ local function ShowColumnFilterDropdown(column, anchor, values)
         values = fallbackValues
     end
 
-    -- If no values are available after fallback, returns silently.
+    
     if not values or #values == 0 then
         return
     end
+    
+    
+    local filterTable
+    if column == "zone" then filterTable = Viewer.columnFilters.zone
+    elseif column == "source" then filterTable = Viewer.columnFilters.source
+    elseif column == "quality" then filterTable = Viewer.columnFilters.quality
+    elseif column == "looted" then filterTable = Viewer.columnFilters.looted
+    else
+        
+        filterTable = Viewer.columnFilters[Viewer.currentFilter][column]
+    end
 
-    -- Creates the dropdown menu using the standard WoW UI system.
+    
     local dropdown = CreateFrame("Frame", "LootCollectorViewerFilterDropdown", Viewer.window, "UIDropDownMenuTemplate")
 
-    -- Initializes the dropdown menu.
+    
     UIDropDownMenu_Initialize(dropdown, function(self, level)
-        -- Adds the "Clear All Filters" option.
+        
         local clearAllInfo = {
             text = "Clear All Filters",
             notCheckable = true,
             func = function()
-                if column == "zone" then
-                    Viewer.columnFilters.zone = {}
-                elseif column == "source" then
-                    Viewer.columnFilters.source = {}
-                elseif column == "quality" then
-                    Viewer.columnFilters.quality = {}
-                elseif column == "looted" then
-                    Viewer.columnFilters.looted = {}
-                else
-                    Viewer.columnFilters[Viewer.currentFilter][column] = {}
+                if filterTable then
+                    wipe(filterTable)
                 end
+
                 Viewer.currentPage = 1
-                -- Invalidates the filtered cache to force a refresh.
+                
                 Cache.filteredResults = {}
                 Cache.lastFilterState = nil
                 Cache.uniqueValuesValid = false
-                Cache.uniqueValuesContext = {} -- Clears the cascading cache.
+                Cache.uniqueValuesContext = {} 
                 Viewer:UpdateSortHeaders()
                 Viewer:RefreshData()
-                -- Updates the visibility of the Clear All button.
+                
                 Viewer:UpdateClearAllButton()
-                -- Updates the states of the filter buttons.
+                
                 Viewer:UpdateFilterButtonStates()
                 HideDropDownMenu(1)
             end
         }
         UIDropDownMenu_AddButton(clearAllInfo, level)
 
-        -- Adds a separator.
+        
         local separatorInfo = {
             text = "",
             notCheckable = true,
@@ -910,76 +1409,37 @@ local function ShowColumnFilterDropdown(column, anchor, values)
         }
         UIDropDownMenu_AddButton(separatorInfo, level)
 
-        -- Adds filter options with checkboxes.
+        
         for _, value in ipairs(values) do
-            -- Checks if the current value is selected.
+            
             local isChecked = false
-            if column == "zone" then
-                isChecked = Viewer.columnFilters.zone[value] ~= nil
-            elseif column == "source" then
-                isChecked = Viewer.columnFilters.source[value] ~= nil
-            elseif column == "quality" then
-                isChecked = Viewer.columnFilters.quality[value] ~= nil
-            elseif column == "looted" then
-                isChecked = Viewer.columnFilters.looted[value] ~= nil
-            else
-                isChecked = Viewer.columnFilters[Viewer.currentFilter][column][value] ~= nil
+            if filterTable then
+                isChecked = filterTable[value] ~= nil
             end
 
             local info = {
                 text = value,
                 checked = isChecked,
                 func = function()
-                    local currentValue = false
-                    if column == "zone" then
-                        currentValue = Viewer.columnFilters.zone[value]
-                    elseif column == "source" then
-                        currentValue = Viewer.columnFilters.source[value]
-                    elseif column == "quality" then
-                        currentValue = Viewer.columnFilters.quality[value]
-                    elseif column == "looted" then
-                        currentValue = Viewer.columnFilters.looted[value]
+                    if not filterTable then return end
+                    
+                    if filterTable[value] then
+                        filterTable[value] = nil
                     else
-                        currentValue = Viewer.columnFilters[Viewer.currentFilter][column][value]
-                    end
-
-                    if currentValue then
-                        if column == "zone" then
-                            Viewer.columnFilters.zone[value] = nil
-                        elseif column == "source" then
-                            Viewer.columnFilters.source[value] = nil
-                        elseif column == "quality" then
-                            Viewer.columnFilters.quality[value] = nil
-                        elseif column == "looted" then
-                            Viewer.columnFilters.looted[value] = nil
-                        else
-                            Viewer.columnFilters[Viewer.currentFilter][column][value] = nil
-                        end
-                    else
-                        if column == "zone" then
-                            Viewer.columnFilters.zone[value] = true
-                        elseif column == "source" then
-                            Viewer.columnFilters.source[value] = true
-                        elseif column == "quality" then
-                            Viewer.columnFilters.quality[value] = true
-                        elseif column == "looted" then
-                            Viewer.columnFilters.looted[value] = true
-                        else
-                            Viewer.columnFilters[Viewer.currentFilter][column][value] = true
-                        end
+                        filterTable[value] = true
                     end
 
                     Viewer.currentPage = 1
-                    -- Invalidates the filtered cache to force a refresh.
+                    
                     Cache.filteredResults = {}
                     Cache.lastFilterState = nil
                     Cache.uniqueValuesValid = false
-                    Cache.uniqueValuesContext = {} -- Clears the cascading cache
+                    Cache.uniqueValuesContext = {} 
                     Viewer:UpdateSortHeaders()
                     Viewer:RefreshData()
-                    -- Updates the visibility of the Clear All button.
+                    
                     Viewer:UpdateClearAllButton()
-                    -- Updates the states of the filter buttons.
+                    
                     Viewer:UpdateFilterButtonStates()
                     HideDropDownMenu(1)
                 end
@@ -988,19 +1448,19 @@ local function ShowColumnFilterDropdown(column, anchor, values)
         end
     end, "MENU")
 
-    -- Displays the dropdown menu.
+    
     ToggleDropDownMenu(1, nil, dropdown, anchor, 0, 0)
 
-    -- Adds a mouse leave event to close the dropdown with a slight delay.
+    
     local dropdownList = _G["DropDownList1"]
     if dropdownList then
         dropdownList:SetScript("OnLeave", function(self)
-            -- Small delay to prevent accidental closing.
+            
             createTimer(0.1, function()
                 if dropdownList and dropdownList:IsShown() then
                     local dropdownMouseOver = dropdownList:IsMouseOver()
                     local anchorMouseOver = anchor:IsMouseOver()
-                    -- Checks if the mouse is still over the dropdown or its anchor.
+                    
                     if not dropdownMouseOver and not anchorMouseOver then
                         HideDropDownMenu(1)
                     end
@@ -1010,127 +1470,44 @@ local function ShowColumnFilterDropdown(column, anchor, values)
     end
 end
 
--- Retrieves the color associated with a given item quality.
-local function GetQualityColor(quality)
-    quality = tonumber(quality)
-    if not quality then return 1, 1, 1 end
-    if GetItemQualityColor then
-        local r, g, b = GetItemQualityColor(quality)
-        if r and g and b then return r, g, b end
-    end
-    if ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] then
-        local c = ITEM_QUALITY_COLORS[quality]
-        return c.r or 1, c.g or 1, c.b or 1
-    end
-    return 1, 1, 1
-end
-
--- Checks if an item name corresponds to a "Mystic Scroll".
-local function IsMysticScroll(itemName)
-    return itemName and _strfind(itemName, "Mystic Scroll", 1, true) ~= nil
-end
-
--- Class names lookup table
-local VALID_CLASSES = {
-    ["Warrior"] = true, ["Paladin"] = true, ["Hunter"] = true,
-    ["Rogue"] = true, ["Priest"] = true, ["Shaman"] = true,
-    ["Mage"] = true, ["Warlock"] = true, ["Druid"] = true
-}
-
--- Detects the character class required for an item, utilizing a unified cache.
-local function GetItemCharacterClass(itemLink, itemID)
-    if not itemLink or not itemID then return "" end
-
-    -- Check cache first
-    local cached = Cache.characterClass[itemID]
-    if cached ~= nil then
-        return cached
-    end
-
-    local characterClass = ""
-    localClassScanTip:SetHyperlink(itemLink)
-    
-    local line2Text = _G["LootCollectorClassScanTooltipTextLeft2"]:GetText()
-    if line2Text then
-        -- Extract class name (strip color codes if present)
-        local plainText = line2Text:match("^|c%x%x%x%x%x%x%x%x(.+)|r$") or line2Text
-        -- Trim whitespace
-        local className = plainText:match("^%s*(.-)%s*$")
-        
-        -- Validate and store if valid class
-        if VALID_CLASSES[className] then
-            characterClass = line2Text
-        end
-    end
-
-    Cache.characterClass[itemID] = characterClass
-    return characterClass
-end
-
--- Detects if an item is "Worldforged", utilizing a unified cache.
-local function IsWorldforged(itemLink)
-    if not itemLink then return false end
-
-    -- Check cache first
-    local cached = Cache.worldforged[itemLink]
-    if cached ~= nil then
-        return cached
-    end
-
-    -- Determine which tooltip to use
-    local Core = L:GetModule("Core", true)
-    local tooltip, tooltipName
-    
-    if Core and Core._scanTip then
-        tooltip = Core._scanTip
-        tooltipName = "LootCollectorCoreScanTipTextLeft"
-    else
-        if not localWorldforgedScanTip then
-            localWorldforgedScanTip = CreateFrame("GameTooltip", "LootCollectorViewerScanTip", UIParent, "GameTooltipTemplate")
-            localWorldforgedScanTip:SetOwner(UIParent, "ANCHOR_NONE")
-        end
-        tooltip = localWorldforgedScanTip
-        tooltipName = "LootCollectorViewerScanTipTextLeft"
-    end
-
-    tooltip:ClearLines()
-    tooltip:SetHyperlink(itemLink)
-
-    -- Scan lines 2-5 for "worldforged" (case-insensitive)
-    local isWorldforged = false
-    for i = 2, 5 do
-        local text = _G[tooltipName .. i]:GetText()
-        if text and _strfind(text, "orldforged", 1, true) then
-            isWorldforged = true
-            break
-        end
-    end
-
-    Cache.worldforged[itemLink] = isWorldforged
-    return isWorldforged
-end
-
--- Builds the cache of all discoveries asynchronously.
 function Viewer:UpdateAllDiscoveriesCache(onCompleteCallback)
+    VDebug("UpdateAllDiscoveriesCache(async): start")
+
     Cache.discoveriesBuilding = true
-    Cache.discoveriesBuilt = false
-    scanQueue = {}
-    scanCursor = 0
+    Cache.discoveriesBuilt    = false
+
+    scanQueue            = {}
+    scanCursor           = 0
     scanProgressCallback = onCompleteCallback
     Cache.uniqueValuesValid = false
 
-    -- Clears the existing discoveries cache.
-    Cache.discoveries = {}
-
-    -- Clears the duplicate items cache.
+    Cache.discoveries    = {}
     Cache.duplicateItems = {}
 
-    -- Populates the scanQueue with all discoveries from the global database.
-    for guid, discovery in pairs(L.db.global.discoveries or {}) do
-        _tinsert(scanQueue, { guid = guid, discovery = discovery })
+    local totalItems  = 0
+    local itemCount   = 0
+    local vendorCount = 0
+
+    
+    local discoveries = L:GetDiscoveriesDB()
+    local vendors = L:GetVendorsDB()
+
+    for guid, discovery in pairs(discoveries or {}) do
+        _tinsert(scanQueue, { guid = guid, discovery = discovery, type = "item" })
+        itemCount  = itemCount  + 1
+        totalItems = totalItems + 1
     end
 
-    -- Updates pagination to show loading state immediately
+    for guid, discovery in pairs(vendors or {}) do
+        _tinsert(scanQueue, { guid = guid, discovery = discovery, type = "vendor" })
+        vendorCount = vendorCount + 1
+        totalItems  = totalItems  + 1
+    end
+
+    VDebug("UpdateAllDiscoveriesCache(async): queued items=" ..
+        tostring(itemCount) .. ", vendors=" .. tostring(vendorCount) ..
+        ", total=" .. tostring(totalItems))
+
     if self.window and self.window:IsShown() then
         self:UpdatePagination()
     end
@@ -1139,69 +1516,250 @@ function Viewer:UpdateAllDiscoveriesCache(onCompleteCallback)
 end
 
 function Viewer:ProcessScanQueueBatch()
-    if not Cache.discoveriesBuilding or scanCursor >= #scanQueue then
-        Cache.discoveriesBuilding = false
-        Cache.discoveriesBuilt = true
+    local totalQueued = #scanQueue
+    VDebug("ProcessScanQueueBatch: start, cursor=" .. tostring(scanCursor) ..
+        ", totalQueued=" .. tostring(totalQueued))
 
-        -- Clear scan queue to free memory
-        scanQueue = {}
+    
+    if not Cache.discoveriesBuilding or scanCursor >= totalQueued then
+        Cache.discoveriesBuilding = false
+        Cache.discoveriesBuilt    = (scanCursor >= totalQueued)
+
+        
+        scanQueue  = {}
         scanCursor = 0
 
-        -- Updates pagination to show normal state when cache building completes
+        
         if self.window and self.window:IsShown() then
             self:UpdatePagination()
         end
 
-        if scanProgressCallback then
+        VDebug("ProcessScanQueueBatch: finished all batches, total discoveries in cache=" ..
+            tostring(#Cache.discoveries))
+
+        if scanProgressCallback and Cache.discoveriesBuilt then
+            VDebug("ProcessScanQueueBatch: invoking scanProgressCallback")
             scanProgressCallback()
             scanProgressCallback = nil
         end
+
         return
     end
 
-    local batchSize = 50 -- Processes 50 items per batch for background scan.
-    local processedCount = 0
-    local Core = L:GetModule("Core", true)
+    
+    
+    
+    local MAX_BATCH_ITEMS = 20      
+    local MAX_BATCH_MS    = 20      
 
-    for i = 1, batchSize do
+    local startMs
+    if debugprofilestop then
+        startMs = debugprofilestop()
+    else
+        startMs = (GetTime and GetTime() or 0) * 1000
+    end
+
+    local processedInBatch = 0
+    local Core             = L:GetModule("Core", true)
+
+    for i = 1, MAX_BATCH_ITEMS do
         scanCursor = scanCursor + 1
-        if scanCursor > #scanQueue then break end
+        if scanCursor > totalQueued then
+            break
+        end
 
-        local entry = scanQueue[scanCursor]
-        local guid = entry.guid
+        local entry     = scanQueue[scanCursor]
+        local guid      = entry.guid
         local discovery = entry.discovery
 
-        -- Validates discovery data before processing.
+        if entry.type == "item" then
+            if discovery and type(discovery) == "table" then
+                
+                local itemLink = discovery.il
+                local itemName = nil
+                
+                
+                if itemLink then
+                    itemName = itemLink:match("%[(.+)%]")
+                end
+                
+                
+                if (not itemName or itemName == "") and discovery.i then
+                    local name, link = GetItemInfo(discovery.i)
+                    if name then
+                        itemName = name
+                        
+                        if (not itemLink or itemLink == "") and link then
+                            
+                            discovery.il = link
+                            itemLink = link 
+                            
+                            
+                        end
+                    end
+                end
+
+                if itemName and itemName ~= "" then
+                    local isMystic       = IsMysticScroll(itemName)
+                    local isWorldforged  = IsWorldforged(itemLink)
+                    local characterClass = GetItemCharacterClass(itemLink, discovery.i)
+                    local name, _, _, _, minLevel, itemTypeVal, itemSubTypeVal, _, equipLocVal =
+                        GetItemInfoSafe(itemLink, discovery.i)
+                    
+                    
+                    local it, ist = discovery.it, discovery.ist
+                    if not it or not ist or it == 0 or ist == 0 then
+                        it, ist = GetItemTypeIDs(itemTypeVal, itemSubTypeVal)
+                    end
+
+                    _tinsert(Cache.discoveries, {
+                        guid          = guid,
+                        discovery     = discovery,
+                        itemName      = itemName,
+                        isMystic      = isMystic,
+                        isWorldforged = isWorldforged,
+                        itemType      = itemTypeVal,
+                        itemSubType   = itemSubTypeVal,
+                        it            = it,
+                        ist           = ist,
+                        equipLoc      = equipLocVal,
+                        characterClass= characterClass,
+                        minLevel      = minLevel,
+                        cl            = discovery.cl,
+                        isVendor      = false,
+                    })
+
+                    processedInBatch = processedInBatch + 1
+
+                    if Core and discovery.i and not Core:IsItemCached(discovery.i) then
+                        Core:QueueItemForCaching(discovery.i)
+                    end
+
+                    local itemID = discovery.i
+                    if itemID then
+                        Cache.duplicateItems[itemID] = (Cache.duplicateItems[itemID] or 0) + 1
+                    end
+                end
+            end
+
+        elseif entry.type == "vendor" then
+            if discovery and type(discovery) == "table" then
+                _tinsert(Cache.discoveries, {
+                    guid       = guid,
+                    discovery  = discovery,
+                    isVendor   = true,
+                    vendorType = discovery.vendorType,
+                    vendorName = discovery.vendorName,
+                    isMystic   = false,
+                    itemName   = discovery.vendorName,
+                })
+
+                processedInBatch = processedInBatch + 1
+            end
+        end
+
+        
+        if processedInBatch % 5 == 0 then
+            local nowMs
+            if debugprofilestop then
+                nowMs = debugprofilestop()
+            else
+                nowMs = (GetTime and GetTime() or 0) * 1000
+            end
+
+            if nowMs - startMs > MAX_BATCH_MS then
+                VDebug("ProcessScanQueueBatch: time budget reached after " ..
+                    tostring(processedInBatch) .. " items, elapsed=" ..
+                    tostring(nowMs - startMs) .. "ms")
+                break
+            end
+        end
+    end
+
+    local endMs
+    if debugprofilestop then
+        endMs = debugprofilestop()
+    else
+        endMs = (GetTime and GetTime() or 0) * 1000
+    end
+
+    VDebug("ProcessScanQueueBatch: processed batch, count=" ..
+        tostring(processedInBatch) ..
+        ", cursorNow=" .. tostring(scanCursor) ..
+        ", elapsedBatchMs=" .. tostring(endMs - startMs))
+
+    
+    if scanCursor < totalQueued and Cache.discoveriesBuilding then
+        createTimer(0.02, function() Viewer:ProcessScanQueueBatch() end)
+    else
+        
+        self:ProcessScanQueueBatch()
+    end
+end
+
+function Viewer:UpdateAllDiscoveriesCacheSync()
+    if Cache.discoveriesBuilt or Cache.discoveriesBuilding then
+        return
+    end
+
+    local t0 = time()
+    VDebug("UpdateAllDiscoveriesCacheSync: start")
+
+    Cache.discoveriesBuilding = true
+    Cache.discoveries         = {}
+    Cache.uniqueValuesValid   = false
+    Cache.duplicateItems      = {} 
+
+    if self.window and self.window:IsShown() then
+        self:UpdatePagination()
+    end
+
+    local processedItems = 0
+
+    
+    local discoveries = L:GetDiscoveriesDB()
+    local vendors = L:GetVendorsDB()
+
+    
+    for guid, discovery in pairs(discoveries or {}) do
         if discovery and type(discovery) == "table" and discovery.il and discovery.il ~= "" then
             local itemName = discovery.il:match("%[(.+)%]") or ""
             if itemName and itemName ~= "" then
-                local isMystic = IsMysticScroll(itemName)
-                local isWorldforged = IsWorldforged(discovery.il)
+                local isMystic       = IsMysticScroll(itemName)
+                local isWorldforged  = IsWorldforged(discovery.il)
                 local characterClass = GetItemCharacterClass(discovery.il, discovery.i)
-
-                -- Retrieves additional item information for Slot and Type.
-                local name, _, _, _, minLevel, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.il, discovery.i)
-
-                _tinsert(Cache.discoveries, {
-                    guid = guid,
-                    discovery = discovery,
-                    itemName = itemName,
-                    isMystic = isMystic,
-                    isWorldforged = isWorldforged,
-                    itemType = itemTypeVal,
-                    itemSubType = itemSubTypeVal,
-                    equipLoc = equipLocVal,
-                    characterClass = characterClass,
-                    minLevel = minLevel,
-                })
-                processedCount = processedCount + 1
-
-                -- Ensures the item is cached in Core for GetItemInfo.
-                if Core and discovery.i and not Core:IsItemCached(discovery.i) then
-                    Core:QueueItemForCaching(discovery.i)
+                local name, _, _, _, minLevel, itemTypeVal, itemSubTypeVal, _, equipLocVal =
+                    GetItemInfoSafe(discovery.il, discovery.i)
+                
+                
+                local it, ist = discovery.it, discovery.ist
+                if not it or not ist or it == 0 or ist == 0 then
+                    it, ist = GetItemTypeIDs(itemTypeVal, itemSubTypeVal)
                 end
 
-                -- Tracks duplicate items by itemID.
+                _tinsert(Cache.discoveries, {
+                    guid          = guid,
+                    discovery     = discovery,
+                    itemName      = itemName,
+                    isMystic      = isMystic,
+                    isWorldforged = isWorldforged,
+                    itemType      = itemTypeVal,
+                    itemSubType   = itemSubTypeVal,
+                    it            = it,
+                    ist           = ist,
+                    equipLoc      = equipLocVal,
+                    characterClass= characterClass,
+                    minLevel      = minLevel,
+                    cl            = discovery.cl,
+                    isVendor      = false, 
+                })
+
+                processedItems = processedItems + 1
+                if processedItems % 200 == 0 then
+                    VDebug("UpdateAllDiscoveriesCacheSync: processed items=" ..
+                        tostring(processedItems))
+                end
+
                 if discovery.i then
                     Cache.duplicateItems[discovery.i] = (Cache.duplicateItems[discovery.i] or 0) + 1
                 end
@@ -1209,161 +1767,142 @@ function Viewer:ProcessScanQueueBatch()
         end
     end
 
-    -- Defers next batch processing to prevent UI freezing.
-    if scanCursor < #scanQueue then
-        createTimer(0.01, function() Viewer:ProcessScanQueueBatch() end)
-    else
-        self:ProcessScanQueueBatch() -- Final call to complete processing.
-    end
-end
-
--- Builds the cache of all discoveries synchronously for immediate use.
-function Viewer:UpdateAllDiscoveriesCacheSync()
-    if Cache.discoveriesBuilt or Cache.discoveriesBuilding then
-        return
-    end
-
-    Cache.discoveriesBuilding = true
-    Cache.discoveries = {}
-    Cache.uniqueValuesValid = false
-
-    -- Updates pagination to show loading state immediately
-    if self.window and self.window:IsShown() then
-        self:UpdatePagination()
-    end
-
-    -- Populates the cache with all discoveries from the global database.
-    for guid, discovery in pairs(L.db.global.discoveries or {}) do
-        if discovery and type(discovery) == "table" and discovery.il and discovery.il ~= "" then
-            local itemName = discovery.il:match("%[(.+)%]") or ""
-            if itemName and itemName ~= "" then
-                local isMystic = IsMysticScroll(itemName)
-                local isWorldforged = IsWorldforged(discovery.il)
-                local characterClass = GetItemCharacterClass(discovery.il, discovery.i)
-
-                -- Retrieves additional item information for Slot and Type.
-                local name, _, _, _, minLevel, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.il,
-                    discovery.i)
-
-                _tinsert(Cache.discoveries, {
-                    guid = guid,
-                    discovery = discovery,
-                    itemName = itemName,
-                    isMystic = isMystic,
-                    isWorldforged = isWorldforged,
-                    itemType = itemTypeVal,
-                    itemSubType = itemSubTypeVal,
-                    equipLoc = equipLocVal,
-                    characterClass = characterClass,
-                    minLevel = minLevel,
-                })
-            end
+    
+    for guid, discovery in pairs(vendors or {}) do
+        if discovery and type(discovery) == "table" then
+            _tinsert(Cache.discoveries, {
+                guid       = guid,
+                discovery  = discovery,
+                isVendor   = true,
+                vendorType = discovery.vendorType,
+                vendorName = discovery.vendorName,
+                isMystic   = false,
+                itemName   = discovery.vendorName, 
+            })
+            processedItems = processedItems + 1
         end
     end
 
-    -- Populates the duplicate items cache.
-    for _, data in ipairs(Cache.discoveries) do
-        if data.discovery.i then
-            Cache.duplicateItems[data.discovery.i] = (Cache.duplicateItems[data.discovery.i] or 0) + 1
-        end
-    end
-
-    Cache.discoveriesBuilt = true
+    Cache.discoveriesBuilt    = true
     Cache.discoveriesBuilding = false
 
-    -- Updates pagination to show normal state when cache building completes
     if self.window and self.window:IsShown() then
         self:UpdatePagination()
     end
+
+    VDebug("UpdateAllDiscoveriesCacheSync: end, totalProcessed=" ..
+        tostring(processedItems) ..
+        ", elapsed=" .. tostring(time() - t0) .. "s")
 end
 
--- Filters the cached discoveries based on current filter settings.
 function Viewer:GetFilteredDiscoveries()
-    -- Returns an empty array if the cache is currently being rebuilt.
-    if Cache.discoveriesBuilding then
-        return {}
-    end
+    local t0 = time()
+    VDebug("GetFilteredDiscoveries: start, cacheBuilt=" ..
+        tostring(Cache.discoveriesBuilt) ..
+        ", building=" .. tostring(Cache.discoveriesBuilding))
 
-    -- Attempts to build the cache synchronously if it hasn't been built yet.
+    if Cache.discoveriesBuilding then return {} end
+
     if not Cache.discoveriesBuilt then
-        -- Builds the cache synchronously for immediate display.
         self:UpdateAllDiscoveriesCacheSync()
     end
 
-    -- Returns an empty array if the cache is still not built after a synchronous attempt.
-    if not Cache.discoveriesBuilt then
-        return {}
-    end
+    if not Cache.discoveriesBuilt then return {} end
 
-    -- Generates a filter state hash for cache validation.
+    
     local filterState = self:GetFilterStateHash()
 
-    -- Returns cached results if the filter state matches.
     if Cache.lastFilterState == filterState and #Cache.filteredResults > 0 then
         return Cache.filteredResults
     end
 
-    local currentFiltered = {}
+    local currentFiltered   = {}
     local discoveriesToFilter = Cache.discoveries
+    local totalToFilter     = #discoveriesToFilter
 
-    -- Defines filter predicates.
+    
+    
+    local context = GetCascadedFilterContext(nil)
+
+    
     local filterPredicates = {
-        -- Main filter predicate based on the current viewer filter.
+        
         mainFilter = function(data)
-            if self.currentFilter == "equipment" then
-                return not data.isMystic
-            elseif self.currentFilter == "mystic_scrolls" then
-                return data.isMystic
+            if self.currentFilter == "eq" then
+                return not data.isMystic and not data.isVendor
+            elseif self.currentFilter == "ms" then
+                return data.isMystic and not data.isVendor
+            elseif self.currentFilter == "bmv" then
+                return data.isVendor and (data.vendorType == "BM" or (data.discovery.g and data.discovery.g:find("BM-", 1, true)))
+            elseif self.currentFilter == "msv" then
+                return data.isVendor and (data.vendorType == "MS" or (data.discovery.g and data.discovery.g:find("MS-", 1, true)))
             end
             return false
         end,
 
-        -- Search filter predicate that matches item names or localized zone names.
+        
         searchFilter = function(data)
             if self.searchTerm == "" then return true end
 
-            local searchLower = _strlower(self.searchTerm)
-            local nameMatch = _strfind(_strlower(data.itemName or ""), searchLower, 1, true)
+            local searchLower  = _strlower(self.searchTerm)
+            local nameToSearch = data.isVendor and data.vendorName or data.itemName
+            local nameMatch    = _strfind(_strlower(nameToSearch or ""), searchLower, 1, true)
 
-            -- Retrieves localized zone name for search.
-            local zoneName = GetLocalizedZoneName(data.discovery)
+            
+            local zoneName  = GetLocalizedZoneName(data.discovery)
             local zoneMatch = _strfind(_strlower(zoneName), searchLower, 1, true)
 
             return nameMatch or zoneMatch
         end,
 
-        -- Column filter predicates for tab-specific and global filters.
+        
         columnFilters = {
-            equipment = {
+            eq = {
                 slot = function(data)
-                    if size(self.columnFilters.equipment.slot) == 0 then return true end
+                    if size(self.columnFilters.eq.slot) == 0 then return true end
                     local slotValue = data.equipLoc and _G[data.equipLoc] or ""
-                    return self.columnFilters.equipment.slot[slotValue] ~= nil
+                    return self.columnFilters.eq.slot[slotValue] ~= nil
                 end,
                 type = function(data)
-                    if size(self.columnFilters.equipment.type) == 0 then return true end
+                    if size(self.columnFilters.eq.type) == 0 then return true end
                     local typeValue = data.itemSubType or ""
-                    return self.columnFilters.equipment.type[typeValue] ~= nil
-                end
+                    return self.columnFilters.eq.type[typeValue] ~= nil
+                end,
             },
-            mystic_scrolls = {
+            ms = {
                 class = function(data)
-                    if size(self.columnFilters.mystic_scrolls.class) == 0 then return true end
-                    local classValue = data.characterClass or ""
-                    return self.columnFilters.mystic_scrolls.class[classValue] ~= nil
-                end
+                    if size(self.columnFilters.ms.class) == 0 then return true end
+
+                    local classValue = ""
+                    if data.cl and data.cl ~= "cl" then
+                        local classToken = CLASS_ABBREVIATIONS_REVERSE[data.cl]
+                        if classToken then
+                            classValue = _G.LOCALIZED_CLASS_NAMES_MALE[classToken] or
+                                         _G.LOCALIZED_CLASS_NAMES_FEMALE[classToken] or ""
+                        end
+                    end
+
+                    if classValue == "" then
+                        classValue = data.characterClass or ""
+                    end
+
+                    return self.columnFilters.ms.class[classValue] ~= nil
+                end,
             },
+
             zone = function(data)
                 if size(self.columnFilters.zone) == 0 then return true end
                 local zoneValue = GetLocalizedZoneName(data.discovery)
                 return self.columnFilters.zone[zoneValue] ~= nil
             end,
+
             source = function(data)
                 if size(self.columnFilters.source) == 0 then return true end
-                local source = data.discovery.src or "unknown"
-                local sourceValue = SOURCE_NAMES[source] or source
+                local source     = data.discovery.src or "unknown"
+                local sourceValue= SOURCE_NAMES[source] or source
                 return self.columnFilters.source[sourceValue] ~= nil
             end,
+
             quality = function(data)
                 if size(self.columnFilters.quality) == 0 then return true end
                 local _, _, quality = GetItemInfoSafe(data.discovery.il, data.discovery.i)
@@ -1373,69 +1912,135 @@ function Viewer:GetFilteredDiscoveries()
                 local qualityValue = QUALITY_NAMES[quality] or ("Quality " .. tostring(quality))
                 return self.columnFilters.quality[qualityValue] ~= nil
             end,
+
             looted = function(data)
                 if size(self.columnFilters.looted) == 0 then return true end
-                local lootedValue = self:IsLootedByChar(data.guid) and "Looted" or "Not Looted"
+                local lootedValue = Viewer:IsLootedByChar(data.guid) and "Looted" or "Not Looted"
                 return self.columnFilters.looted[lootedValue] ~= nil
             end,
+
             duplicates = function(data)
                 if not self.columnFilters.duplicates then return true end
-                -- Only shows discoveries with a duplicate count greater than one.
                 return Cache.duplicateItems[data.discovery.i] and Cache.duplicateItems[data.discovery.i] > 1
-            end
-        }
+            end,
+        },
     }
 
-    -- Applies all filters.
-    currentFiltered = filter(values(discoveriesToFilter), function(data)
-        -- Applies main filter.
-        if not filterPredicates.mainFilter(data) then return false end
+    local startFilterTime = time()
 
-        -- Applies search filter.
+    
+    currentFiltered = filter(values(discoveriesToFilter), function(data)
+        
+        if not filterPredicates.mainFilter(data) then return false end
+        
         if not filterPredicates.searchFilter(data) then return false end
 
-        -- Applies tab-specific column filters.
-        if self.currentFilter == "equipment" then
-            if not filterPredicates.columnFilters.equipment.slot(data) then return false end
-            if not filterPredicates.columnFilters.equipment.type(data) then return false end
-        elseif self.currentFilter == "mystic_scrolls" then
-            if not filterPredicates.columnFilters.mystic_scrolls.class(data) then return false end
+        
+        if self.currentFilter == "eq" then
+            if not filterPredicates.columnFilters.eq.slot(data) then return false end
+            if not filterPredicates.columnFilters.eq.type(data) then return false end
+        elseif self.currentFilter == "ms" then
+            if not filterPredicates.columnFilters.ms.class(data) then return false end
         end
 
-        -- Applies global zone filter.
+        
+        if not data.isVendor then
+            if not filterPredicates.columnFilters.source(data)   then return false end
+            if not filterPredicates.columnFilters.quality(data)  then return false end
+            if not filterPredicates.columnFilters.looted(data)   then return false end
+        end
+        
+        
+        
+        
+        if context.activeFilters.class then
+            if context.currentFilter == "eq" then
+                
+                local Constants = L:GetModule("Constants", true)
+                if Constants and Constants.CLASS_PROFICIENCIES then
+                    local subTypeID = data.ist
+                    local typeID = data.it
+                    
+                    if subTypeID and typeID and subTypeID > 0 and typeID > 0 then
+                        local canUse = false
+                        for classFilterName, _ in pairs(context.activeFilters.class) do
+                             
+                             local classToken = nil
+                             if _G.LOCALIZED_CLASS_NAMES_MALE then
+                                 for token, locName in pairs(_G.LOCALIZED_CLASS_NAMES_MALE) do
+                                     if locName == classFilterName then classToken = token; break end
+                                 end
+                             end
+                             if not classToken and _G.LOCALIZED_CLASS_NAMES_FEMALE then
+                                 for token, locName in pairs(_G.LOCALIZED_CLASS_NAMES_FEMALE) do
+                                     if locName == classFilterName then classToken = token; break end
+                                 end
+                             end
+                             if not classToken then classToken = string.upper(classFilterName) end
+                             
+                             local profs = Constants.CLASS_PROFICIENCIES[classToken]
+                             if profs then
+                                 local list = nil
+                                 if typeID == Constants.ITEM_TYPE_TO_ID["Armor"] then list = profs.armor
+                                 elseif typeID == Constants.ITEM_TYPE_TO_ID["Weapon"] then list = profs.weapons end
+                                 
+                                 if list then
+                                     for _, allowedID in ipairs(list) do
+                                         if subTypeID == allowedID then canUse = true; break end
+                                     end
+                                 else
+                                     canUse = true 
+                                 end
+                             end
+                             if canUse then break end
+                        end
+                        if not canUse then return false end
+                    else
+                        
+                        return false
+                    end
+                end
+            end
+            
+            
+            
+            
+            
+            
+            
+        end
+
+        
         if not filterPredicates.columnFilters.zone(data) then return false end
 
-        -- Applies global source filter.
-        if not filterPredicates.columnFilters.source(data) then return false end
+        
+        if Viewer.lootedFilterState ~= nil then
+            local isLooted = Viewer:IsLootedByChar(data.guid)
+            if Viewer.lootedFilterState == true and not isLooted then return false end
+            if Viewer.lootedFilterState == false and isLooted then return false end
+        end
 
-        -- Applies global quality filter.
-        if not filterPredicates.columnFilters.quality(data) then return false end
-
-        -- Applies global looted filter.
-        if not filterPredicates.columnFilters.looted(data) then return false end
-
-        -- Applies duplicates filter.
+        
         if not filterPredicates.columnFilters.duplicates(data) then return false end
 
         return true
     end)
 
-    -- Sorts filtered discoveries.
+    local filteredCount = #currentFiltered
+
+    
     _tsort(currentFiltered, function(a, b)
         if not a or not b then return false end
         if not a.discovery or not b.discovery then return false end
 
         local a_val, b_val
 
-        if self.sortColumn == "name" then
-            a_val = a.itemName or ""
-            b_val = b.itemName or ""
+        if self.sortColumn == "name" or self.sortColumn == "vendorName" then
+            a_val = a.isVendor and a.vendorName or a.itemName or ""
+            b_val = b.isVendor and b.vendorName or b.itemName or ""
         elseif self.sortColumn == "zone" then
             a_val = GetLocalizedZoneName(a.discovery)
             b_val = GetLocalizedZoneName(b.discovery)
-        elseif self.sortColumn == "date" then
-            a_val = tonumber(a.discovery.t0) or 0
-            b_val = tonumber(b.discovery.t0) or 0
         elseif self.sortColumn == "slot" then
             a_val = a.equipLoc and _G[a.equipLoc] or ""
             b_val = b.equipLoc and _G[b.equipLoc] or ""
@@ -1452,7 +2057,6 @@ function Viewer:GetFilteredDiscoveries()
             a_val = a.minLevel or 0
             b_val = b.minLevel or 0
         else
-            -- Defaults to sorting by GUID if sortColumn is unrecognized, to maintain a stable order.
             a_val = a.guid or ""
             b_val = b.guid or ""
         end
@@ -1464,14 +2068,13 @@ function Viewer:GetFilteredDiscoveries()
         end
     end)
 
-    -- Caches results and updates filter state.
+    
     Cache.filteredResults = currentFiltered
     Cache.lastFilterState = filterState
 
     return Cache.filteredResults
 end
 
--- Helper function to create filter state hash for cache validation.
 function Viewer:GetFilterStateHash()
     local hashParts = {
         self.currentFilter,
@@ -1480,7 +2083,7 @@ function Viewer:GetFilterStateHash()
         tostring(self.sortAscending)
     }
 
-    -- Adds column filters to hash.
+    
     local filterEntries = {}
     for filterType, filters in pairs(self.columnFilters) do
         if type(filters) == "table" then
@@ -1492,12 +2095,17 @@ function Viewer:GetFilterStateHash()
                 end
             end
         elseif filterType == "duplicates" and filters then
-            -- Handles the duplicates filter as a special case.
+            
             _tinsert(filterEntries, "duplicates:true")
         end
     end
+    
+    
+    if self.lootedFilterState ~= nil then
+        _tinsert(filterEntries, "looted:" .. tostring(self.lootedFilterState))
+    end
 
-    -- Combines all hash parts.
+    
     local hash = _tconcat(hashParts, "|")
     if size(filterEntries) > 0 then
         hash = concatStrings(hash, "|", _tconcat(filterEntries, "|"))
@@ -1510,14 +2118,12 @@ function Viewer:GetPaginatedDiscoveries()
     local allDiscoveries = self:GetFilteredDiscoveries()
     self.totalItems = #allDiscoveries
 
-
-
-    -- Calculates pagination.
+    
     local startIndex = (self.currentPage - 1) * self.itemsPerPage + 1
     local endIndex = math.min(startIndex + self.itemsPerPage - 1, self.totalItems)
 
     local pageDiscoveries = {}
-    -- Pre-allocate array size for efficiency
+    
     pageDiscoveries[math.min(self.itemsPerPage, self.totalItems)] = nil
 
     for i = startIndex, endIndex do
@@ -1533,36 +2139,29 @@ function Viewer:GetTotalPages()
     return math.ceil(self.totalItems / self.itemsPerPage)
 end
 
--- Helper function to temporarily remove window from UISpecialFrames
-local function removeFromSpecialFrames(windowName)
-    for i = #UISpecialFrames, 1, -1 do
-        if UISpecialFrames[i] == windowName then
-            _tremove(UISpecialFrames, i)
-            return true
-        end
+local function GetColorForDiscovery(discovery, itemID)
+    
+    local _, _, q = GetItemInfoSafe(discovery.il, itemID)
+    
+    
+    if not q and discovery.q then
+        q = tonumber(discovery.q)
     end
-    return false
+    
+    
+    q = q or 1 
+    
+    return GetQualityColor(q)
 end
 
--- Helper function to add window back to UISpecialFrames
-local function addToSpecialFrames(windowName)
-    -- Check if already in the list
-    for i = 1, #UISpecialFrames do
-        if UISpecialFrames[i] == windowName then
-            return false -- Already in list
-        end
-    end
-    _tinsert(UISpecialFrames, windowName)
-    return true
-end
-
--- UI Creation functions
 function Viewer:CreateWindow()
     if self.window then return end
+    
+    local rowFont = CreateFont(ROW_FONT_NAME)
+    local baseFont, baseSize, baseFlags = GameFontHighlightSmall:GetFont()
+    rowFont:SetFont(baseFont, ROW_FONT_SIZE, baseFlags)
 
-
-
-    -- Main window
+    
     local window = CreateFrame("Frame", "LootCollectorViewerWindow", UIParent)
     window:SetSize(WINDOW_WIDTH, WINDOW_HEIGHT)
     window:SetPoint("CENTER")
@@ -1574,10 +2173,10 @@ function Viewer:CreateWindow()
     window:SetScript("OnDragStart", window.StartMoving)
     window:SetScript("OnDragStop", window.StopMovingOrSizing)
 
-    -- Creates a hidden button for ESC handling
+    
     local hiddenCloseBtn = CreateFrame("Button", "LootCollectorViewerHiddenClose", window)
     hiddenCloseBtn:SetScript("OnClick", function()
-        -- Closes the context menu or dropdown first if they're open.
+        
         if Viewer.contextMenu then
             Viewer.contextMenu:Hide()
             Viewer.contextMenu = nil
@@ -1587,24 +2186,24 @@ function Viewer:CreateWindow()
             Viewer.filterDropdown = nil
             return
         else
-            -- Closes the main window.
+            
             Viewer.allowManualClose = true
             window:Hide()
         end
     end)
     hiddenCloseBtn:Hide()
 
-    -- Stores reference to close button for access from other parts of the window.
+    
     window.closeBtn = hiddenCloseBtn
 
-    -- Show/hide handlers for ESC key handling
+    
     window:SetScript("OnShow", function(self)
-        -- Adds the frame to UISpecialFrames so ESC key works
+        
         _tinsert(UISpecialFrames, self:GetName())
     end)
 
     window:SetScript("OnHide", function(self)
-        -- Prevent closing during map operations unless manually closed
+        
         if Viewer.inMapOperation and not Viewer.allowManualClose then
             if Viewer.window and not Viewer.window:IsShown() then
                 Viewer.window:Show()
@@ -1612,7 +2211,7 @@ function Viewer:CreateWindow()
             return
         end
 
-        -- Check if this is an unwanted close during map operation
+        
         if Viewer.restoreToSpecialFrames and Viewer.windowNameToRestore and not Viewer.allowManualClose then
             createTimer(0.01, function()
                 if Viewer.window and not Viewer.window:IsShown() then
@@ -1622,7 +2221,7 @@ function Viewer:CreateWindow()
             return
         end
 
-        -- Normal close - remove from UISpecialFrames when hidden
+        
         for i = #UISpecialFrames, 1, -1 do
             if UISpecialFrames[i] == self:GetName() then
                 _tremove(UISpecialFrames, i)
@@ -1630,23 +2229,23 @@ function Viewer:CreateWindow()
             end
         end
 
-        -- Clear the manual close flag after successful close
+        
         Viewer.allowManualClose = false
     end)
 
-    -- Override the window's Hide method to prevent unwanted closes
+    
     local originalHide = window.Hide
     window.Hide = function(self)
         if Viewer.inMapOperation and not Viewer.allowManualClose then
-            return -- Don't actually hide during map operations unless manually closed
+            return 
         end
         originalHide(self)
     end
 
-    -- Hide the window initially (this will work since inMapOperation is not set yet)
+    
     originalHide(window)
 
-    -- Sets the background.
+    
     window:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
@@ -1657,45 +2256,112 @@ function Viewer:CreateWindow()
     })
     window:SetBackdropColor(0.1, 0.1, 0.1, 0.95)
 
-    -- Sets the title.
+    
     local title = window:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -16)
     title:SetText("LootCollector Discoveries")
 
-    -- Sets the close button
+    
     local closeBtn = CreateFrame("Button", nil, window, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", -5, -5)
     closeBtn:SetScript("OnClick", function()
         Viewer.allowManualClose = true
         window:Hide()
     end)
+    
+     
+    self.SetSelectedRow = function(self, row)
+        if self.selectedRow and self.selectedRow.highlight then
+            self.selectedRow.highlight:Hide()
+        end
+        if row and row.highlight then
+            row.highlight:Show()
+            self.selectedRow = row
+        else
+            self.selectedRow = nil
+        end
+    end
 
-    -- Sets up filter buttons.
+    
     local equipmentBtn = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
     equipmentBtn:SetSize(BUTTON_WIDTH, BUTTON_HEIGHT)
     equipmentBtn:SetPoint("TOPLEFT", 20, -50)
-    equipmentBtn:SetText("Equipment")
+    equipmentBtn:SetText("EQ")
     equipmentBtn:SetScript("OnClick", function()
-        self.currentFilter = "equipment"
-        self.currentPage = 1
-        self:UpdateFilterButtons()
-        self:UpdateSortHeaders()
-        self:RefreshData()
-    end)
+    self.currentFilter = "eq"
+    self.currentPage   = 1
+    self:SetSelectedRow(nil)
+
+    
+    if self.vendorInventoryFrame then
+        self.vendorInventoryFrame:Hide()
+        self.selectedVendorGuid = nil
+    end
+
+    self:UpdateFilterButtons()
+    self:UpdateSortHeaders()
+    self:RefreshData()
+	end)
 
     local mysticBtn = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
     mysticBtn:SetSize(BUTTON_WIDTH, BUTTON_HEIGHT)
     mysticBtn:SetPoint("LEFT", equipmentBtn, "RIGHT", 10, 0)
-    mysticBtn:SetText("Mystic Scrolls")
+    mysticBtn:SetText("MS")
     mysticBtn:SetScript("OnClick", function()
-        self.currentFilter = "mystic_scrolls"
-        self.currentPage = 1
-        self:UpdateFilterButtons()
-        self:UpdateSortHeaders()
-        self:RefreshData()
-    end)
+    self.currentFilter = "ms"
+    self.currentPage   = 1
+    self:SetSelectedRow(nil)
 
-    -- Sets up the search box.
+    if self.vendorInventoryFrame then
+        self.vendorInventoryFrame:Hide()
+        self.selectedVendorGuid = nil
+    end
+
+    self:UpdateFilterButtons()
+    self:UpdateSortHeaders()
+    self:RefreshData()
+	end)
+
+    
+    local bmvBtn = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
+    bmvBtn:SetSize(BUTTON_WIDTH, BUTTON_HEIGHT)
+    bmvBtn:SetPoint("LEFT", mysticBtn, "RIGHT", 10, 0)
+    bmvBtn:SetText("BMv")
+    bmvBtn:SetScript("OnClick", function()
+    self.currentFilter = "bmv"
+    self.currentPage   = 1
+    self:SetSelectedRow(nil)
+
+    if self.vendorInventoryFrame then
+        self.vendorInventoryFrame:Hide()
+        self.selectedVendorGuid = nil
+    end
+
+    self:UpdateFilterButtons()
+    self:UpdateSortHeaders()
+    self:RefreshData()
+	end)
+
+    local msvBtn = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
+    msvBtn:SetSize(BUTTON_WIDTH, BUTTON_HEIGHT)
+    msvBtn:SetPoint("LEFT", bmvBtn, "RIGHT", 10, 0)
+    msvBtn:SetText("MSv")
+    msvBtn:SetScript("OnClick", function()
+    self.currentFilter = "msv"
+    self.currentPage   = 1
+    self:SetSelectedRow(nil)
+
+    if self.vendorInventoryFrame then
+        self.vendorInventoryFrame:Hide()
+        self.selectedVendorGuid = nil
+    end
+
+    self:UpdateFilterButtons()
+    self:UpdateSortHeaders()
+    self:RefreshData()
+	end)
+
+    
     local searchLabel = window:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     searchLabel:SetPoint("TOPLEFT", equipmentBtn, "BOTTOMLEFT", 0, -10)
     searchLabel:SetText("Search:")
@@ -1703,9 +2369,9 @@ function Viewer:CreateWindow()
     local searchBox = CreateFrame("EditBox", nil, window, "InputBoxTemplate")
     searchBox:SetSize(200, 20)
     searchBox:SetPoint("LEFT", searchLabel, "RIGHT", 5, 0)
-    searchBox:SetAutoFocus(false) -- Prevents auto-focus to avoid keyboard input conflicts.
+    searchBox:SetAutoFocus(false)
 
-    -- Creates a clear button inside the search box.
+    
     local clearBtn = CreateFrame("Button", nil, searchBox)
     clearBtn:SetSize(24, 24)
     clearBtn:SetPoint("RIGHT", searchBox, "RIGHT", -1, 0)
@@ -1721,9 +2387,9 @@ function Viewer:CreateWindow()
         Viewer:UpdateClearAllButton()
         clearBtn:Hide()
     end)
-    clearBtn:Hide() -- Hidden by default.
+    clearBtn:Hide() 
+        
 
-    -- Initializes auto-completion functionality.
     local autocompleteDropdown = nil
     local autocompleteSuggestions = {}
     local selectedSuggestionIndex = 0
@@ -1733,14 +2399,14 @@ function Viewer:CreateWindow()
             return autocompleteDropdown
         end
 
-        -- Creates the dropdown frame for auto-completion.
+        
         autocompleteDropdown = CreateFrame("Frame", "LootCollectorSearchAutocomplete", Viewer.window)
         autocompleteDropdown:SetSize(200, 20)
         autocompleteDropdown:SetFrameStrata("TOOLTIP")
         autocompleteDropdown:SetFrameLevel(FRAME_LEVEL)
         autocompleteDropdown:Hide()
 
-        -- Sets the background for the auto-complete dropdown.
+        
         autocompleteDropdown:SetBackdrop({
             bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
             edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -1751,7 +2417,7 @@ function Viewer:CreateWindow()
         })
         autocompleteDropdown:SetBackdropColor(0.1, 0.1, 0.1, 0.95)
 
-        -- Creates a content frame directly within the dropdown for simplicity.
+        
         local content = CreateFrame("Frame", nil, autocompleteDropdown)
         content:SetPoint("TOPLEFT", 5, -5)
         content:SetPoint("BOTTOMRIGHT", -5, 5)
@@ -1774,14 +2440,14 @@ function Viewer:CreateWindow()
         if not text or text == "" then return {} end
 
         local textLower = _strlower(text)
-        -- Pre-allocate candidates array for efficiency
+        
         local candidates = {}
-        candidates[math.min(#Cache.discoveries, 100)] = nil -- Limit to 100 candidates max
+        candidates[math.min(#Cache.discoveries, 100)] = nil 
         local seen = {}
 
         if Cache.discoveriesBuilt then
             for _, data in ipairs(Cache.discoveries) do
-                -- Adds item names.
+                
                 if data.itemName then
                     local nameLower = _strlower(data.itemName)
                     if string.sub(nameLower, 1, string.len(textLower)) == textLower then
@@ -1792,7 +2458,7 @@ function Viewer:CreateWindow()
                     end
                 end
 
-                -- Adds zone names.
+                
                 local zoneName = GetLocalizedZoneName(data.discovery)
                 if zoneName then
                     local zoneLower = _strlower(zoneName)
@@ -1806,10 +2472,10 @@ function Viewer:CreateWindow()
             end
         end
 
-        -- Sorts candidates alphabetically.
+        
         _tsort(candidates)
 
-        -- Limits suggestions to 10.
+        
         local limitedCandidates = {}
         for i = 1, math.min(10, #candidates) do
             _tinsert(limitedCandidates, candidates[i])
@@ -1844,17 +2510,17 @@ function Viewer:CreateWindow()
         local dropdown = createAutocompleteDropdown()
         local content = dropdown.content
 
-        -- Clears existing buttons.
+        
         for _, button in ipairs(dropdown.buttons) do
             button:Hide()
         end
         dropdown.buttons = {}
-        -- Pre-allocate buttons array for efficiency
-        dropdown.buttons[math.min(#candidates, 20)] = nil -- Limit to 20 buttons max
+        
+        dropdown.buttons[math.min(#candidates, 20)] = nil 
 
-        -- Creates suggestion buttons.
+        
         local buttonHeight = 16
-        local maxHeight = 160 -- Maximum 10 suggestions.
+        local maxHeight = 160 
         local totalHeight = math.min(#candidates * buttonHeight, maxHeight)
 
         dropdown:SetSize(200, totalHeight + 10)
@@ -1865,20 +2531,20 @@ function Viewer:CreateWindow()
             button:SetPoint("TOPLEFT", 5, -(i - 1) * buttonHeight)
             button:SetFrameLevel(FRAME_LEVEL)
 
-            -- Sets button text.
+            
             local text = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             text:SetPoint("LEFT", 5, 0)
             text:SetText(candidate)
             text:SetJustifyH("LEFT")
-            text:SetTextColor(1, 1, 1) -- Ensures text is visible.
+            text:SetTextColor(1, 1, 1) 
 
-            -- Sets button background.
+            
             button:SetNormalTexture("Interface\\Buttons\\WHITE8X8")
             button:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
             button:GetNormalTexture():SetVertexColor(0.1, 0.1, 0.1, 0.8)
             button:GetHighlightTexture():SetVertexColor(0.3, 0.3, 0.3, 0.8)
 
-            -- Handles button click.
+            
             button:SetScript("OnClick", function()
                 searchBox:SetText(candidate)
                 searchBox:ClearFocus()
@@ -1898,7 +2564,7 @@ function Viewer:CreateWindow()
             _tinsert(dropdown.buttons, button)
         end
 
-        -- Positions dropdown below search box.
+        
         dropdown:ClearAllPoints()
         dropdown:SetPoint("TOPLEFT", searchBox, "BOTTOMLEFT", 0, -2)
         dropdown:Show()
@@ -1942,13 +2608,13 @@ function Viewer:CreateWindow()
         Viewer.searchTerm = self:GetText() or ""
         Viewer.currentPage = 1
         Viewer:RefreshData()
-        -- Updates Clear All button visibility.
+        
         Viewer:UpdateClearAllButton()
 
-        -- Shows/hides clear button based on text content.
+        
         if Viewer.searchTerm and Viewer.searchTerm ~= "" then
             clearBtn:Show()
-            -- Shows auto-complete suggestions.
+            
             showAutocompleteSuggestions(Viewer.searchTerm)
         else
             clearBtn:Hide()
@@ -1977,7 +2643,7 @@ function Viewer:CreateWindow()
     end)
     searchBox:SetScript("OnTabPressed", function(self)
         if autocompleteDropdown and autocompleteDropdown:IsShown() then
-            -- Always applies the first suggestion immediately on Tab press.
+            
             if #autocompleteSuggestions > 0 then
                 local suggestion = autocompleteSuggestions[1]
                 searchBox:SetText(suggestion)
@@ -2005,7 +2671,7 @@ function Viewer:CreateWindow()
                 hideAutocompleteDropdown()
                 return true
             elseif key == "TAB" then
-                -- Always applies the first suggestion immediately on Tab press.
+                
                 if #autocompleteSuggestions > 0 then
                     local suggestion = autocompleteSuggestions[1]
                     searchBox:SetText(suggestion)
@@ -2021,7 +2687,7 @@ function Viewer:CreateWindow()
         end
     end)
     searchBox:SetScript("OnEditFocusLost", function(self)
-        -- Hides dropdown when search box loses focus.
+        
         createTimer(0.1, function()
             if not searchBox:HasFocus() then
                 hideAutocompleteDropdown()
@@ -2029,14 +2695,15 @@ function Viewer:CreateWindow()
         end)
     end)
 
-    -- Group frame for additional filters, positioned to the right of the Mystic Scrolls button.
+    
+    
     local additionalFiltersFrame = CreateFrame("Frame", nil, window)
-    additionalFiltersFrame:SetSize(430, 30)
+    additionalFiltersFrame:SetSize(556, 30) 
     additionalFiltersFrame:SetFrameStrata(FRAME_STRATA)
     additionalFiltersFrame:SetFrameLevel(FRAME_LEVEL)
-    additionalFiltersFrame:SetPoint("TOPLEFT", mysticBtn, "TOPRIGHT", 20, 0)
+    additionalFiltersFrame:SetPoint("LEFT", msvBtn, "RIGHT", 20, 0)
 
-    -- Background for the additional filters group.
+    
     additionalFiltersFrame:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -2047,82 +2714,121 @@ function Viewer:CreateWindow()
     })
     additionalFiltersFrame:SetBackdropColor(0.05, 0.05, 0.05, 0.7)
 
-    -- Label for filters.
+    
     local filtersLabel = additionalFiltersFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     filtersLabel:SetPoint("LEFT", 10, 0)
     filtersLabel:SetText("Filters:")
 
-    -- Button for the Source filter.
+    
     local sourceFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
-    sourceFilterBtn:SetSize(80, BUTTON_HEIGHT)
+    sourceFilterBtn:SetSize(70, BUTTON_HEIGHT)
     sourceFilterBtn:SetPoint("LEFT", filtersLabel, "RIGHT", 10, 0)
     sourceFilterBtn:SetText("Source")
     sourceFilterBtn:SetFrameStrata(FRAME_STRATA)
     sourceFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
     sourceFilterBtn:SetScript("OnClick", function(self, button)
-        -- Activates filtering for the 'source' column.
         local values = GetUniqueValues("source")
         ShowColumnFilterDropdown("source", self, values)
     end)
     sourceFilterBtn:RegisterForClicks("LeftButtonUp")
-
-    -- Button for the Quality filter.
+    
+    
     local qualityFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
-    qualityFilterBtn:SetSize(80, BUTTON_HEIGHT)
-    qualityFilterBtn:SetPoint("LEFT", sourceFilterBtn, "RIGHT", 10, 0)
+    qualityFilterBtn:SetSize(70, BUTTON_HEIGHT)
+    qualityFilterBtn:SetPoint("LEFT", sourceFilterBtn, "RIGHT", 5, 0)
     qualityFilterBtn:SetText("Quality")
     qualityFilterBtn:SetFrameStrata(FRAME_STRATA)
     qualityFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
     qualityFilterBtn:SetScript("OnClick", function(self, button)
-        -- Activates filtering for the 'quality' column.
         local values = GetUniqueValues("quality")
         ShowColumnFilterDropdown("quality", self, values)
     end)
     qualityFilterBtn:RegisterForClicks("LeftButtonUp")
+    
+    
+    local slotsFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
+    slotsFilterBtn:SetSize(60, BUTTON_HEIGHT)
+    slotsFilterBtn:SetPoint("LEFT", qualityFilterBtn, "RIGHT", 5, 0)
+    slotsFilterBtn:SetText("Slots")
+    slotsFilterBtn:SetFrameStrata(FRAME_STRATA)
+    slotsFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
+    slotsFilterBtn:SetScript("OnClick", function(self, button)
+        local values = GetUniqueValues("slot")
+        ShowColumnFilterDropdown("slot", self, values)
+    end)
+    slotsFilterBtn:RegisterForClicks("LeftButtonUp")
+    
+    
+    local usableByFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
+    usableByFilterBtn:SetSize(80, BUTTON_HEIGHT)
+    usableByFilterBtn:SetPoint("LEFT", slotsFilterBtn, "RIGHT", 5, 0)
+    usableByFilterBtn:SetText("Usable By")
+    usableByFilterBtn:SetFrameStrata(FRAME_STRATA)
+    usableByFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
+    usableByFilterBtn:SetScript("OnClick", function(self, button)
+        local values = GetUniqueValues("class")
+        ShowColumnFilterDropdown("class", self, values)
+    end)
+    usableByFilterBtn:RegisterForClicks("LeftButtonUp")
 
-    -- Button for the Looted Status filter.
+    
     local lootedFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
-    lootedFilterBtn:SetSize(80, BUTTON_HEIGHT)
-    lootedFilterBtn:SetPoint("LEFT", qualityFilterBtn, "RIGHT", 10, 0)
-    lootedFilterBtn:SetText("Looted")
+    lootedFilterBtn:SetSize(90, BUTTON_HEIGHT)
+    lootedFilterBtn:SetPoint("LEFT", usableByFilterBtn, "RIGHT", 5, 0)
+    lootedFilterBtn:SetText("Looted: All")
     lootedFilterBtn:SetFrameStrata(FRAME_STRATA)
     lootedFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
     lootedFilterBtn:SetScript("OnClick", function(self, button)
-        -- Activates filtering for the 'looted' column.
-        local values = GetUniqueValues("looted")
-        ShowColumnFilterDropdown("looted", self, values)
+        
+        if Viewer.lootedFilterState == nil then
+            Viewer.lootedFilterState = true
+        elseif Viewer.lootedFilterState == true then
+            Viewer.lootedFilterState = false
+        else
+            Viewer.lootedFilterState = nil
+        end
+        
+        Viewer.currentPage = 1
+        Cache.filteredResults = {}
+        Cache.lastFilterState = nil
+        Viewer:RefreshData()
+        Viewer:UpdateFilterButtonStates()
     end)
     lootedFilterBtn:RegisterForClicks("LeftButtonUp")
 
-    -- Button for the Duplicates filter.
+    
     local duplicatesFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
     duplicatesFilterBtn:SetSize(90, BUTTON_HEIGHT)
-    duplicatesFilterBtn:SetPoint("LEFT", lootedFilterBtn, "RIGHT", 10, 0)
+    duplicatesFilterBtn:SetPoint("LEFT", lootedFilterBtn, "RIGHT", 5, 0)
     duplicatesFilterBtn:SetText("Duplicates")
     duplicatesFilterBtn:SetFrameStrata(FRAME_STRATA)
     duplicatesFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
     duplicatesFilterBtn:SetScript("OnClick", function(self, button)
         Viewer.columnFilters.duplicates = not Viewer.columnFilters.duplicates
         Viewer.currentPage = 1
-        -- Invalidates filtered cache to force refresh.
         Cache.filteredResults = {}
         Cache.lastFilterState = nil
-        Cache.uniqueValuesValid = false
-        Cache.uniqueValuesContext = {} -- Clears the cascading cache.
         Viewer:RefreshData()
         Viewer:UpdateClearAllButton()
         Viewer:UpdateFilterButtonStates()
     end)
     duplicatesFilterBtn:RegisterForClicks("LeftButtonUp")
+    
+    self.sourceFilterBtn = sourceFilterBtn
+    self.qualityFilterBtn = qualityFilterBtn
+    self.slotsFilterBtn = slotsFilterBtn
+    self.usableByFilterBtn = usableByFilterBtn
+    self.lootedFilterBtn = lootedFilterBtn
+    self.duplicatesFilterBtn = duplicatesFilterBtn
 
-    -- Frame for table headers.
+    
     local headerFrame = CreateFrame("Frame", nil, window)
     headerFrame:SetSize(WINDOW_WIDTH - 40, HEADER_HEIGHT)
     headerFrame:SetPoint("TOPLEFT", searchLabel, "BOTTOMLEFT", 0, -15)
     headerFrame:SetFrameLevel(FRAME_LEVEL)
     headerFrame:SetFrameStrata(FRAME_STRATA)
 
-    -- Background for table headers.
+    
     headerFrame:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -2133,7 +2839,7 @@ function Viewer:CreateWindow()
     })
     headerFrame:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
 
-    -- Name column header.
+    
     local nameHeader = CreateFrame("Button", nil, headerFrame)
     nameHeader:SetSize(GRID_LAYOUT.NAME_WIDTH, HEADER_HEIGHT)
     nameHeader:SetPoint("LEFT", 5, 0)
@@ -2152,7 +2858,7 @@ function Viewer:CreateWindow()
         Viewer:RefreshData()
     end)
 
-    -- Level column header.
+    
     local levelHeader = CreateFrame("Button", nil, headerFrame)
     levelHeader:SetSize(GRID_LAYOUT.LEVEL_WIDTH, HEADER_HEIGHT)
     levelHeader:SetPoint("LEFT", nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
@@ -2171,7 +2877,7 @@ function Viewer:CreateWindow()
         Viewer:RefreshData()
     end)
 
-    -- Slot column header (visible for Equipment only).
+    
     local slotHeader = CreateFrame("Button", nil, headerFrame)
     slotHeader:SetSize(GRID_LAYOUT.SLOT_WIDTH, HEADER_HEIGHT)
     slotHeader:SetPoint("LEFT", levelHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
@@ -2180,11 +2886,11 @@ function Viewer:CreateWindow()
     slotHeader:SetHighlightFontObject("GameFontHighlightSmall")
     slotHeader:SetScript("OnClick", function(self, button)
         if button == "RightButton" then
-            -- Right-click for filtering.
+            
             local values = GetUniqueValues("slot")
             ShowColumnFilterDropdown("slot", self, values)
         else
-            -- Left-click for sorting.
+            
             if Viewer.sortColumn == "slot" then
                 Viewer.sortAscending = not Viewer.sortAscending
             else
@@ -2197,9 +2903,9 @@ function Viewer:CreateWindow()
         end
     end)
     slotHeader:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    slotHeader:Hide() -- Hidden by default.
+    slotHeader:Hide() 
 
-    -- Type column header (visible for Equipment only).
+    
     local typeHeader = CreateFrame("Button", nil, headerFrame)
     typeHeader:SetSize(GRID_LAYOUT.TYPE_WIDTH, HEADER_HEIGHT)
     typeHeader:SetPoint("LEFT", slotHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
@@ -2208,11 +2914,11 @@ function Viewer:CreateWindow()
     typeHeader:SetHighlightFontObject("GameFontHighlightSmall")
     typeHeader:SetScript("OnClick", function(self, button)
         if button == "RightButton" then
-            -- Right-click for filtering.
+            
             local values = GetUniqueValues("type")
             ShowColumnFilterDropdown("type", self, values)
         else
-            -- Left-click for sorting.
+            
             if Viewer.sortColumn == "type" then
                 Viewer.sortAscending = not Viewer.sortAscending
             else
@@ -2225,22 +2931,22 @@ function Viewer:CreateWindow()
         end
     end)
     typeHeader:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    typeHeader:Hide() -- Hidden by default.
+    typeHeader:Hide() 
 
-    -- Class column header (visible for Mystic Scrolls only).
+    
     local classHeader = CreateFrame("Button", nil, headerFrame)
     classHeader:SetSize(GRID_LAYOUT.CLASS_WIDTH, HEADER_HEIGHT)
-    classHeader:SetPoint("LEFT", nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+    classHeader:SetPoint("LEFT", levelHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
     classHeader:SetText("Class")
     classHeader:SetNormalFontObject("GameFontNormalSmall")
     classHeader:SetHighlightFontObject("GameFontHighlightSmall")
     classHeader:SetScript("OnClick", function(self, button)
         if button == "RightButton" then
-            -- Right-click for filtering.
+            
             local values = GetUniqueValues("class")
             ShowColumnFilterDropdown("class", self, values)
         else
-            -- Left-click for sorting.
+            
             if Viewer.sortColumn == "class" then
                 Viewer.sortAscending = not Viewer.sortAscending
             else
@@ -2253,22 +2959,22 @@ function Viewer:CreateWindow()
         end
     end)
     classHeader:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    classHeader:Hide() -- Hidden by default.
+    classHeader:Hide() 
 
-    -- Zone column header.
+    
     local zoneHeader = CreateFrame("Button", nil, headerFrame)
     zoneHeader:SetSize(GRID_LAYOUT.ZONE_WIDTH, HEADER_HEIGHT)
-    zoneHeader:SetPoint("LEFT", typeHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+    zoneHeader:SetPoint("LEFT", classHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
     zoneHeader:SetText("Zone")
     zoneHeader:SetNormalFontObject("GameFontNormalSmall")
     zoneHeader:SetHighlightFontObject("GameFontHighlightSmall")
     zoneHeader:SetScript("OnClick", function(self, button)
         if button == "RightButton" then
-            -- Right-click for filtering.
+            
             local values = GetUniqueValues("zone")
             ShowColumnFilterDropdown("zone", self, values)
         else
-            -- Left-click for sorting.
+            
             if Viewer.sortColumn == "zone" then
                 Viewer.sortAscending = not Viewer.sortAscending
             else
@@ -2282,29 +2988,10 @@ function Viewer:CreateWindow()
     end)
     zoneHeader:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
-    -- Date column header.
-    local dateHeader = CreateFrame("Button", nil, headerFrame)
-    dateHeader:SetSize(GRID_LAYOUT.DATE_WIDTH, HEADER_HEIGHT)
-    dateHeader:SetPoint("LEFT", zoneHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-    dateHeader:SetText("Discovery Date")
-    dateHeader:SetNormalFontObject("GameFontNormalSmall")
-    dateHeader:SetHighlightFontObject("GameFontHighlightSmall")
-    dateHeader:SetScript("OnClick", function()
-        if Viewer.sortColumn == "date" then
-            Viewer.sortAscending = not Viewer.sortAscending
-        else
-            Viewer.sortColumn = "date"
-            Viewer.sortAscending = true
-        end
-        Viewer.currentPage = 1
-        Viewer:UpdateSortHeaders()
-        Viewer:RefreshData()
-    end)
-
-    -- "Found By" column header.
+    
     local foundByHeader = CreateFrame("Button", nil, headerFrame)
     foundByHeader:SetSize(GRID_LAYOUT.FOUND_BY_WIDTH, HEADER_HEIGHT)
-    foundByHeader:SetPoint("LEFT", dateHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+    foundByHeader:SetPoint("LEFT", zoneHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
     foundByHeader:SetText("Found By")
     foundByHeader:SetNormalFontObject("GameFontNormalSmall")
     foundByHeader:SetHighlightFontObject("GameFontHighlightSmall")
@@ -2319,101 +3006,135 @@ function Viewer:CreateWindow()
         Viewer:UpdateSortHeaders()
         Viewer:RefreshData()
     end)
+    
+    
+    local vendorNameHeader = CreateFrame("Button", nil, headerFrame)
+    vendorNameHeader:SetSize(GRID_LAYOUT.VENDOR_NAME_WIDTH, HEADER_HEIGHT)
+    vendorNameHeader:SetPoint("LEFT", 5, 0)
+    vendorNameHeader:SetText("Vendor Name")
+    vendorNameHeader:SetNormalFontObject("GameFontNormalSmall")
+    vendorNameHeader:SetHighlightFontObject("GameFontHighlightSmall")
+    vendorNameHeader:SetScript("OnClick", function()
+        if Viewer.sortColumn == "vendorName" then Viewer.sortAscending = not Viewer.sortAscending
+        else Viewer.sortColumn = "vendorName"; Viewer.sortAscending = true end
+        Viewer.currentPage = 1; Viewer:UpdateSortHeaders(); Viewer:RefreshData()
+    end)
 
+    local vendorZoneHeader = CreateFrame("Button", nil, headerFrame)
+    vendorZoneHeader:SetSize(GRID_LAYOUT.VENDOR_ZONE_WIDTH, HEADER_HEIGHT)
+    vendorZoneHeader:SetPoint("LEFT", vendorNameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+    vendorZoneHeader:SetText("Zone")
+    vendorZoneHeader:SetNormalFontObject("GameFontNormalSmall")
+    vendorZoneHeader:SetHighlightFontObject("GameFontHighlightSmall")
+    vendorZoneHeader:SetScript("OnClick", function()
+        if Viewer.sortColumn == "zone" then Viewer.sortAscending = not Viewer.sortAscending
+        else Viewer.sortColumn = "zone"; Viewer.sortAscending = true end
+        Viewer.currentPage = 1; Viewer:UpdateSortHeaders(); Viewer:RefreshData()
+    end)
+    
+    local inventoryHeader = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    inventoryHeader:SetSize(GRID_LAYOUT.VENDOR_INVENTORY_WIDTH, HEADER_HEIGHT)
+    inventoryHeader:SetPoint("LEFT", vendorZoneHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+    inventoryHeader:SetText("Inventory")
+    
 
-    -- Actions label, visible when no filters are active.
     local actionsLabel = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     actionsLabel:SetPoint("RIGHT", -5, 0)
     actionsLabel:SetText("Actions")
 
-    -- Button to clear all filters.
+    
     local clearAllBtn = CreateFrame("Button", nil, headerFrame, "UIPanelButtonTemplate")
     clearAllBtn:SetSize(100, 20)
     clearAllBtn:SetPoint("RIGHT", -5, 0)
     clearAllBtn:SetText("Clear All Filters")
     clearAllBtn:SetScript("OnClick", function()
-        -- Clears all column filters.
+        
         Viewer.columnFilters.zone = {}
-        Viewer.columnFilters.equipment.slot = {}
-        Viewer.columnFilters.equipment.type = {}
-        Viewer.columnFilters.mystic_scrolls.class = {}
+        Viewer.columnFilters.eq.slot = {}
+        Viewer.columnFilters.eq.type = {}
+        Viewer.columnFilters.eq.class = {}
+        Viewer.columnFilters.ms.class = {}
         Viewer.columnFilters.source = {}
         Viewer.columnFilters.quality = {}
         Viewer.columnFilters.looted = {}
-        Viewer.columnFilters.duplicates = false -- Clears duplicates filter.
+        Viewer.columnFilters.duplicates = false 
+        
+        Viewer.lootedFilterState = nil 
 
-        -- Clears the search term.
+        
         Viewer.searchTerm = ""
         searchBox:SetText("")
 
-        -- Resets to the first page.
+        
         Viewer.currentPage = 1
 
-        -- Invalidates all caches to force a refresh.
+        
         Cache.filteredResults = {}
         Cache.lastFilterState = nil
         Cache.uniqueValuesValid = false
         Cache.uniqueValuesContext = {}
 
-        -- Updates the UI.
+        
         Viewer:UpdateSortHeaders()
         Viewer:RefreshData()
 
-        -- Updates button visibility after clearing filters.
+        
         Viewer:UpdateClearAllButton()
-        -- Updates the states of the filter buttons.
+        
         Viewer:UpdateFilterButtonStates()
     end)
 
-    -- Checks if any filters are currently active.
+    
     function Viewer:HasActiveFilters()
-        -- Checks the search term.
-        if self.searchTerm and self.searchTerm ~= "" then
-            return true
-        end
-
-        -- Checks zone filters.
-        if size(self.columnFilters.zone) > 0 then
-            return true
-        end
-
-        -- Checks equipment filters.
-        if size(self.columnFilters.equipment.slot) > 0 or size(self.columnFilters.equipment.type) > 0 then
-            return true
-        end
-
-        -- Checks mystic scroll filters.
-        if size(self.columnFilters.mystic_scrolls.class) > 0 then
-            return true
-        end
-
-        -- Checks source filters.
-        if size(self.columnFilters.source) > 0 then
-            return true
-        end
-
-        -- Checks quality filters.
-        if size(self.columnFilters.quality) > 0 then
-            return true
-        end
-
-        -- Checks looted filters.
-        if size(self.columnFilters.looted) > 0 then
-            return true
-        end
-
-        -- Checks the duplicates filter.
-        if self.columnFilters.duplicates then
-            return true
-        end
-
-        return false
+    
+    if self.searchTerm and self.searchTerm ~= "" then
+        return true
     end
 
-    -- Updates the "Clear All" button's visibility and text.
+    
+    if size(self.columnFilters.zone) > 0 then
+        return true
+    end
+
+    
+    
+    if self.columnFilters.eq and (size(self.columnFilters.eq.slot) > 0 or size(self.columnFilters.eq.type) > 0 or size(self.columnFilters.eq.class) > 0) then
+        return true
+    end
+
+    
+    if self.columnFilters.ms and size(self.columnFilters.ms.class) > 0 then
+        return true
+    end
+    
+
+    
+    if size(self.columnFilters.source) > 0 then
+        return true
+    end
+
+    
+    if size(self.columnFilters.quality) > 0 then
+        return true
+    end
+
+    
+    if self.lootedFilterState ~= nil or size(self.columnFilters.looted) > 0 then
+        return true
+    end
+
+    
+    if self.columnFilters.duplicates then
+        return true
+    end
+
+    return false
+end
+
+    
     function Viewer:UpdateClearAllButton()
         if not self.clearAllBtn or not self.actionsLabel then
-            return -- UI elements not created yet.
+            return 
         end
 
         if self:HasActiveFilters() then
@@ -2421,18 +3142,18 @@ function Viewer:CreateWindow()
             self.clearAllBtn:SetText("Clear All Filters")
         else
             self.clearAllBtn:Hide()
-            -- Shows the Actions label when no filters are active.
+            
             self.actionsLabel:Show()
         end
     end
 
-    -- Updates the visual states of the filter buttons.
+    
     function Viewer:UpdateFilterButtonStates()
         if not self.sourceFilterBtn or not self.qualityFilterBtn or not self.lootedFilterBtn then
-            return -- UI elements not created yet.
+            return 
         end
 
-        -- Helper function to set button text color.
+        
         local function setButtonTextColor(button, r, g, b)
             local fontString = button:GetFontString()
             if fontString then
@@ -2440,57 +3161,89 @@ function Viewer:CreateWindow()
             end
         end
 
-        -- Updates the Source filter button.
+        
         local sourceActive = size(self.columnFilters.source) > 0
         if sourceActive then
-            setButtonTextColor(self.sourceFilterBtn, 1, 0.8, 0.2) -- Orange for active.
+            setButtonTextColor(self.sourceFilterBtn, 1, 0.8, 0.2) 
             self.sourceFilterBtn:SetText("Source [F]")
         else
-            setButtonTextColor(self.sourceFilterBtn, 1, 1, 1) -- White for inactive.
+            setButtonTextColor(self.sourceFilterBtn, 1, 1, 1) 
             self.sourceFilterBtn:SetText("Source")
         end
 
-        -- Updates the Quality filter button.
+        
         local qualityActive = size(self.columnFilters.quality) > 0
         if qualityActive then
-            setButtonTextColor(self.qualityFilterBtn, 1, 0.8, 0.2) -- Orange for active.
+            setButtonTextColor(self.qualityFilterBtn, 1, 0.8, 0.2) 
             self.qualityFilterBtn:SetText("Quality [F]")
         else
-            setButtonTextColor(self.qualityFilterBtn, 1, 1, 1) -- White for inactive.
+            setButtonTextColor(self.qualityFilterBtn, 1, 1, 1) 
             self.qualityFilterBtn:SetText("Quality")
         end
 
-        -- Updates the Looted filter button.
-        local lootedActive = size(self.columnFilters.looted) > 0
-        if lootedActive then
-            setButtonTextColor(self.lootedFilterBtn, 1, 0.8, 0.2) -- Orange for active.
-            self.lootedFilterBtn:SetText("Looted [F]")
+        
+        if self.lootedFilterState == true then
+            setButtonTextColor(self.lootedFilterBtn, 1, 0.8, 0.2) 
+            self.lootedFilterBtn:SetText("Looted: Yes")
+        elseif self.lootedFilterState == false then
+            setButtonTextColor(self.lootedFilterBtn, 1, 0.8, 0.2) 
+            self.lootedFilterBtn:SetText("Looted: No")
         else
-            setButtonTextColor(self.lootedFilterBtn, 1, 1, 1) -- White for inactive.
-            self.lootedFilterBtn:SetText("Looted")
+            setButtonTextColor(self.lootedFilterBtn, 1, 1, 1) 
+            self.lootedFilterBtn:SetText("Looted: All")
+        end
+        
+        
+        if self.slotsFilterBtn then
+             local slotsActive = size(self.columnFilters.eq.slot) > 0
+             if slotsActive then
+                setButtonTextColor(self.slotsFilterBtn, 1, 0.8, 0.2)
+                self.slotsFilterBtn:SetText("Slots [F]")
+             else
+                setButtonTextColor(self.slotsFilterBtn, 1, 1, 1)
+                self.slotsFilterBtn:SetText("Slots")
+             end
+        end
+        
+        
+        if self.usableByFilterBtn then
+             local classActive = false
+             if self.currentFilter == "eq" then
+                 classActive = size(self.columnFilters.eq.class) > 0
+             elseif self.currentFilter == "ms" then
+                 classActive = size(self.columnFilters.ms.class) > 0
+             end
+             
+             if classActive then
+                setButtonTextColor(self.usableByFilterBtn, 1, 0.8, 0.2)
+                self.usableByFilterBtn:SetText("Usable By [F]")
+             else
+                setButtonTextColor(self.usableByFilterBtn, 1, 1, 1)
+                self.usableByFilterBtn:SetText("Usable By")
+             end
         end
 
-        -- Updates the Duplicates filter button.
+        
         if self.duplicatesFilterBtn then
             local duplicatesActive = self.columnFilters.duplicates
             if duplicatesActive then
-                setButtonTextColor(self.duplicatesFilterBtn, 1, 0.8, 0.2) -- Orange for active.
+                setButtonTextColor(self.duplicatesFilterBtn, 1, 0.8, 0.2) 
                 self.duplicatesFilterBtn:SetText("Duplicates [F]")
             else
-                setButtonTextColor(self.duplicatesFilterBtn, 1, 1, 1) -- White for inactive.
+                setButtonTextColor(self.duplicatesFilterBtn, 1, 1, 1) 
                 self.duplicatesFilterBtn:SetText("Duplicates")
             end
         end
     end
 
-    -- Pagination controls for navigating through discovery pages.
+    
     local paginationFrame = CreateFrame("Frame", nil, window)
     paginationFrame:SetSize(WINDOW_WIDTH - 32, 32)
     paginationFrame:SetPoint("BOTTOM", 0, 20)
     paginationFrame:SetFrameStrata(FRAME_STRATA)
     paginationFrame:SetFrameLevel(FRAME_LEVEL)
 
-    -- Adds background to the pagination section for visual separation.
+    
     paginationFrame:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -2501,12 +3254,12 @@ function Viewer:CreateWindow()
     })
     paginationFrame:SetBackdropColor(0.05, 0.05, 0.05, 0.9)
 
-    -- Displays current page information.
+    
     local pageInfo = paginationFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     pageInfo:SetPoint("CENTER", 10, 0)
     pageInfo:SetText("Page 1 of 1")
 
-    -- Button to navigate to the previous page.
+    
     local prevBtn = CreateFrame("Button", nil, paginationFrame, "UIPanelButtonTemplate")
     prevBtn:SetSize(80, BUTTON_HEIGHT)
     prevBtn:SetPoint("LEFT", 5, 0)
@@ -2521,7 +3274,7 @@ function Viewer:CreateWindow()
         end
     end)
 
-    -- Button to navigate to the next page.
+    
     local nextBtn = CreateFrame("Button", nil, paginationFrame, "UIPanelButtonTemplate")
     nextBtn:SetSize(80, BUTTON_HEIGHT)
     nextBtn:SetPoint("RIGHT", -10, 0)
@@ -2537,7 +3290,7 @@ function Viewer:CreateWindow()
         end
     end)
 
-    -- Selector for items per page.
+    
     local itemsLabel = paginationFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     itemsLabel:SetPoint("LEFT", prevBtn, "RIGHT", 20, 0)
     itemsLabel:SetText("Items per page:")
@@ -2551,7 +3304,7 @@ function Viewer:CreateWindow()
     items25Btn:SetScript("OnClick", function()
         local oldItemsPerPage = Viewer.itemsPerPage
         Viewer.itemsPerPage = 25
-        -- Calculates which page to show to maintain the same logical position.
+        
         local currentItemIndex = (Viewer.currentPage - 1) * oldItemsPerPage + 1
         Viewer.currentPage = math.ceil(currentItemIndex / Viewer.itemsPerPage)
         Viewer:UpdateItemsPerPageButtons()
@@ -2568,7 +3321,7 @@ function Viewer:CreateWindow()
     items50Btn:SetScript("OnClick", function()
         local oldItemsPerPage = Viewer.itemsPerPage
         Viewer.itemsPerPage = 50
-        -- Calculates which page to show to maintain the same logical position.
+        
         local currentItemIndex = (Viewer.currentPage - 1) * oldItemsPerPage + 1
         Viewer.currentPage = math.ceil(currentItemIndex / Viewer.itemsPerPage)
         Viewer:UpdateItemsPerPageButtons()
@@ -2585,7 +3338,7 @@ function Viewer:CreateWindow()
     items100Btn:SetScript("OnClick", function()
         local oldItemsPerPage = Viewer.itemsPerPage
         Viewer.itemsPerPage = 100
-        -- Calculates which page to show to maintain the same logical position.
+        
         local currentItemIndex = (Viewer.currentPage - 1) * oldItemsPerPage + 1
         Viewer.currentPage = math.ceil(currentItemIndex / Viewer.itemsPerPage)
         Viewer:UpdateItemsPerPageButtons()
@@ -2593,7 +3346,7 @@ function Viewer:CreateWindow()
         Viewer:RefreshData()
     end)
 
-    -- Scroll frame for table content, necessary when items per page exceed visible rows.
+    
     local scrollFrame = CreateFrame("ScrollFrame", nil, window, "FauxScrollFrameTemplate")
     scrollFrame:SetSize(WINDOW_WIDTH - 40, WINDOW_HEIGHT - 200)
     scrollFrame:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -5)
@@ -2603,11 +3356,13 @@ function Viewer:CreateWindow()
         FauxScrollFrame_OnVerticalScroll(self, offset, ROW_HEIGHT, function() Viewer:UpdateRows() end)
     end)
 
-    -- Stores UI element references.
+    
     self.window = window
     self.scrollFrame = scrollFrame
     self.equipmentBtn = equipmentBtn
     self.mysticBtn = mysticBtn
+    self.bmvBtn = bmvBtn
+    self.msvBtn = msvBtn
     self.searchBox = searchBox
     self.searchClearBtn = clearBtn
     self.additionalFiltersFrame = additionalFiltersFrame
@@ -2615,13 +3370,15 @@ function Viewer:CreateWindow()
     self.qualityFilterBtn = qualityFilterBtn
     self.lootedFilterBtn = lootedFilterBtn
     self.nameHeader = nameHeader
+    self.levelHeader = levelHeader
     self.slotHeader = slotHeader
     self.typeHeader = typeHeader
     self.classHeader = classHeader
-    self.zoneHeader = zoneHeader
-    self.levelHeader = levelHeader
-    self.dateHeader = dateHeader
+    self.zoneHeader = zoneHeader    
     self.foundByHeader = foundByHeader
+    self.vendorNameHeader = vendorNameHeader
+    self.vendorZoneHeader = vendorZoneHeader
+    self.inventoryHeader = inventoryHeader
     self.clearAllBtn = clearAllBtn
     self.actionsLabel = actionsLabel
     self.pageInfo = pageInfo
@@ -2630,17 +3387,35 @@ function Viewer:CreateWindow()
     self.items25Btn = items25Btn
     self.items50Btn = items50Btn
     self.items100Btn = items100Btn
-    self.duplicatesFilterBtn = duplicatesFilterBtn -- Stores reference to the duplicates filter button.
+    self.duplicatesFilterBtn = duplicatesFilterBtn 
+    self.slotsFilterBtn = slotsFilterBtn
+    self.usableByFilterBtn = usableByFilterBtn
+    
+     
+    self.interactiveElements = {
+        equipmentBtn, mysticBtn, bmvBtn, msvBtn,
+        searchBox, sourceFilterBtn, qualityFilterBtn, lootedFilterBtn, duplicatesFilterBtn,
+        nameHeader, levelHeader, slotHeader, typeHeader, classHeader, zoneHeader,  foundByHeader,
+        vendorNameHeader, vendorZoneHeader,
+        clearAllBtn, prevBtn, nextBtn, items25Btn, items50Btn, items100Btn,
+        slotsFilterBtn, usableByFilterBtn
+    }
 
-    -- Creates initial table rows.
+    
     self:CreateRows()
 
-    -- Sets the initial filter.
-    self.currentFilter = "equipment"
+    
+    self.currentFilter = "eq"
     self:UpdateFilterButtons()
     self:UpdateSortHeaders()
     self:UpdateItemsPerPageButtons()
     self:UpdateFilterButtonStates()
+	
+
+    
+    if WorldMapFrame then
+        self.window:SetFrameLevel(WorldMapFrame:GetFrameLevel() -1)
+    end
 end
 
 function Viewer:CreateRows()
@@ -2653,52 +3428,103 @@ function Viewer:CreateRows()
         row:SetFrameLevel(FRAME_LEVEL)
         row:SetFrameStrata(FRAME_STRATA)
 
-        -- Name column, with tooltip support.
+        
+        row.highlight = row:CreateTexture(nil, "OVERLAY")
+        row.highlight:SetAllPoints(true)
+        row.highlight:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+        row.highlight:SetBlendMode("ADD")
+        row.highlight:Hide()
+
+        
+        
+        
         local nameFrame = CreateFrame("Frame", nil, row)
         nameFrame:SetSize(GRID_LAYOUT.NAME_WIDTH, ROW_HEIGHT)
         nameFrame:SetPoint("LEFT", 5, 0)
         nameFrame:EnableMouse(true)
 
-        local nameText = nameFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        local nameText = nameFrame:CreateFontString(nil, "OVERLAY", ROW_FONT_NAME)
         nameText:SetPoint("LEFT", 0, 0)
         nameText:SetSize(GRID_LAYOUT.NAME_WIDTH, ROW_HEIGHT)
         nameText:SetJustifyH("LEFT")
 
-        -- Sets up tooltip functionality.
+        
         nameFrame:SetScript("OnEnter", function(self)
-            if self.discoveryData and self.discoveryData.discovery.il then
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT", 20, 10)
-                GameTooltip:SetHyperlink(self.discoveryData.discovery.il)
-                GameTooltip:Show()
+            if self.discoveryData then
+                local d = self.discoveryData.discovery
+                
+                if d.il then
+                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT", 20, 10)
+                    GameTooltip:SetHyperlink(d.il)
+                    GameTooltip:Show()
+                elseif d.i then
+                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT", 20, 10)
+                    GameTooltip:SetHyperlink("item:" .. d.i)
+                    GameTooltip:Show()
+                end
             end
         end)
 
         nameFrame:SetScript("OnLeave", function(self)
             GameTooltip:Hide()
-        end)
+        end)	  
+	  
 
         nameFrame:SetScript("OnMouseUp", function(self, button)
-            if not self.discoveryData then return end
+            if not self.discoveryData then
+                return
+            end
+
+            local data = self.discoveryData
+            local row  = self:GetParent()
+
+            
+            Viewer:SetSelectedRow(row)
+
+            
+            local isVendorView = (Viewer.currentFilter == "bmv" or Viewer.currentFilter == "msv")
+            if isVendorView and data.isVendor and button == "LeftButton" and not IsShiftKeyDown() and not IsControlKeyDown() then
+                if Viewer.ShowVendorInventoryForDiscovery and data.discovery then
+                    Viewer:ShowVendorInventoryForDiscovery(data.discovery)
+                end
+                return
+            end
+
+            
+            if IsShiftKeyDown() and data then
+                
+                Viewer:ShowOnMap(data)
+                return
+            end
 
             local isCtrlDown = IsControlKeyDown()
 
             if button == "LeftButton" then
                 if isCtrlDown then
-                    -- Ctrl + Left Click: Links item in chat.
+                    
                     self:LinkItemToChat()
                 end
             elseif button == "RightButton" then
                 if isCtrlDown then
-                    -- Ctrl +  Right Click: Pastes zone name and coordinates into chat.
-                    self:PasteLocationToChat()
+                    
+                    local zoneName = GetLocalizedZoneName(data.discovery)
+                    local coords = ""
+                    if data.discovery.xy then
+                        coords = string.format("%.1f, %.1f", (data.discovery.xy.x or 0) * 100, (data.discovery.xy.y or 0) * 100)
+                    end
+                    local msg = string.format("%s @ %s (%s)", data.discovery.il or "Item", zoneName, coords)
+                    if ChatFrame1EditBox:IsVisible() then
+                        ChatFrame1EditBox:Insert(msg)
+                    else
+                        ChatFrame_OpenChat(msg)
+                    end
                 else
-                    -- Regular right click: Shows context menu.
+                    
                     self:ShowContextMenu()
                 end
             end
         end)
 
-        -- Stores mouse position for context menu positioning.
         nameFrame:SetScript("OnMouseDown", function(self, button)
             if button == "RightButton" then
                 local x, y = GetCursorPosition()
@@ -2707,60 +3533,59 @@ function Viewer:CreateRows()
             end
         end)
 
-        -- Slot column, visible for Equipment only.
-        local slotText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        slotText:SetPoint("LEFT", nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        
+        
+        
+
+        
+        local levelText = row:CreateFontString(nil, "OVERLAY", ROW_FONT_NAME)
+        levelText:SetPoint("LEFT", nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        levelText:SetSize(GRID_LAYOUT.LEVEL_WIDTH, ROW_HEIGHT)
+        levelText:SetJustifyH("LEFT")
+
+        
+        local slotText = row:CreateFontString(nil, "OVERLAY", ROW_FONT_NAME)
+        slotText:SetPoint("LEFT", levelText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         slotText:SetSize(GRID_LAYOUT.SLOT_WIDTH, ROW_HEIGHT)
         slotText:SetJustifyH("LEFT")
         slotText:Hide()
 
-        -- Type column, visible for Equipment only.
-        local typeText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        
+        local typeText = row:CreateFontString(nil, "OVERLAY", ROW_FONT_NAME)
         typeText:SetPoint("LEFT", slotText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         typeText:SetSize(GRID_LAYOUT.TYPE_WIDTH, ROW_HEIGHT)
         typeText:SetJustifyH("LEFT")
         typeText:Hide()
 
-        -- Level column.
-        local levelText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        levelText:SetPoint("LEFT", nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        levelText:SetSize(GRID_LAYOUT.LEVEL_WIDTH, ROW_HEIGHT)
-        levelText:SetJustifyH("LEFT")
-
-        -- Class column, visible for Mystic Scrolls only.
-        local classText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        
+        
+        local classText = row:CreateFontString(nil, "OVERLAY", ROW_FONT_NAME)
         classText:SetPoint("LEFT", levelText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         classText:SetSize(GRID_LAYOUT.CLASS_WIDTH, ROW_HEIGHT)
         classText:SetJustifyH("LEFT")
         classText:Hide()
 
-        -- Zone column.
-        local zoneText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        
+        local zoneText = row:CreateFontString(nil, "OVERLAY", ROW_FONT_NAME)
         zoneText:SetPoint("LEFT", typeText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         zoneText:SetSize(GRID_LAYOUT.ZONE_WIDTH, ROW_HEIGHT)
         zoneText:SetJustifyH("LEFT")
 
-        -- Date column.
-        local dateText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        dateText:SetPoint("LEFT", zoneText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        dateText:SetSize(GRID_LAYOUT.DATE_WIDTH, ROW_HEIGHT)
-        dateText:SetJustifyH("LEFT")
-
-        -- "Found By" column, an interactive frame for context menu.
+        
+        
+        
         local foundByFrame = CreateFrame("Frame", nil, row)
         foundByFrame:SetSize(GRID_LAYOUT.FOUND_BY_WIDTH, ROW_HEIGHT)
-        foundByFrame:SetPoint("LEFT", dateText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        foundByFrame:SetPoint("LEFT", zoneText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
         foundByFrame:EnableMouse(true)
 
-        local foundByText = foundByFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        local foundByText = foundByFrame:CreateFontString(nil, "OVERLAY", ROW_FONT_NAME)
         foundByText:SetPoint("LEFT", 2, 0)
         foundByText:SetSize(GRID_LAYOUT.FOUND_BY_WIDTH - 4, ROW_HEIGHT)
         foundByText:SetJustifyH("LEFT")
 
-        -- Adds a right-click context menu for the "Found By" column.
         foundByFrame:SetScript("OnMouseUp", function(self, button)
             if button == "RightButton" and self.discoveryData then
-                -- Stores mouse position for context menu positioning.
                 local x, y = GetCursorPosition()
                 self.mouseX = x
                 self.mouseY = y
@@ -2768,84 +3593,262 @@ function Viewer:CreateRows()
             end
         end)
 
-        -- Adds context menu method to foundByFrame.
         foundByFrame.ShowFoundByContextMenu = function(self)
             if not self.discoveryData or not self.discoveryData.discovery.fp then
                 return
             end
 
             local playerName = self.discoveryData.discovery.fp
-
             local buttons = {
                 {
                     text = "Delete all from " .. playerName,
                     onClick = function()
                         Viewer:ConfirmDeleteAllFromPlayer(playerName)
-                    end
-                }
+                    end,
+                },
             }
 
             CreateContextMenu(self, "Player: " .. playerName, buttons)
         end
 
-        -- Displays a button.
-        local showBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-        showBtn:SetSize(50, ROW_HEIGHT - 2)
-        showBtn:SetPoint("RIGHT", -70, 0) -- Positions to the left of the delete button.
-        showBtn:SetText("Show")
-        showBtn:SetFrameStrata(FRAME_STRATA)
-        showBtn:SetFrameLevel(FRAME_LEVEL + 1)
-        showBtn:SetScript("OnClick", function()
-            if row.discoveryData then
-                self:ShowOnMap(row.discoveryData)
+        
+        
+        
+        local vendorNameText = row:CreateFontString(nil, "OVERLAY", ROW_FONT_NAME)
+        vendorNameText:SetPoint("LEFT", 5, 0)
+        vendorNameText:SetSize(GRID_LAYOUT.VENDOR_NAME_WIDTH, ROW_HEIGHT)
+        vendorNameText:SetJustifyH("LEFT")
+        vendorNameText:Hide()
+
+        
+        local vendorNameFrame = CreateFrame("Frame", nil, row)
+        vendorNameFrame:SetPoint("TOPLEFT", vendorNameText, "TOPLEFT", 0, 0)
+        vendorNameFrame:SetPoint("BOTTOMRIGHT", vendorNameText, "BOTTOMRIGHT", 0, 0)
+        vendorNameFrame:EnableMouse(true)
+        vendorNameFrame:Hide()
+
+        vendorNameFrame:SetScript("OnMouseUp", function(self, button)
+            if not self.discoveryData then
+                return
+            end
+
+            local data = self.discoveryData
+            local row  = self:GetParent()
+
+            Viewer:SetSelectedRow(row)
+
+            
+            if IsShiftKeyDown() and data then        
+                    Viewer:ShowOnMap(data)        
+                return
+            end
+
+            local isVendorView = (Viewer.currentFilter == "bmv" or Viewer.currentFilter == "msv")
+            if isVendorView and data.isVendor and button == "LeftButton"
+               and not IsControlKeyDown() then
+                if Viewer.ShowVendorInventoryForDiscovery and data.discovery then
+                    Viewer:ShowVendorInventoryForDiscovery(data.discovery)
+                end
             end
         end)
 
-        -- Delete button.
+        local vendorZoneText = row:CreateFontString(nil, "OVERLAY", ROW_FONT_NAME)
+        vendorZoneText:SetPoint("LEFT", vendorNameText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        vendorZoneText:SetSize(GRID_LAYOUT.VENDOR_ZONE_WIDTH, ROW_HEIGHT)
+        vendorZoneText:SetJustifyH("LEFT")
+        vendorZoneText:Hide()
+
+        local inventoryFrame = CreateFrame("Frame", nil, row)
+        inventoryFrame:SetSize(GRID_LAYOUT.VENDOR_INVENTORY_WIDTH, ROW_HEIGHT)
+        inventoryFrame:SetPoint("LEFT", vendorZoneText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        inventoryFrame:EnableMouse(true)
+        inventoryFrame:Hide()
+
+        local inventoryText = inventoryFrame:CreateFontString(nil, "OVERLAY", ROW_FONT_NAME)
+        inventoryText:SetAllPoints(true)
+        inventoryText:SetJustifyH("LEFT")
+        inventoryText:SetText("|cff00ff00View Items...|r")
+
+        inventoryFrame:SetScript("OnEnter", function(self)
+            if self.discoveryData and self.discoveryData.isVendor and self.discoveryData.discovery.vendorItems then
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine("Inventory", 1, 1, 0)
+                for _, item in ipairs(self.discoveryData.discovery.vendorItems) do
+                    GameTooltip:AddLine(item.link)
+                end
+                GameTooltip:Show()
+            end
+        end)
+
+        inventoryFrame:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+
+        inventoryFrame:SetScript("OnMouseUp", function(self, button)
+            if not self.discoveryData then
+                return
+            end
+
+            local data = self.discoveryData
+            local row  = self:GetParent()
+
+            Viewer:SetSelectedRow(row)
+
+            local isVendorView = (Viewer.currentFilter == "bmv" or Viewer.currentFilter == "msv")
+            if isVendorView and data.isVendor and button == "LeftButton"
+               and not IsShiftKeyDown() and not IsControlKeyDown() then
+                if Viewer.ShowVendorInventoryForDiscovery and data.discovery then
+                    Viewer:ShowVendorInventoryForDiscovery(data.discovery)
+                end
+            end
+        end)
+
+        
+        
+        
+        local actionButtonSize = 22
+        local actionButtonSpacing = 4
+
+        
         local deleteBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-        deleteBtn:SetSize(60, ROW_HEIGHT - 2)
+        deleteBtn:SetSize(actionButtonSize, actionButtonSize)
         deleteBtn:SetPoint("RIGHT", -5, 0)
-        deleteBtn:SetText("Delete")
-        deleteBtn:SetFrameStrata(FRAME_STRATA)
-        deleteBtn:SetFrameLevel(FRAME_LEVEL + 1)
-        deleteBtn:SetScript("OnClick", function()
-            if row.discoveryData then
-                self:ConfirmDelete(row.discoveryData)
+        deleteBtn:SetText("D")
+        deleteBtn:SetScript("OnClick", function(self)
+            Viewer:SetSelectedRow(self:GetParent())
+            local r = self:GetParent()
+            if r.discoveryData then
+                Viewer:ConfirmDelete(r.discoveryData)
             end
         end)
 
-        -- Adds a context menu method to nameFrame.
+        deleteBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+            GameTooltip:SetText("Delete")
+            GameTooltip:Show()
+        end)
+        deleteBtn:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+
+        
+        local unlootedBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        unlootedBtn:SetSize(actionButtonSize, actionButtonSize)
+        unlootedBtn:SetPoint("RIGHT", deleteBtn, "LEFT", -actionButtonSpacing, 0)
+        unlootedBtn:SetText("U")
+        unlootedBtn:SetScript("OnClick", function(self)
+            Viewer:SetSelectedRow(self:GetParent())
+            local r = self:GetParent()
+            if r.discoveryData then
+                Viewer:ToggleLootedState(r.discoveryData.guid, r.discoveryData)
+            end
+        end)
+        unlootedBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+            GameTooltip:SetText("Mark as Unlooted")
+            GameTooltip:Show()
+        end)
+        unlootedBtn:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+
+        
+        local lootedBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        lootedBtn:SetSize(actionButtonSize, actionButtonSize)
+        lootedBtn:SetPoint("RIGHT", unlootedBtn, "LEFT", -actionButtonSpacing, 0)
+        lootedBtn:SetText("L")
+        lootedBtn:SetScript("OnClick", function(self)
+            Viewer:SetSelectedRow(self:GetParent())
+            local r = self:GetParent()
+            if r.discoveryData then
+                Viewer:ToggleLootedState(r.discoveryData.guid, r.discoveryData)
+            end
+        end)
+        lootedBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+            GameTooltip:SetText("Mark as Looted")
+            GameTooltip:Show()
+        end)
+        lootedBtn:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+
+        
+        local navBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        navBtn:SetSize(actionButtonSize, actionButtonSize)
+        navBtn:SetPoint("RIGHT", lootedBtn, "LEFT", -actionButtonSpacing, 0)
+        navBtn:SetText("N")
+        navBtn:SetScript("OnClick", function(self)
+            Viewer:SetSelectedRow(self:GetParent())
+            local r = self:GetParent()
+            if r.discoveryData then
+                local Arrow = L:GetModule("Arrow", true)
+                if Arrow and Arrow.NavigateTo then
+                    Arrow:NavigateTo(r.discoveryData.discovery)
+                end
+            end
+        end)
+        navBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+            GameTooltip:SetText("Navigate")
+            GameTooltip:Show()
+        end)
+        navBtn:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+
+        
+        local showBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        showBtn:SetSize(actionButtonSize, actionButtonSize)
+        showBtn:SetPoint("RIGHT", navBtn, "LEFT", -actionButtonSpacing, 0)
+        showBtn:SetText("S")
+        showBtn:SetScript("OnClick", function(self)
+            Viewer:SetSelectedRow(self:GetParent())
+            local r = self:GetParent()
+            if r.discoveryData then
+                Viewer:ShowOnMap(r.discoveryData)
+            end
+        end)
+        showBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+            GameTooltip:SetText("Show on Map")
+            GameTooltip:Show()
+        end)
+        showBtn:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+
+        
+        
+        
         nameFrame.ShowContextMenu = function(self)
             if not self.discoveryData then return end
 
-            -- Checks if this discovery is currently looted.
             local isLooted = Viewer:IsLootedByChar(self.discoveryData.guid)
-
             local buttons = {
                 {
                     text = "Show",
                     onClick = function()
                         Viewer:ShowOnMap(self.discoveryData)
-                    end
+                    end,
                 },
                 {
                     text = isLooted and "Set as unlooted" or "Set as looted",
                     onClick = function()
                         Viewer:ToggleLootedState(self.discoveryData.guid, self.discoveryData)
-                    end
+                    end,
                 },
                 {
                     text = "Delete",
                     onClick = function()
                         Viewer:ConfirmDelete(self.discoveryData)
-                    end
-                }
+                    end,
+                },
             }
 
             CreateContextMenu(self, self.discoveryData.itemName or "Unknown Item", buttons)
         end
 
-        -- Adds new click action methods to nameFrame.
         nameFrame.LinkItemToChat = function(self)
             if not self.discoveryData or not self.discoveryData.discovery then return end
 
@@ -2853,132 +3856,51 @@ function Viewer:CreateRows()
             local itemID = discovery.i
             local itemLink = discovery.il
 
-            -- Validate itemID exists
-            if not itemID then
-                -- Try to extract from itemLink if available
-                if itemLink and type(itemLink) == "string" then
-                    itemID = itemLink:match("item:(%d+)")
-                    itemID = itemID and tonumber(itemID)
+            if not itemID and itemLink and type(itemLink) == "string" then
+                local id = itemLink:match("item:(%d+)")
+                if id then
+                    itemID = tonumber(id)
                 end
             end
 
             if not itemID then return end
 
-            -- Send item link reliably (tries cache first, primes if needed)
-            local function SendItemLinkReliable(itemID, chatType, language)
-                chatType = chatType or "SAY"
-                language = language or nil
-                local name, link = GetItemInfo(itemID)
-                if link then
-                    if ChatEdit_InsertLink then
-                        ChatEdit_InsertLink(link)
-                    elseif ChatFrame1EditBox:IsVisible() then
-                        ChatFrame1EditBox:Insert(link)
-                    else
-                        ChatFrame_OpenChat(link)
-                    end
-                    return
-                end
-                -- prime cache
-                GameTooltip:Hide()
-                GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
-                GameTooltip:SetHyperlink("item:" .. tostring(itemID))
-                local start = GetTime()
-                local f = CreateFrame("Frame")
-                f:SetScript("OnUpdate", function(self)
-                    local n, l = GetItemInfo(itemID)
-                    if l then
-                        if ChatEdit_InsertLink then
-                            ChatEdit_InsertLink(l)
-                        elseif ChatFrame1EditBox:IsVisible() then
-                            ChatFrame1EditBox:Insert(l)
-                        else
-                            ChatFrame_OpenChat(l)
-                        end
-                        self:SetScript("OnUpdate", nil)
-                        self:Hide()
-                        return
-                    end
-                    if GetTime() - start > 3 then
-                        -- fallback to safe constructed link (no error)
-                        local fallback = "|cffffffff|Hitem:" ..
-                        itemID .. ":0:0:0:0:0:0:0|h[" .. (n or ("Item:" .. itemID)) .. "]|h|r"
-                        if ChatEdit_InsertLink then
-                            ChatEdit_InsertLink(fallback)
-                        elseif ChatFrame1EditBox:IsVisible() then
-                            ChatFrame1EditBox:Insert(fallback)
-                        else
-                            ChatFrame_OpenChat(fallback)
-                        end
-                        self:SetScript("OnUpdate", nil)
-                        self:Hide()
-                    end
-                end)
-            end
-
-            -- Use the reliable function
-            SendItemLinkReliable(itemID)
-        end
-
-        nameFrame.PasteLocationToChat = function(self)
-            if not self.discoveryData or not self.discoveryData.discovery then return end
-
-            local discovery = self.discoveryData.discovery
-            local coords = discovery.xy
-
-            if not coords or not coords.x or not coords.y then
-                return -- No coordinates available.
-            end
-
-            -- Gets localized zone name.
-            local zoneName = GetLocalizedZoneName(discovery)
-
-            -- Formats coordinates with 2 decimal places for display.
-            -- Converts from normalized coordinates (0.0-1.0) to percentage (0-100).
-            local x = math.floor(coords.x * 10000 + 0.5) / 100
-            local y = math.floor(coords.y * 10000 + 0.5) / 100
-
-            -- Creates location string in format "Zone Name [X.XX, Y.YY]".
-            local locationString = string.format("%s [%.2f, %.2f]", zoneName, x, y)
-
-            -- Uses ChatEdit_InsertLink for WoW 3.3.5 compatibility.
-            if ChatEdit_InsertLink then
-                ChatEdit_InsertLink(locationString)
-            elseif ChatFrame1EditBox:IsVisible() then
-                ChatFrame1EditBox:Insert(locationString)
-            else
-                -- Opens chat with the location string.
-                ChatFrame_OpenChat(locationString)
+            if IsShiftKeyDown() and ChatFrameEditBox and ChatFrameEditBox:IsShown() then
+                ChatFrameEditBox:Insert(itemLink or ("item:" .. itemID))
             end
         end
 
-        -- Stores references to row elements.
-        row.nameFrame = nameFrame
-        row.nameText = nameText
-        row.slotText = slotText
-        row.typeText = typeText
-        row.classText = classText
-        row.zoneText = zoneText
-        row.levelText = levelText
-        row.dateText = dateText
-        row.foundByFrame = foundByFrame
-        row.foundByText = foundByText
-        row.showBtn = showBtn
-        row.deleteBtn = deleteBtn
+        
+        
+        
+        row.nameFrame      = nameFrame
+        row.nameText       = nameText
+        row.levelText      = levelText
+        row.slotText       = slotText
+        row.typeText       = typeText
+        row.classText      = classText
+        row.zoneText       = zoneText
+        row.foundByFrame   = foundByFrame
+        row.foundByText    = foundByText
 
-        _tinsert(self.rows, row)
-        -- Limit rows to prevent memory leaks
-        if #self.rows > 100 then
-            local oldRow = _tremove(self.rows, 1)
-            if oldRow and oldRow.Hide then
-                oldRow:Hide()
-            end
-        end
+        row.vendorNameText  = vendorNameText
+	row.vendorNameFrame = vendorNameFrame
+	row.vendorZoneText  = vendorZoneText
+	row.inventoryFrame  = inventoryFrame
+	row.inventoryText   = inventoryText
+
+        row.deleteBtn      = deleteBtn
+        row.unlootedBtn    = unlootedBtn
+        row.lootedBtn      = lootedBtn
+        row.navBtn         = navBtn
+        row.showBtn        = showBtn
+
+        self.rows[i] = row
     end
-end
+end    
 
 function Viewer:UpdateFilterButtons()
-    -- Helper function to set button text color.
+    
     local function setButtonTextColor(button, r, g, b)
         local fontString = button:GetFontString()
         if fontString then
@@ -2986,22 +3908,26 @@ function Viewer:UpdateFilterButtons()
         end
     end
 
-
-
-    -- Resets all button text colors.
+    
     setButtonTextColor(self.equipmentBtn, 1, 1, 1)
     setButtonTextColor(self.mysticBtn, 1, 1, 1)
+    setButtonTextColor(self.bmvBtn, 1, 1, 1)
+    setButtonTextColor(self.msvBtn, 1, 1, 1)
 
-    -- Highlights the selected button with a distinct text color.
-    if self.currentFilter == "equipment" then
+    
+    if self.currentFilter == "eq" then
         setButtonTextColor(self.equipmentBtn, 0.2, 0.8, 1)
-    elseif self.currentFilter == "mystic_scrolls" then
+    elseif self.currentFilter == "ms" then
         setButtonTextColor(self.mysticBtn, 0.2, 0.8, 1)
+    elseif self.currentFilter == "bmv" then
+        setButtonTextColor(self.bmvBtn, 0.2, 0.8, 1)
+    elseif self.currentFilter == "msv" then
+        setButtonTextColor(self.msvBtn, 0.2, 0.8, 1)
     end
 end
 
 function Viewer:UpdateSortHeaders()
-    -- Helper function to set button text color.
+    
     local function setButtonTextColor(button, r, g, b)
         local fontString = button:GetFontString()
         if fontString then
@@ -3009,129 +3935,113 @@ function Viewer:UpdateSortHeaders()
         end
     end
 
+    local isEqView = (self.currentFilter == "eq")
+    local isMsView = (self.currentFilter == "ms")
+    local isVendorView = (self.currentFilter == "bmv" or self.currentFilter == "msv")
 
+    
+    self.nameHeader:Hide(); self.slotHeader:Hide(); self.typeHeader:Hide(); self.classHeader:Hide()
+    self.zoneHeader:Hide(); self.levelHeader:Hide(); self.foundByHeader:Hide()
+    self.vendorNameHeader:Hide(); self.vendorZoneHeader:Hide(); self.inventoryHeader:Hide()
+    
+    local lastHeader = nil
 
-    -- Resets all header text colors.
-    setButtonTextColor(self.nameHeader, 1, 1, 1)
-    setButtonTextColor(self.slotHeader, 1, 1, 1)
-    setButtonTextColor(self.typeHeader, 1, 1, 1)
-    setButtonTextColor(self.classHeader, 1, 1, 1)
-    setButtonTextColor(self.zoneHeader, 1, 1, 1)
-    setButtonTextColor(self.levelHeader, 1, 1, 1)
-    setButtonTextColor(self.dateHeader, 1, 1, 1)
-    setButtonTextColor(self.foundByHeader, 1, 1, 1)
+    if isVendorView then
+        self.vendorNameHeader:Show(); self.vendorZoneHeader:Show(); self.inventoryHeader:Show()
+        
+        
+        self.vendorNameHeader:ClearAllPoints()
+        self.vendorNameHeader:SetPoint("LEFT", 5, 0)
+        lastHeader = self.vendorNameHeader
 
-    -- Sets conditional visibility for headers based on the current filter.
-    local isEquipmentView = (self.currentFilter == "equipment")
-    local isMysticScrollsView = (self.currentFilter == "mystic_scrolls")
-    self.slotHeader:SetShown(isEquipmentView)
-    self.typeHeader:SetShown(isEquipmentView)
-    self.classHeader:SetShown(isMysticScrollsView)
+        self.vendorZoneHeader:ClearAllPoints()
+        self.vendorZoneHeader:SetPoint("LEFT", lastHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        lastHeader = self.vendorZoneHeader
 
-    -- Adjusts positions and sizes based on visibility using master controls.
-    if isEquipmentView then
-        -- Equipment view: Name + Level + Slot + Type + Zone + Date + Found By.
-        self.nameHeader:SetSize(GRID_LAYOUT.NAME_WIDTH, HEADER_HEIGHT)
-        self.levelHeader:SetPoint("LEFT", self.nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        self.slotHeader:SetPoint("LEFT", self.levelHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        self.typeHeader:SetPoint("LEFT", self.slotHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        self.zoneHeader:SetPoint("LEFT", self.typeHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        self.dateHeader:SetPoint("LEFT", self.zoneHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        self.foundByHeader:SetPoint("LEFT", self.dateHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-    elseif isMysticScrollsView then
-        -- Mystic Scrolls view: Name + Level + Class + Zone + Date + Found By.
-        self.nameHeader:SetSize(GRID_LAYOUT.NAME_WIDTH, HEADER_HEIGHT)
-        self.levelHeader:SetPoint("LEFT", self.nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        self.classHeader:SetPoint("LEFT", self.levelHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        self.zoneHeader:SetPoint("LEFT", self.classHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        self.dateHeader:SetPoint("LEFT", self.zoneHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        self.foundByHeader:SetPoint("LEFT", self.dateHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-    else
-        -- Default view: Name + Level + Zone + Date + Found By (wider name column).
-        self.nameHeader:SetSize(GRID_LAYOUT.NAME_WIDTH + 100, HEADER_HEIGHT) -- Wider for default view.
-        self.levelHeader:SetPoint("LEFT", self.nameHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        self.zoneHeader:SetPoint("LEFT", self.levelHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        self.dateHeader:SetPoint("LEFT", self.zoneHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-        self.foundByHeader:SetPoint("LEFT", self.dateHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-    end
+        self.inventoryHeader:ClearAllPoints()
+        self.inventoryHeader:SetPoint("LEFT", lastHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        lastHeader = self.inventoryHeader
 
-    -- Highlights the selected header and adds a sort indicator.
-    local sortIndicator = self.sortAscending and " ↑" or " ↓"
+        
+        local sortIndicator = self.sortAscending and " ↑" or " ↓"
+        local sortColor = {0.2, 0.8, 1}
+        local defaultColor = {1, 1, 1}
 
-    if self.sortColumn == "name" then
-        setButtonTextColor(self.nameHeader, 0.2, 0.8, 1)
-        self.nameHeader:SetText("Name" .. sortIndicator)
-    else
-        self.nameHeader:SetText("Name")
-    end
+        setButtonTextColor(self.vendorNameHeader, self.sortColumn == "vendorName" and sortColor[1] or defaultColor[1], self.sortColumn == "vendorName" and sortColor[2] or defaultColor[2], self.sortColumn == "vendorName" and sortColor[3] or defaultColor[3])
+        setButtonTextColor(self.vendorZoneHeader, self.sortColumn == "zone" and sortColor[1] or defaultColor[1], self.sortColumn == "zone" and sortColor[2] or defaultColor[2], self.sortColumn == "zone" and sortColor[3] or defaultColor[3])
+        
+        self.vendorNameHeader:SetText(self.sortColumn == "vendorName" and "Vendor Name" .. sortIndicator or "Vendor Name")
+        self.vendorZoneHeader:SetText(self.sortColumn == "zone" and "Zone" .. sortIndicator or "Zone")
 
-    if self.sortColumn == "slot" and isEquipmentView then
-        setButtonTextColor(self.slotHeader, 0.2, 0.8, 1)
-        local filterIndicator = next(self.columnFilters.equipment.slot) and " [F]" or ""
-        self.slotHeader:SetText("Slot" .. sortIndicator .. filterIndicator)
-    else
-        local filterIndicator = next(self.columnFilters.equipment.slot) and " [F]" or ""
-        if filterIndicator ~= "" then
-            setButtonTextColor(self.slotHeader, 1, 0.8, 0.2) -- Orange color for filtered columns.
+    else 
+        
+        self.nameHeader:Show(); self.levelHeader:Show(); self.zoneHeader:Show(); self.foundByHeader:Show()
+        
+        
+        self.nameHeader:ClearAllPoints()
+        self.nameHeader:SetPoint("LEFT", 5, 0)
+        lastHeader = self.nameHeader
+
+        self.levelHeader:ClearAllPoints()
+        self.levelHeader:SetPoint("LEFT", lastHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        lastHeader = self.levelHeader
+
+        if isEqView then
+            self.slotHeader:Show()
+            self.typeHeader:Show()
+
+            self.slotHeader:ClearAllPoints()
+            self.slotHeader:SetPoint("LEFT", lastHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+            lastHeader = self.slotHeader
+
+            self.typeHeader:ClearAllPoints()
+            self.typeHeader:SetPoint("LEFT", lastHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+            lastHeader = self.typeHeader
+        elseif isMsView then
+            self.classHeader:Show()
+
+            self.classHeader:ClearAllPoints()
+            self.classHeader:SetPoint("LEFT", lastHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+            lastHeader = self.classHeader
         end
-        self.slotHeader:SetText("Slot" .. filterIndicator)
-    end
+        
+        
+        self.zoneHeader:ClearAllPoints()
+        self.zoneHeader:SetPoint("LEFT", lastHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        lastHeader = self.zoneHeader
 
-    if self.sortColumn == "type" and isEquipmentView then
-        setButtonTextColor(self.typeHeader, 0.2, 0.8, 1)
-        local filterIndicator = next(self.columnFilters.equipment.type) and " [F]" or ""
-        self.typeHeader:SetText("Type" .. sortIndicator .. filterIndicator)
-    else
-        local filterIndicator = next(self.columnFilters.equipment.type) and " [F]" or ""
-        if filterIndicator ~= "" then
-            setButtonTextColor(self.typeHeader, 1, 0.8, 0.2) -- Orange color for filtered columns.
+        self.foundByHeader:ClearAllPoints()
+        self.foundByHeader:SetPoint("LEFT", lastHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+        
+        
+        local sortIndicator = self.sortAscending and " ↑" or " ↓"
+        local headerMap = { name=self.nameHeader, level=self.levelHeader, slot=self.slotHeader, type=self.typeHeader, class=self.classHeader, zone=self.zoneHeader,  foundBy=self.foundByHeader }
+        local headerTextMap = { name="Name", level="Level", slot="Slot", type="Type", class="Class", zone="Zone", foundBy="Found By" }
+        
+        for col, header in pairs(headerMap) do
+            if header:IsShown() then
+                local isSorted = (col == self.sortColumn)
+                local isFiltered = false
+                if (self.currentFilter == "eq" and self.columnFilters.eq[col] and next(self.columnFilters.eq[col])) or
+                   (self.currentFilter == "ms" and self.columnFilters.ms[col] and next(self.columnFilters.ms[col])) or
+                   (self.columnFilters[col] and next(self.columnFilters[col])) then
+                    isFiltered = true
+                end
+
+                if isSorted then
+                    setButtonTextColor(header, 0.2, 0.8, 1) 
+                elseif isFiltered then
+                    setButtonTextColor(header, 1, 0.8, 0.2) 
+                else
+                    setButtonTextColor(header, 1, 1, 1) 
+                end
+
+                local text = headerTextMap[col]
+                if isSorted then text = text .. sortIndicator end
+                if isFiltered then text = text .. " [F]" end
+                header:SetText(text)
+            end
         end
-        self.typeHeader:SetText("Type" .. filterIndicator)
-    end
-
-    if self.sortColumn == "class" and isMysticScrollsView then
-        setButtonTextColor(self.classHeader, 0.2, 0.8, 1)
-        local filterIndicator = next(self.columnFilters.mystic_scrolls.class) and " [F]" or ""
-        self.classHeader:SetText("Class" .. sortIndicator .. filterIndicator)
-    else
-        local filterIndicator = next(self.columnFilters.mystic_scrolls.class) and " [F]" or ""
-        if filterIndicator ~= "" then
-            setButtonTextColor(self.classHeader, 1, 0.8, 0.2) -- Orange color for filtered columns.
-        end
-        self.classHeader:SetText("Class" .. filterIndicator)
-    end
-
-    if self.sortColumn == "zone" then
-        setButtonTextColor(self.zoneHeader, 0.2, 0.8, 1)
-        local filterIndicator = next(self.columnFilters.zone) and " [F]" or ""
-        self.zoneHeader:SetText("Zone" .. sortIndicator .. filterIndicator)
-    else
-        local filterIndicator = next(self.columnFilters.zone) and " [F]" or ""
-        if filterIndicator ~= "" then
-            setButtonTextColor(self.zoneHeader, 1, 0.8, 0.2) -- Orange color for filtered columns.
-        end
-        self.zoneHeader:SetText("Zone" .. filterIndicator)
-    end
-
-    if self.sortColumn == "level" then
-        setButtonTextColor(self.levelHeader, 0.2, 0.8, 1)
-        self.levelHeader:SetText("Level" .. sortIndicator)
-    else
-        self.levelHeader:SetText("Level")
-    end
-
-    if self.sortColumn == "date" then
-        setButtonTextColor(self.dateHeader, 0.2, 0.8, 1)
-        self.dateHeader:SetText("Discovery Date" .. sortIndicator)
-    else
-        self.dateHeader:SetText("Discovery Date")
-    end
-
-    if self.sortColumn == "foundBy" then
-        setButtonTextColor(self.foundByHeader, 0.2, 0.8, 1)
-        self.foundByHeader:SetText("Found By" .. sortIndicator)
-    else
-        self.foundByHeader:SetText("Found By")
     end
 end
 
@@ -3139,9 +4049,9 @@ function Viewer:UpdatePagination()
     local totalPages = self:GetTotalPages()
     local totalItems = self.totalItems
 
-    -- Updates page information.
+    
     if self.pageInfo then
-        -- Shows loading indicator when cache is building
+        
         if Cache.discoveriesBuilding then
             self.pageInfo:SetText("Loading...")
         else
@@ -3150,19 +4060,19 @@ function Viewer:UpdatePagination()
         end
     end
 
-    -- Updates button states for pagination controls.
+    
     if self.prevBtn then
-        -- Disables buttons during loading
+        
         self.prevBtn:SetEnabled(not Cache.discoveriesBuilding and self.currentPage > 1)
     end
     if self.nextBtn then
-        -- Disables buttons during loading
+        
         self.nextBtn:SetEnabled(not Cache.discoveriesBuilding and self.currentPage < totalPages)
     end
 end
 
 function Viewer:UpdateItemsPerPageButtons()
-    -- Helper function to set button text color.
+    
     local function setButtonTextColor(button, r, g, b)
         local fontString = button:GetFontString()
         if fontString then
@@ -3170,12 +4080,12 @@ function Viewer:UpdateItemsPerPageButtons()
         end
     end
 
-    -- Resets all button text colors.
+    
     if self.items25Btn then setButtonTextColor(self.items25Btn, 1, 1, 1) end
     if self.items50Btn then setButtonTextColor(self.items50Btn, 1, 1, 1) end
     if self.items100Btn then setButtonTextColor(self.items100Btn, 1, 1, 1) end
 
-    -- Highlights selected button.
+    
     if self.itemsPerPage == 25 and self.items25Btn then
         setButtonTextColor(self.items25Btn, 0.2, 0.8, 1)
     elseif self.itemsPerPage == 50 and self.items50Btn then
@@ -3190,17 +4100,19 @@ function Viewer:UpdateRows()
     local numDiscoveries = #discoveries
     local numRows = #self.rows
 
-    -- Updates pagination information.
+    
     self:UpdatePagination()
 
-    local isEquipmentView = (self.currentFilter == "equipment")
-    local isMysticScrollsView = (self.currentFilter == "mystic_scrolls")
+    local isEqView = (self.currentFilter == "eq")
+    local isMsView = (self.currentFilter == "ms")
+    local isVendorView = (self.currentFilter == "bmv" or self.currentFilter == "msv")
+    
+    local isLoading = Cache.discoveriesBuilding
 
-    -- Updates the scroll frame.
+    
     FauxScrollFrame_Update(self.scrollFrame, numDiscoveries, numRows, ROW_HEIGHT)
-
-    -- Set strata and level for scroll bar buttons
-    if self.scrollFrame.ScrollBar and self.scrollFrame.ScrollBar.ScrollUpButton then
+    
+     if self.scrollFrame.ScrollBar and self.scrollFrame.ScrollBar.ScrollUpButton then
         self.scrollFrame.ScrollBar.ScrollUpButton:SetFrameStrata(FRAME_STRATA)
         self.scrollFrame.ScrollBar.ScrollUpButton:SetFrameLevel(FRAME_LEVEL)
     end
@@ -3209,131 +4121,197 @@ function Viewer:UpdateRows()
         self.scrollFrame.ScrollBar.ScrollDownButton:SetFrameLevel(FRAME_LEVEL)
     end
 
-    -- Shows rows for the current page with scrolling support.
     for i = 1, numRows do
         local row = self.rows[i]
         local offset = FauxScrollFrame_GetOffset(self.scrollFrame)
+        local data = discoveries[i + offset]
 
-        if i + offset <= numDiscoveries then
-            local data = discoveries[i + offset]
+        if data then
             local discovery = data.discovery
+           row.discoveryData = data
+		row.nameFrame.discoveryData       = data
+		row.foundByFrame.discoveryData    = data
+		row.vendorNameFrame.discoveryData = data
+		row.inventoryFrame.discoveryData  = data
 
-            -- Stores discovery data for the delete button and tooltip.
-            row.discoveryData = data
-            row.nameFrame.discoveryData = data
-            row.foundByFrame.discoveryData = data
+            
+            
+            row.nameFrame:SetShown(not isVendorView)
+            row.levelText:SetShown(not isVendorView)
+            row.zoneText:SetShown(isEqView or isMsView)
+            row.foundByFrame:SetShown(isEqView or isMsView)
+            row.slotText:SetShown(isEqView)
+            row.typeText:SetShown(isEqView)
+            row.classText:SetShown(isMsView)
+		
+            row.vendorNameText:SetShown(isVendorView)
+		row.vendorNameFrame:SetShown(isVendorView)
+		row.vendorZoneText:SetShown(isVendorView)
+		row.inventoryFrame:SetShown(isVendorView)
 
-            -- Checks if this discovery is looted by the current character.
-            local isLooted = self:IsLootedByChar(data.guid)
-            local alpha = isLooted and 0.5 or 1.0 -- Reduces alpha for looted items.
-
-            -- Sets item name with quality color.
-            local itemName = data.itemName
-            local _, _, quality, _, _, itemType, itemSubType, _, equipLoc, _, _ = GetItemInfoSafe(discovery.il,
-                discovery.i)
-            if quality then
-                local r, g, b = GetQualityColor(quality)
-                itemName = string.format("|cff%02x%02x%02x%s|r", r * 255, g * 255, b * 255, itemName)
-            end
-
-            row.nameText:SetText(itemName)
-            row.nameText:SetAlpha(alpha)
-
-            -- Sets conditional visibility for columns.
-            row.slotText:SetShown(isEquipmentView)
-            row.typeText:SetShown(isEquipmentView)
-            row.classText:SetShown(isMysticScrollsView)
-
-            if isEquipmentView then
-                -- Adjusts column positions and widths for Equipment view using master controls.
-                row.nameFrame:SetSize(GRID_LAYOUT.NAME_WIDTH, ROW_HEIGHT)
-                row.nameText:SetSize(GRID_LAYOUT.NAME_WIDTH, ROW_HEIGHT)
-                row.levelText:SetPoint("LEFT", row.nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-                row.slotText:SetPoint("LEFT", row.levelText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-                row.typeText:SetPoint("LEFT", row.slotText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-                row.zoneText:SetPoint("LEFT", row.typeText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-                row.dateText:SetPoint("LEFT", row.zoneText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-                row.foundByFrame:SetPoint("LEFT", row.dateText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-
-                row.slotText:SetText(equipLoc and _G[equipLoc] or "") -- Localized slot name.
-                row.slotText:SetAlpha(alpha)
-                row.typeText:SetText(itemSubType or "")
-                row.typeText:SetAlpha(alpha)
-            elseif isMysticScrollsView then
-                -- Adjusts column positions and widths for Mystic Scrolls view using master controls.
-                row.nameFrame:SetSize(GRID_LAYOUT.NAME_WIDTH, ROW_HEIGHT)
-                row.nameText:SetSize(GRID_LAYOUT.NAME_WIDTH, ROW_HEIGHT)
-                row.levelText:SetPoint("LEFT", row.nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-                row.classText:SetPoint("LEFT", row.levelText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-                row.zoneText:SetPoint("LEFT", row.classText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-                row.dateText:SetPoint("LEFT", row.zoneText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-                row.foundByFrame:SetPoint("LEFT", row.dateText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-
-                row.classText:SetText(data.characterClass or "")
-                row.classText:SetAlpha(alpha)
+            
+            if self.selectedRow == row then
+                row.highlight:Show()
             else
-                -- Restores default column positions and widths for other views using master controls.
-                row.nameFrame:SetSize(GRID_LAYOUT.NAME_WIDTH + 100, ROW_HEIGHT) -- Wider for default view.
-                row.nameText:SetSize(GRID_LAYOUT.NAME_WIDTH + 100, ROW_HEIGHT)
-                row.levelText:SetPoint("LEFT", row.nameFrame, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-                row.zoneText:SetPoint("LEFT", row.levelText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-                row.dateText:SetPoint("LEFT", row.zoneText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
-                row.foundByFrame:SetPoint("LEFT", row.dateText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+                row.highlight:Hide()
             end
+            
+            if isVendorView then
+                
+                row.vendorNameText:SetText(discovery.vendorName or "Unknown")
+                row.vendorZoneText:SetText(GetLocalizedZoneName(discovery))
+                local invCount = (discovery.vendorItems and #discovery.vendorItems) or 0
+                row.inventoryText:SetText(string.format("(%d items)", invCount))
+            else
+                
+                local isLooted = self:IsLootedByChar(data.guid)
+                local alpha = isLooted and 0.5 or 1.0
+                local itemName = data.itemName
+                
+                
+                local r, g, b = GetColorForDiscovery(discovery, discovery.i)
+                itemName = string.format("|cff%02x%02x%02x%s|r", r * 255, g * 255, b * 255, itemName)
+                
+                row.nameText:SetText(itemName)
+                row.nameText:SetAlpha(alpha)
 
-            -- Displays zone information.
-            local zoneText = GetLocalizedZoneName(discovery)
-            row.zoneText:SetText(zoneText)
-            row.zoneText:SetAlpha(alpha)
+                local lastElement = row.levelText
+                
+                if isEqView then
+                    row.slotText:SetText(data.equipLoc and _G[data.equipLoc] or "")
+                    row.slotText:SetAlpha(alpha)
+                    row.typeText:SetText(data.itemSubType or "")
+                    row.typeText:SetAlpha(alpha)
+                    
+                    row.zoneText:ClearAllPoints()
+                    row.zoneText:SetPoint("LEFT", row.typeText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+                    lastElement = row.typeText
+                elseif isMsView then
+                    local classDisplay = ""
+                    if data.cl and data.cl ~= "cl" then
+                        local classToken = CLASS_ABBREVIATIONS_REVERSE[data.cl]
+                        if classToken then
+                            classDisplay = (_G.LOCALIZED_CLASS_NAMES_MALE and _G.LOCALIZED_CLASS_NAMES_MALE[classToken]) or (_G.LOCALIZED_CLASS_NAMES_FEMALE and _G.LOCALIZED_CLASS_NAMES_FEMALE[classToken]) or ""
+                        end
+                    end
+                    if classDisplay == "" then classDisplay = data.characterClass or "" end
+                    row.classText:SetText(classDisplay)
+                    row.classText:SetAlpha(alpha)
+                    
+                    row.zoneText:ClearAllPoints()
+                    row.zoneText:SetPoint("LEFT", row.classText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+                    lastElement = row.classText
+                end
+                
+                
+                if lastElement ~= row.levelText then
+                     row.zoneText:SetPoint("LEFT", lastElement, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+                else 
+                     row.zoneText:SetPoint("LEFT", row.levelText, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
+                end
 
-            -- Displays level information.
-            local levelText = data.minLevel or 0
-            row.levelText:SetText(levelText > 0 and tostring(levelText) or "")
-            row.levelText:SetAlpha(alpha)
-
-            -- Displays date information.
-            local timestamp = tonumber(discovery.t0) or 0
-            local dateText = timestamp > 0 and date("%Y-%m-%d %H:%M", timestamp) or "Unknown"
-            row.dateText:SetText(dateText)
-            row.dateText:SetAlpha(alpha)
-
-            -- Displays "Found By" player information.
-            local foundByText = discovery.fp or "Unknown"
-            row.foundByText:SetText(foundByText)
-            row.foundByText:SetAlpha(alpha)
-
+                row.zoneText:SetText(GetLocalizedZoneName(discovery))
+                row.zoneText:SetAlpha(alpha)
+                local levelTextVal = data.minLevel or 0
+                row.levelText:SetText(levelTextVal > 0 and tostring(levelTextVal) or "")
+                row.levelText:SetAlpha(alpha)
+                row.foundByText:SetText(discovery.fp or "Unknown")
+                row.foundByText:SetAlpha(alpha)
+            end
+            
+            
+            local isLooted = self:IsLootedByChar(data.guid)
+            row.lootedBtn:SetEnabled(not isVendorView and not isLooted and not isLoading)
+            row.unlootedBtn:SetEnabled(not isVendorView and isLooted and not isLoading)
+            row.lootedBtn:SetShown(not isVendorView)
+            row.unlootedBtn:SetShown(not isVendorView)
+            
+            row.deleteBtn:SetEnabled(not isLoading)
+            row.navBtn:SetEnabled(not isLoading)
+            row.showBtn:SetEnabled(not isLoading)
+            row.nameFrame:EnableMouse(not isLoading)
+            
+            row.deleteBtn:Show()
+            row.navBtn:Show()
+            row.showBtn:Show()
+            
             row:Show()
         else
             row:Hide()
             row.discoveryData = nil
             row.nameFrame.discoveryData = nil
             row.foundByFrame.discoveryData = nil
+            if row.highlight then row.highlight:Hide() end
+            row.deleteBtn:Hide()
+            row.navBtn:Hide()
+            row.showBtn:Hide()
+            row.lootedBtn:Hide()
+            row.unlootedBtn:Hide()
         end
     end
 end
 
--- Refreshes the data in the viewer.
+function Viewer:PrewarmCache()
+    
+    if Cache.discoveriesBuilt or Cache.discoveriesBuilding then
+        VDebug("PrewarmCache: skipped (built=" ..
+            tostring(Cache.discoveriesBuilt) ..
+            ", building=" .. tostring(Cache.discoveriesBuilding) .. ")")
+        return
+    end
+
+    VDebug("PrewarmCache: starting async cache build in background")
+
+    self:UpdateAllDiscoveriesCache(function()
+        
+        VDebug("PrewarmCache: async cache build complete (discoveries=" ..
+            tostring(#Cache.discoveries) .. ")")
+
+        
+        
+        
+        
+    end)
+end
+
 function Viewer:RefreshData()
+ local t0 = time()
+    VDebug("RefreshData: start, cacheBuilt=" .. tostring(Cache.discoveriesBuilt) ..
+        ", building=" .. tostring(Cache.discoveriesBuilding))
     if not self.window or not self.window:IsShown() then return end
 
-    -- Only rebuilds cache if data has actually changed or if it hasn't been built yet.
+    
     local now = time()
     local dataHasChanged = HasDataChanged()
     local shouldRebuildCache = not Cache.discoveriesBuilt or dataHasChanged
+    
+     VDebug("RefreshData: dataHasChanged=" .. tostring(dataHasChanged) ..
+        ", shouldRebuild=" .. tostring(shouldRebuild))
 
     if shouldRebuildCache and not Cache.discoveriesBuilding then
+    VDebug("RefreshData: calling UpdateAllDiscoveriesCache(async)")
         self:UpdateAllDiscoveriesCache(function()
-            self:GetFilteredDiscoveries() -- Filters/sorts after cache is built.
+	      VDebug("RefreshData callback: async cache build complete, running GetFilteredDiscoveries + UpdateRows")
+		local t1 = time()
+            self:GetFilteredDiscoveries() 
             self:UpdateRows()
+		VDebug("RefreshData callback: GetFilteredDiscoveries+UpdateRows took " ..
+                tostring(time() - t1) .. "s")
         end)
     elseif Cache.discoveriesBuilt then
-        -- If cache is built, just filters/sorts and updates rows.
+    VDebug("RefreshData: cache already built, running GetFilteredDiscoveries + UpdateRows")
+        
+	  local t1 = time()
         self:GetFilteredDiscoveries()
         self:UpdateRows()
+	  VDebug("RefreshData: GetFilteredDiscoveries+UpdateRows took " ..
+            tostring(time() - t1) .. "s")
+    else
+        VDebug("RefreshData: cache neither built nor rebuilding, nothing to do")
     end
+    VDebug("RefreshData: end, total elapsed=" .. tostring(time() - t0) .. "s")
 end
 
--- Checks if a discovery is looted by the current character.
 function Viewer:IsLootedByChar(guid)
     if not guid or not (L.db and L.db.char and L.db.char.looted) then
         return false
@@ -3341,7 +4319,6 @@ function Viewer:IsLootedByChar(guid)
     return L.db.char.looted[guid] and true or false
 end
 
--- Toggles the looted state for a discovery.
 function Viewer:ToggleLootedState(guid, discoveryData)
     if not guid or not (L.db and L.db.char) then
         return false
@@ -3351,34 +4328,33 @@ function Viewer:ToggleLootedState(guid, discoveryData)
     local isCurrentlyLooted = self:IsLootedByChar(guid)
 
     if isCurrentlyLooted then
-        -- Sets as unlooted.
+        
         L.db.char.looted[guid] = nil
         print(string.format("|cff00ff00LootCollector:|r Marked '%s' as unlooted.",
             discoveryData.itemName or "Unknown Item"))
     else
-        -- Sets as looted.
+        
         L.db.char.looted[guid] = time()
         print(string.format("|cff00ff00LootCollector:|r Marked '%s' as looted.", discoveryData.itemName or "Unknown Item"))
     end
 
-    -- Updates the map if it's shown.
+    
     local Map = L:GetModule("Map", true)
     if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
         Map:Update()
     end
 
-    -- Refreshes the viewer data.
+    
     self:RefreshData()
 
-    return not isCurrentlyLooted -- Returns the new state.
+    return not isCurrentlyLooted 
 end
 
--- Clears all internal caches and resets filter states.
 function Viewer:ClearCaches()
-    -- Clear all active timers first
+    
     clearAllTimers()
 
-    -- Iterates through cache keys to reset relevant data structures.
+    
     local cacheKeys = keys(Cache)
     for _, key in ipairs(cacheKeys) do
         if key == "discoveries" then
@@ -3405,75 +4381,74 @@ function Viewer:ClearCaches()
         end
     end
 
-    -- Resets column filters to their default states.
+    
     local defaultFilters = {
-        equipment = { slot = {}, type = {} },
+        equipment = { slot = {}, type = {}, class = {} },
         mystic_scrolls = { class = {} },
         zone = {},
         source = {},
         quality = {},
         looted = {},
-        duplicates = false -- Resets the duplicates filter.
+        duplicates = false 
     }
     self.columnFilters = copy(defaultFilters)
 
-    -- Clears the duplicate items cache.
+    
     Cache.duplicateItems = {}
 
-    -- Resets data change tracking
+    
     Cache.lastDiscoveryCount = nil
 
-    -- Maintains backward compatibility for item info cache.
+    
     L.itemInfoCache = {}
 
-    -- Mark cleanup as required
+    
     Cache._cleanupRequired = true
 end
 
--- Comprehensive cleanup function for addon disable/unload
 function Viewer:OnDisable()
-    -- Clear all timers
+    
     clearAllTimers()
 
-    -- Clear all caches
+    
     self:ClearCaches()
 
-    -- Hide and cleanup UI elements
+    
     if self.window then
         self.window:Hide()
-        -- Clear all scripts to prevent memory leaks
+        
         self.window:SetScript("OnShow", nil)
         self.window:SetScript("OnHide", nil)
         self.window:SetScript("OnDragStart", nil)
         self.window:SetScript("OnDragStop", nil)
     end
 
-    -- Clear context menu
+    
     if self.contextMenu then
         self.contextMenu:Hide()
         self.contextMenu = nil
     end
 
-    -- Clear filter dropdown
+    
     if self.filterDropdown then
         self.filterDropdown:Hide()
         self.filterDropdown = nil
     end
 
-    -- Clear autocomplete dropdown
+    
     if self.autocompleteDropdown then
         self.autocompleteDropdown:Hide()
         self.autocompleteDropdown = nil
     end
 
-    -- Clear map cleanup frame
+    
     if self.mapCleanupFrame then
         self.mapCleanupFrame:UnregisterAllEvents()
         self.mapCleanupFrame:SetScript("OnEvent", nil)
         self.mapCleanupFrame = nil
     end
 
-    -- Clear tooltips
+    
     if localClassScanTip then
         localClassScanTip:Hide()
     end
@@ -3481,12 +4456,12 @@ function Viewer:OnDisable()
         localWorldforgedScanTip:Hide()
     end
 
-    -- Clear scan queue
+    
     scanQueue = {}
     scanCursor = 0
     scanProgressCallback = nil
 
-    -- Clear UI state
+    
     self.window = nil
     self.scrollFrame = nil
     self.rows = {}
@@ -3499,57 +4474,121 @@ function Viewer:OnDisable()
     self.totalItems = 0
 end
 
--- Manages a single discovery within the cache, either adding a new one or updating an existing entry.
 function Viewer:AddDiscoveryToCache(guid, discovery)
-    if not guid or not discovery or not discovery.il then
+    if not guid or not discovery then
         return false
     end
 
-    -- Only proceeds if the cache is already built and not currently undergoing a build process.
+    
     if not Cache.discoveriesBuilt or Cache.discoveriesBuilding then
         return false
     end
 
+    
+    if discovery.vendorType or (discovery.g and (discovery.g:find("BM-", 1, true) or discovery.g:find("MS-", 1, true))) then
+        local vendorName = discovery.vendorName or "Unknown Vendor"
+        
+        
+        for _, data in ipairs(Cache.discoveries) do
+            if data.guid == guid then
+                data.discovery = discovery
+                data.isVendor = true
+                data.vendorType = discovery.vendorType
+                data.vendorName = vendorName
+                data.itemName = vendorName
+                
+                
+                Cache.filteredResults = {}
+                Cache.lastFilterState = nil
+                Cache.uniqueValuesValid = false
+                Cache.uniqueValuesContext = {} 
+                return true
+            end
+        end
+        
+        
+        _tinsert(Cache.discoveries, {
+            guid = guid,
+            discovery = discovery,
+            isVendor = true,
+            vendorType = discovery.vendorType,
+            vendorName = vendorName,
+            isMystic = false,
+            itemName = vendorName,
+        })
+        
+        
+        if #Cache.discoveries > 10000 then
+            _tremove(Cache.discoveries, 1)
+        end
+
+        Cache.filteredResults = {}
+        Cache.lastFilterState = nil
+        Cache.uniqueValuesValid = false
+        Cache.uniqueValuesContext = {} 
+        
+        return true
+    end
+
+    
+    if not discovery.il then return false end
+    
     local itemName = discovery.il:match("%[(.+)%]") or ""
     if not itemName or itemName == "" then
         return false
     end
 
-    -- Checks if this discovery already exists in the cache.
+    
     for _, data in ipairs(Cache.discoveries) do
         if data.guid == guid then
-            -- Updates an existing entry.
+            
             data.discovery = discovery
             data.itemName = itemName
             data.isMystic = IsMysticScroll(itemName)
             data.isWorldforged = IsWorldforged(discovery.il)
             data.characterClass = GetItemCharacterClass(discovery.il, discovery.i)
+            data.isVendor = false 
 
-            -- Retrieves additional item information.
+            
             local name, _, _, _, minLevel, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.il,
                 discovery.i)
             data.itemType = itemTypeVal
             data.itemSubType = itemSubTypeVal
+            
+            
+            local it, ist = discovery.it, discovery.ist
+            if not it or not ist or it == 0 or ist == 0 then
+                it, ist = GetItemTypeIDs(itemTypeVal, itemSubTypeVal)
+            end
+            data.it = it
+            data.ist = ist
+            
             data.equipLoc = equipLocVal
             data.minLevel = minLevel
 
-            -- Invalidates the filtered cache to force a refresh.
+            
             Cache.filteredResults = {}
             Cache.lastFilterState = nil
             Cache.uniqueValuesValid = false
-            Cache.uniqueValuesContext = {} -- Clears the cascading cache.
+            Cache.uniqueValuesContext = {} 
             return true
         end
     end
 
-    -- Adds a new discovery to the cache.
+    
     local isMystic = IsMysticScroll(itemName)
     local isWorldforged = IsWorldforged(discovery.il)
     local characterClass = GetItemCharacterClass(discovery.il, discovery.i)
 
-    -- Retrieves additional item information.
+    
     local name, _, _, _, minLevel, itemTypeVal, itemSubTypeVal, _, equipLocVal = GetItemInfoSafe(discovery.il,
         discovery.i)
+
+    
+    local it, ist = discovery.it, discovery.ist
+    if not it or not ist or it == 0 or ist == 0 then
+        it, ist = GetItemTypeIDs(itemTypeVal, itemSubTypeVal)
+    end
 
     _tinsert(Cache.discoveries, {
         guid = guid,
@@ -3559,17 +4598,20 @@ function Viewer:AddDiscoveryToCache(guid, discovery)
         isWorldforged = isWorldforged,
         itemType = itemTypeVal,
         itemSubType = itemSubTypeVal,
+        it = it,
+        ist = ist,
         equipLoc = equipLocVal,
         characterClass = characterClass,
         minLevel = minLevel,
+        isVendor = false, 
     })
 
-    -- Limit cache size to prevent memory leaks
+    
     if #Cache.discoveries > 10000 then
         _tremove(Cache.discoveries, 1)
     end
 
-    -- Invalidates the filtered cache to force a refresh.
+    
     Cache.filteredResults = {}
     Cache.lastFilterState = nil
     Cache.uniqueValuesValid = false
@@ -3577,7 +4619,6 @@ function Viewer:AddDiscoveryToCache(guid, discovery)
     return true
 end
 
--- Removes a discovery from the cache based on its GUID.
 function Viewer:RemoveDiscoveryFromCache(guid)
     if not guid then return false end
 
@@ -3592,11 +4633,11 @@ function Viewer:RemoveDiscoveryFromCache(guid)
     for i = 1, n do
         local data = discoveries[i]
         if data and data.guid == guid then
-            -- Uses swap-pop to efficiently remove the element: moves the last element into position `i` and nils the last slot.
+            
             discoveries[i] = discoveries[n]
             discoveries[n] = nil
 
-            -- Invalidates dependent caches to ensure data consistency.
+            
             cache.filteredResults = {}
             cache.lastFilterState = nil
             cache.uniqueValuesValid = false
@@ -3613,8 +4654,6 @@ function Viewer:ConfirmDelete(discoveryData)
     local itemName = discoveryData.itemName
     local zone = GetLocalizedZoneName(discoveryData.discovery)
 
-
-
     StaticPopup_Show("LOOTCOLLECTOR_VIEWER_DELETE",
         string.format("Delete discovery for '%s' in '%s'?", itemName, zone),
         nil,
@@ -3624,12 +4663,12 @@ end
 
 function Viewer:DeleteDiscovery(guid)
     local Core = L:GetModule("Core", true)
-    if Core and Core.RemoveDiscovery then
-        Core:RemoveDiscovery(guid)
+    
+    if Core and Core.ReportDiscoveryAsGone then
+        Core:ReportDiscoveryAsGone(guid)
     end
 end
 
--- Finds all discoveries associated with a specific player.
 function Viewer:FindDiscoveriesByPlayer(playerName)
     if not playerName or playerName == "" then
         return {}
@@ -3637,8 +4676,9 @@ function Viewer:FindDiscoveriesByPlayer(playerName)
 
     local discoveriesByPlayer = {}
 
-    -- Searches through the global database to find matching discoveries.
-    for guid, discovery in pairs(L.db.global.discoveries or {}) do
+    
+    local discoveries = L:GetDiscoveriesDB()
+    for guid, discovery in pairs(discoveries or {}) do
         if discovery and discovery.fp == playerName then
             _tinsert(discoveriesByPlayer, {
                 guid = guid,
@@ -3650,7 +4690,6 @@ function Viewer:FindDiscoveriesByPlayer(playerName)
     return discoveriesByPlayer
 end
 
--- Deletes all discoveries associated with a specific player.
 function Viewer:DeleteAllFromPlayer(playerName)
     if not playerName or playerName == "" then
         return 0
@@ -3672,7 +4711,7 @@ function Viewer:DeleteAllFromPlayer(playerName)
         print(string.format("|cff00ff00LootCollector:|r Deleted %d discoveries from player '%s'.", deletedCount,
             playerName))
 
-        -- Rebuilds the cache and refreshes the UI.
+        
         if self.window and self.window:IsShown() then
             self:UpdateAllDiscoveriesCache(function()
                 self:GetFilteredDiscoveries()
@@ -3684,7 +4723,6 @@ function Viewer:DeleteAllFromPlayer(playerName)
     return deletedCount
 end
 
--- Provides a confirmation dialog for deleting all discoveries from a player.
 function Viewer:ConfirmDeleteAllFromPlayer(playerName)
     if not playerName or playerName == "" then
         return
@@ -3705,262 +4743,70 @@ function Viewer:ConfirmDeleteAllFromPlayer(playerName)
     )
 end
 
--- Creates and configures the ViewerOverlayPin with glow effect and item icon.
-local function CreateViewerOverlayPin(targetPin)
-    if not WorldMapFrame.viewerOverlayPin then
-        WorldMapFrame.viewerOverlayPin = CreateFrame("Frame", "LootCollectorViewerOverlayPin", targetPin)
-        WorldMapFrame.viewerOverlayPin:SetSize(32, 32)
-        WorldMapFrame.viewerOverlayPin:SetFrameStrata("TOOLTIP")
-        WorldMapFrame.viewerOverlayPin:SetFrameLevel(targetPin:GetFrameLevel() + 10)
-
-        -- Creates glowing border using built-in texture.
-        WorldMapFrame.viewerOverlayPin.glowTexture = WorldMapFrame.viewerOverlayPin:CreateTexture(nil, "OVERLAY")
-        WorldMapFrame.viewerOverlayPin.glowTexture:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
-        WorldMapFrame.viewerOverlayPin.glowTexture:SetBlendMode("ADD")
-        WorldMapFrame.viewerOverlayPin.glowTexture:SetVertexColor(1, 0.8, 0.3, 1)
-        WorldMapFrame.viewerOverlayPin.glowTexture:SetSize(46, 46)
-        WorldMapFrame.viewerOverlayPin.glowTexture:SetPoint("CENTER", WorldMapFrame.viewerOverlayPin, "CENTER", 0, 0)
-
-        -- Creates item icon that fills inside the border.
-        WorldMapFrame.viewerOverlayPin.itemTexture = WorldMapFrame.viewerOverlayPin:CreateTexture(nil, "ARTWORK")
-        WorldMapFrame.viewerOverlayPin.itemTexture:SetSize(24, 24)
-        WorldMapFrame.viewerOverlayPin.itemTexture:SetPoint("CENTER", WorldMapFrame.viewerOverlayPin, "CENTER", 0, 0)
-
-        -- Animation variables for pulsing glow.
-        WorldMapFrame.viewerOverlayPin.glowTime = 0
-
-        -- Sets up pulsing animation with smooth transitions.
-        WorldMapFrame.viewerOverlayPin:SetScript("OnUpdate", function(self, delta)
-            self.glowTime = self.glowTime + delta
-            if self.glowTime > 1.0 then
-                self.glowTime = 0
-            end
-
-            local progress = self.glowTime / 1.0
-            local alpha = 0.5 + 0.5 * math.sin(progress * math.pi)
-            local scale = 0.9 + 0.3 * math.sin(progress * math.pi)
-
-            self.glowTexture:SetAlpha(alpha)
-            self:SetScale(scale)
-        end)
-
-        -- Disables mouse events to allow the original pin to handle tooltips.
-        WorldMapFrame.viewerOverlayPin:EnableMouse(false)
-    else
-        -- Reparent the overlay to the new target pin
-        WorldMapFrame.viewerOverlayPin:SetParent(targetPin)
-        WorldMapFrame.viewerOverlayPin:SetFrameLevel(targetPin:GetFrameLevel() + 10)
-    end
-end
-
 function Viewer:ShowOnMap(discoveryData)
-    local discovery = discoveryData.discovery
+    local discovery = discoveryData.discovery or discoveryData
     if not discovery then
         print("LootCollector Viewer: No map data available for this discovery.")
         return
     end
 
-    -- Calculate worldMapID from c, z using ZoneList
-    local c = tonumber(discovery.c) or 0
-    local z = tonumber(discovery.z) or 0
-    local worldMapID = nil
-    
-    local ZoneList = L:GetModule("ZoneList", true)
-    if ZoneList and ZoneList.zoneInfoToMapId then
-        local key = c .. ":" .. z
-        worldMapID = ZoneList.zoneInfoToMapId[key]
-    end
-    
-    if not worldMapID then
-        print("LootCollector Viewer: Could not determine map ID for this discovery.")
+    local Map = L:GetModule("Map", true)
+    if not (Map and Map.FocusOnDiscovery) then
+        print("LootCollector Viewer: Map module is not available.")
         return
     end
 
-    -- Temporarily remove window from UISpecialFrames to prevent auto-closing when World Map opens
+    
     local windowName = self.window and self.window:GetName()
     local wasInSpecialFrames = false
     if windowName then
         wasInSpecialFrames = removeFromSpecialFrames(windowName)
     end
 
-    -- Clears any existing overlay pin before displaying a new one.
-    if WorldMapFrame.viewerOverlayPin then
-        WorldMapFrame.viewerOverlayPin:Hide()
-    end
-    Viewer.currentOverlayTarget = nil
-
-    -- Opens the World Map to the correct area.
-    local success, errorMsg = self:OpenWorldMapToArea(worldMapID)
-    if not success then
-        print(string.format("LootCollector Viewer: Failed to open map - %s", errorMsg or "unknown error"))
-        -- Restore window to UISpecialFrames if map opening failed
-        if wasInSpecialFrames and windowName then
-            addToSpecialFrames(windowName)
-        end
-        return
-    end
-
-    -- Finds the existing map pin and attaches the overlay to it.
-    if discovery.xy and discovery.xy.x and discovery.xy.y then
-        -- Finds the existing map pin for this discovery.
-        local Map = L:GetModule("Map", true)
-        local targetPin = nil
-
-        if Map and Map.pins then
-            for _, pin in ipairs(Map.pins) do
-                if pin.discovery and pin.discovery.g == discoveryData.guid then
-                    targetPin = pin
-                    break
-                end
-            end
-        end
-
-        if targetPin and targetPin:IsShown() then
-            -- Creates an overlay frame attached to the existing pin.
-            CreateViewerOverlayPin(targetPin)
-
-            -- Positions the overlay centered on the existing pin.
-            WorldMapFrame.viewerOverlayPin:ClearAllPoints()
-            WorldMapFrame.viewerOverlayPin:SetPoint("CENTER", targetPin, "CENTER", 0, 0)
-            WorldMapFrame.viewerOverlayPin:Show()
-
-            -- Stores discovery data for the tooltip and tracks current overlay target.
-            WorldMapFrame.viewerOverlayPin.discoveryData = discoveryData
-            Viewer.currentOverlayTarget = discoveryData.guid
-
-            -- Sets the item icon texture.
-            local Map = L:GetModule("Map", true)
-            if Map and Map.GetDiscoveryIcon then
-                local itemIcon = Map:GetDiscoveryIcon(discovery)
-                if itemIcon then
-                    WorldMapFrame.viewerOverlayPin.itemTexture:SetTexture(itemIcon)
-                end
-            end
-        else
-            -- Fallback: retries after a short delay in case pins haven't loaded yet.
-            createTimer(0.5, function()
-                local Map = L:GetModule("Map", true)
-                local targetPin = nil
-
-                if Map and Map.pins then
-                    for _, pin in ipairs(Map.pins) do
-                        if pin.discovery and pin.discovery.g == discoveryData.guid then
-                            targetPin = pin
-                            break
-                        end
-                    end
-                end
-
-                if targetPin and targetPin:IsShown() then
-                    -- Creates an overlay frame attached to the existing pin.
-                    CreateViewerOverlayPin(targetPin)
-
-                    -- Positions the overlay centered on the existing pin.
-                    WorldMapFrame.viewerOverlayPin:ClearAllPoints()
-                    WorldMapFrame.viewerOverlayPin:SetPoint("CENTER", targetPin, "CENTER", 0, 0)
-                    WorldMapFrame.viewerOverlayPin:Show()
-
-                    -- Stores discovery data for the tooltip and tracks current overlay target.
-                    WorldMapFrame.viewerOverlayPin.discoveryData = discoveryData
-                    Viewer.currentOverlayTarget = discoveryData.guid
-
-                    -- Sets the item icon texture.
-                    local Map = L:GetModule("Map", true)
-                    if Map and Map.GetDiscoveryIcon then
-                        local itemIcon = Map:GetDiscoveryIcon(discovery)
-                        if itemIcon then
-                            WorldMapFrame.viewerOverlayPin.itemTexture:SetTexture(itemIcon)
-                        end
-                    end
-                else
-                    -- If no pin is found after retry, hides the overlay.
-                    if WorldMapFrame.viewerOverlayPin then
-                        WorldMapFrame.viewerOverlayPin:Hide()
-                    end
-                end
-            end)
-        end
-    end
-
-    -- Retrieves the localized zone name using ZoneList.
-    local zoneName = GetLocalizedZoneName(discovery)
-
-    -- Store the restoration state for the World Map hooks
+    
+    Map:FocusOnDiscovery(discovery)
+    
+    
     if wasInSpecialFrames and windowName then
         self.restoreToSpecialFrames = true
         self.windowNameToRestore = windowName
-        self.inMapOperation = true -- Persistent flag for window protection
+        self.inMapOperation = true 
     end
-end
-
--- Helper function to open the world map to a specific areaID.
-function Viewer:OpenWorldMapToArea(areaID)
-    if not areaID or areaID == 0 then return false, "invalid areaID" end
-
-    -- Stores the areaID to be set when the map frame becomes available.
-    Viewer.pendingMapAreaID = areaID
-
-    -- If WorldMapFrame is already open, attempts to set the map immediately.
-    if WorldMapFrame and WorldMapFrame:IsShown() then
-        self:SetWorldMapToPendingArea()
-        return true, "map set immediately"
-    end
-
-    -- Ensures the WorldMapFrame is shown. The map setting will be handled by a hook when it's displayed.
-    if InCombatLockdown() then
-        -- Defers opening the map until after combat.
-        local f = CreateFrame("Frame")
-        f:RegisterEvent("PLAYER_REGEN_ENABLED")
-        f:SetScript("OnEvent", function(_, evt)
-            if evt == "PLAYER_REGEN_ENABLED" then
-                -- Re-opens the map to trigger the setting mechanism.
-                ShowUIPanel(WorldMapFrame)
-                f:UnregisterEvent("PLAYER_REGEN_ENABLED")
-            end
-        end)
-        return true, "deferred due to combat"
-    else
-        -- Opens the WorldMapFrame.
-        ShowUIPanel(WorldMapFrame)
-        return true, "map opened"
-    end
-
-    return true, "map setting deferred to WorldMapFrame OnShow"
 end
 
 function Viewer:OnInitialize()
     self:CreateWindow()
     L:RegisterMessage("LootCollector_DiscoveriesUpdated", function(event, action, guid, discoveryData)
-        -- Handles incremental cache updates based on the action.
+        
         if action == "add" and guid and discoveryData then
-            -- Adds a new discovery to the cache.
+            
             if Cache.discoveriesBuilt and not Cache.discoveriesBuilding then
                 self:AddDiscoveryToCache(guid, discoveryData)
-                -- Refreshes the UI immediately if the window is shown.
+                
                 if self.window and self.window:IsShown() then
                     self:RefreshData()
                 end
             end
         elseif action == "update" and guid and discoveryData then
-            -- Updates an existing discovery in the cache.
+            
             if Cache.discoveriesBuilt and not Cache.discoveriesBuilding then
-                self:AddDiscoveryToCache(guid, discoveryData) -- This handles updates too.
-                -- Refreshes the UI immediately if the window is shown.
+                self:AddDiscoveryToCache(guid, discoveryData) 
+                
                 if self.window and self.window:IsShown() then
                     self:RefreshData()
                 end
             end
         elseif action == "remove" and guid then
-            -- Removes a discovery from the cache.
+            
             if Cache.discoveriesBuilt and not Cache.discoveriesBuilding then
                 self:RemoveDiscoveryFromCache(guid)
-                -- Refreshes the UI immediately if the window is shown.
+                
                 if self.window and self.window:IsShown() then
                     self:RefreshData()
                 end
             end
         elseif action == "clear" then
-            -- Clears all caches and rebuilds.
+            
             Cache.discoveriesBuilt = false
             Cache.discoveriesBuilding = false
             Cache.discoveries = {}
@@ -3969,18 +4815,18 @@ function Viewer:OnInitialize()
             Cache.uniqueValuesValid = false
             Cache.uniqueValuesContext = {}
             Cache.duplicateItems = {}
-            -- Refreshes the UI immediately if the window is shown.
+            
             if self.window and self.window:IsShown() then
                 self:RefreshData()
             end
         else
-            -- Fallback: invalidates filtered results for unknown actions.
+            
             if Cache.discoveriesBuilt and not Cache.discoveriesBuilding then
                 Cache.filteredResults = {}
                 Cache.lastFilterState = nil
                 Cache.uniqueValuesValid = false
                 Cache.uniqueValuesContext = {}
-                -- Refreshes the UI immediately if the window is shown.
+                
                 if self.window and self.window:IsShown() then
                     self:RefreshData()
                 end
@@ -3988,61 +4834,29 @@ function Viewer:OnInitialize()
         end
     end)
 
-    -- Hooks WorldMapFrame OnShow to set the map if a pending areaID exists.
-    if WorldMapFrame then
-        WorldMapFrame:HookScript("OnShow", function()
-            -- Only sets the map if there is a pending areaID and the viewer window is currently shown.
-            if Viewer.pendingMapAreaID and Viewer.window and Viewer.window:IsShown() then
-                Viewer:SetWorldMapToPendingArea()
-            end
-        end)
-    end
-
-    -- Hooks WorldMapFrame OnHide to restore Viewer to UISpecialFrames after map closes.
+    
     if WorldMapFrame then
         WorldMapFrame:HookScript("OnHide", function()
-            Viewer.pendingMapAreaID = nil
-            -- Hides the overlay pin when the map is closed.
-            if WorldMapFrame.viewerOverlayPin then
-                WorldMapFrame.viewerOverlayPin:Hide()
-            end
-            Viewer.currentOverlayTarget = nil
-
-            -- Restore window to UISpecialFrames after map closes
+            
             if Viewer.restoreToSpecialFrames and Viewer.windowNameToRestore then
-                -- Small delay to ensure map is fully closed before restoration
+                
                 createTimer(0.1, function()
-                    -- Restore to UISpecialFrames for ESC functionality
+                    
                     if Viewer.window and Viewer.window:IsShown() then
                         addToSpecialFrames(Viewer.windowNameToRestore)
                     end
-                    -- Clear restoration state
+                    
                     Viewer.restoreToSpecialFrames = false
                     Viewer.windowNameToRestore = nil
-                    Viewer.inMapOperation = false -- Clear persistent flag
+                    Viewer.inMapOperation = false 
                 end)
             end
         end)
     end
 
-    -- Create a cleanup frame to handle map changes and pin updates
-    if not Viewer.mapCleanupFrame then
-        Viewer.mapCleanupFrame = CreateFrame("Frame")
-        Viewer.mapCleanupFrame:RegisterEvent("WORLD_MAP_UPDATE")
-        Viewer.mapCleanupFrame:SetScript("OnEvent", function(self, event)
-            if event == "WORLD_MAP_UPDATE" then
-                -- Hide overlay when map changes zones
-                if WorldMapFrame.viewerOverlayPin then
-                    WorldMapFrame.viewerOverlayPin:Hide()
-                end
-                Viewer.currentOverlayTarget = nil
-            end
-        end)
-    end
-
-    -- Initializes the Clear All button state.
+    
     self:UpdateClearAllButton()
-    -- Initializes filter button states.
+    
     self:UpdateFilterButtonStates()
 end
 
@@ -4050,25 +4864,41 @@ function Viewer:Show()
     if not self.window then
         self:CreateWindow()
     end
+    
+      local t0 = time()
+    VDebug("Show: start, currentFilter=" .. tostring(self.currentFilter) ..
+        ", cacheBuilt=" .. tostring(Cache.discoveriesBuilt) ..
+        ", building=" .. tostring(Cache.discoveriesBuilding))
+
+    
+    
+    
+    if WorldMapFrame then
+        self.window:SetFrameLevel(WorldMapFrame:GetFrameLevel() - 1)
+    else
+        
+        self.window:SetFrameLevel(FRAME_LEVEL)
+    end
+    
+
     self.window:Show()
     self.currentPage = self.currentPage or 1
-    self.currentFilter = self.currentFilter or "equipment"
+    self.currentFilter = self.currentFilter or "eq"
     self:UpdateFilterButtons()
     self:UpdateSortHeaders()
     self:UpdateFilterButtonStates()
     self:RefreshData()
 
-
-
-    -- Clears any pending map state when the viewer is shown to prevent unwanted map opening.
+    
     self.pendingMapAreaID = nil
+    VDebug("Show: end, elapsed=" .. tostring(time() - t0) .. "s")
 end
 
 function Viewer:Hide()
     if self.window then
         self.window:Hide()
     end
-    -- Clears pending map state when the viewer is hidden.
+    
     self.pendingMapAreaID = nil
 end
 
@@ -4080,7 +4910,6 @@ function Viewer:Toggle()
     end
 end
 
--- Static popup for delete confirmation.
 StaticPopupDialogs["LOOTCOLLECTOR_VIEWER_DELETE"] = {
     text = "%s",
     button1 = "Yes, Delete",
@@ -4088,7 +4917,7 @@ StaticPopupDialogs["LOOTCOLLECTOR_VIEWER_DELETE"] = {
     OnAccept = function(self, data)
         if data and data.viewer and data.guid then
             data.viewer:DeleteDiscovery(data.guid)
-            -- No need to clear all caches, DeleteDiscovery handles cache removal.
+            
         end
     end,
     timeout = 0,
@@ -4097,7 +4926,6 @@ StaticPopupDialogs["LOOTCOLLECTOR_VIEWER_DELETE"] = {
     showAlert = true,
 }
 
--- Static popup for bulk delete confirmation.
 StaticPopupDialogs["LOOTCOLLECTOR_VIEWER_DELETE_ALL_FROM_PLAYER"] = {
     text = "%s",
     button1 = "Yes, Delete All",
@@ -4105,7 +4933,7 @@ StaticPopupDialogs["LOOTCOLLECTOR_VIEWER_DELETE_ALL_FROM_PLAYER"] = {
     OnAccept = function(self, data)
         if data and data.viewer and data.playerName then
             data.viewer:DeleteAllFromPlayer(data.playerName)
-            -- Cache management is handled by DeleteAllFromPlayer.
+            
         end
     end,
     timeout = 0,
@@ -4114,52 +4942,6 @@ StaticPopupDialogs["LOOTCOLLECTOR_VIEWER_DELETE_ALL_FROM_PLAYER"] = {
     showAlert = true,
 }
 
-function Viewer:SetWorldMapToPendingArea()
-    if not self.pendingMapAreaID or not WorldMapFrame or not WorldMapFrame:IsShown() then
-        return
-    end
-
-    local areaID = self.pendingMapAreaID
-    self.pendingMapAreaID = nil -- Clears it immediately.
-
-    local success = false
-    -- Attempts to use direct APIs first.
-    if SetMapByID then
-        pcall(SetMapByID, areaID)
-        success = (GetCurrentMapAreaID() == areaID)
-    end
-
-    -- Fallback to ZoneList table if direct API failed or is not available.
-    if not success then
-        local ZoneList = L and L:GetModule("ZoneList", true)
-        if ZoneList and ZoneList.mapIdToZoneInfo and ZoneList.mapIdToZoneInfo[areaID] then
-            local zoneInfo = ZoneList.mapIdToZoneInfo[areaID]
-            if zoneInfo.c and zoneInfo.z then
-                pcall(SetMapZoom, zoneInfo.c, zoneInfo.z)
-                success = (GetCurrentMapAreaID() == areaID)
-            end
-        end
-    end
-
-    -- Last resort: one-time scan through all map continents and zones.
-    if not success then
-        for c = 1, #({ GetMapContinents() }) do
-            local zones = { GetMapZones(c) }
-            for z = 1, #zones do
-                pcall(SetMapZoom, c, z)
-                if GetCurrentMapAreaID() == areaID then
-                    success = true
-                    break
-                end
-            end
-            if success then break end
-        end
-    end
-
-    return success
-end
-
--- Provides slash commands for viewer management.
 SLASH_LootCollectorVIEWER1 = "/lcviewer"
 SLASH_LootCollectorVIEWER2 = "/lcv"
 SlashCmdList["LootCollectorVIEWER"] = function(msg)

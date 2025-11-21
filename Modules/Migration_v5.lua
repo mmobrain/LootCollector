@@ -1,7 +1,3 @@
--- Modules/Migration_v5.lua
--- This module provides a MANUAL, user-triggered process to preserve 'looted' data from old database schemas.
--- It no longer runs automatically to avoid conflicts with AceDB's initialization.
--- UNK.B64.UTF-8
 
 
 local L = LootCollector
@@ -113,7 +109,6 @@ function Migration:PreserveAndReset()
     if not rawDB.global then rawDB.global = {} end
     if not rawDB.profile then rawDB.profile = {} end
 
-
     local lookupByZIXY2, zoneToContinent = BuildContinentLookupsFromDiscoveries(rawDB)
  
     if not rawDB.profiles then rawDB.profiles = {} end
@@ -137,15 +132,13 @@ function Migration:PreserveAndReset()
         print("|cffff7f00LootCollector:|r [1/4] No character 'looted' data found to preserve.")
     end
 
-
     if rawDB.global and rawDB.global.discoveries then
         wipe(rawDB.global.discoveries)
         print("|cff00ff00LootCollector:|r [2/4] Old discovery database has been cleared.")
     end
     if rawDB.global and rawDB.global.blackmarketVendors then
-        wipe(rawDB.global.blackmarketVendors) -- Also clear vendors
+        wipe(rawDB.global.blackmarketVendors) 
     end
-
 
     local ImportExport = L:GetModule("ImportExport", true)
     if ImportExport and type(_G.LootCollector_OptionalDB_Data) == "table" and _G.LootCollector_OptionalDB_Data.data ~= "" then
@@ -186,7 +179,7 @@ function Migration:PreserveAndReset()
                 if c and z and i then
                     wfLookup[c] = wfLookup[c] or {}
                     wfLookup[c][z] = wfLookup[c][z] or {}
-                    wfLookup[c][z][i] = guid -- WF are unique per zone, so this is safe for now
+                    wfLookup[c][z][i] = guid 
                 end
             end
         end
@@ -222,11 +215,10 @@ function Migration:PreserveAndReset()
     end
     print("|cff00ff00LootCollector:|r [4/4] Database version updated. Addon will now reload.")
     
-    -- Clear the legacy flag and reload
+    
     L.LEGACY_MODE_ACTIVE = false
     ReloadUI()
 end
-
 
 function Migration:Deserialize(s)
 	local AceSerializer = LibStub and LibStub("AceSerializer-3.0", true)
@@ -266,4 +258,3 @@ function Migration:OnInitialize()
 end
 
 return Migration
--- QSBBIEEgQSBBIEEgQSBBIEEgQQrwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5Kl

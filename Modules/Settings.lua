@@ -1,5 +1,3 @@
--- Settings.lua
--- UNK.B64.UTF-8
 
 
 local L = LootCollector
@@ -76,12 +74,14 @@ local function refreshUI()
 end
 
 local function ShowTopContributors()
-	if not L.db and L.db.global and L.db.global.discoveries then
+    
+	local discoveries = L:GetDiscoveriesDB()
+	if not discoveries then
 		print("|cffff7f00LootCollector|r Database not found.")
 		return
 	end
 	local counts = {}
-	for _, d in pairs(L.db.global.discoveries) do
+	for _, d in pairs(discoveries) do
 		if d and d.fp and d.fp ~= "" and d.fp ~= "Unknown" then
 			counts[d.fp] = (counts[d.fp] or 0) + 1
 		end
@@ -123,6 +123,7 @@ end
 local function ensureDefaults()
 	if not L.db and L.db.profile then return end
 	local p = L.db.profile
+	if p.hidePlayerNames == nil then p.hidePlayerNames = false end
 	p.sharing = p.sharing or {}
 	if p.sharing.enabled == nil then p.sharing.enabled = true end
 	if p.sharing.anonymous == nil then p.sharing.anonymous = false end
@@ -139,8 +140,7 @@ local function ensureDefaults()
 
 	
 	p.toasts = p.toasts or {}
-	if p.toasts.enabled == nil then p.toasts.enabled = true end
-	if p.toasts.hidePlayerNames == nil then p.toasts.hidePlayerNames = false end
+	if p.toasts.enabled == nil then p.toasts.enabled = true end	
 	if p.toasts.displayTime == nil then p.toasts.displayTime = 5.0 end
 	if p.toasts.tickerEnabled == nil then p.toasts.tickerEnabled = true end
 	if p.toasts.tickerSpeed == nil then p.toasts.tickerSpeed = 90 end
@@ -212,6 +212,20 @@ local function buildOptions()
 							refreshUI()
 						end,
 					},
+					hidePlayerNames = {
+						type = "toggle",
+						name = "Hide Player Names",
+						order = 4.5, 
+						desc = "Replaces finder names in toasts and map tooltips with a generic message.",
+						get = function()
+							return L.db and L.db.profile and L.db.profile.toasts and L.db.profile.toasts.hidePlayerNames
+						end,
+						set = function(_, v)
+							if not L.db or not L.db.profile then return end
+							L.db.profile.toasts = L.db.profile.toasts or {}
+							L.db.profile.toasts.hidePlayerNames = v
+						end,
+					},
                     showMinimap = {
                         type = "toggle",
                         name = "Show on Minimap",
@@ -239,8 +253,8 @@ local function buildOptions()
                         type = "range",
                         name = "Max Minimap Distance (yards)",
                         order = 5.1,
-                        desc = "Set to 0 for unlimited distance. Only show icons on the minimap if they are within this many yards of you.",
-                        min = 0, max = 5000, step = 10,
+                        desc = "Only show icons on the minimap if they are within this many yards of you.",
+                        min = 100, max = 5000, step = 10,
                         disabled = function() return not L.db.profile.mapFilters.showMinimap end,
                         get = function() return L.db.profile.mapFilters.maxMinimapDistance end,
                         set = function(_, v) L.db.profile.mapFilters.maxMinimapDistance = v; refreshUI() end,
@@ -289,6 +303,7 @@ local function buildOptions()
                             end
                         end,
                     },
+			  
 					
 					toastHeader = {
 						type = "header",
@@ -312,22 +327,7 @@ local function buildOptions()
 								Toast:ApplySettings()
 							end
 						end,
-					},
-					hideToastPlayerNames = {
-						type = "toggle",
-						name = "Hide Player Names from Toasts",
-						order = 11.5,
-						desc = "Replaces 'Player found [Item]' with '[Item] was spotted!'",
-						disabled = function()
-							return not (L.db and L.db.profile and L.db.profile.toasts and L.db.profile.toasts.enabled)
-						end,
-						get = function()
-							return L.db.profile.toasts.hidePlayerNames
-						end,
-						set = function(_, v)
-							L.db.profile.toasts.hidePlayerNames = v
-						end,
-					},
+					},					
 					toastDisplayTime = {
 						type = "range",
 						name = "Toast Display Time",
@@ -545,7 +545,7 @@ local function buildOptions()
 							local Comm = L:GetModule("Comm", true)
 
 							if v then
-								-- Logic for ENABLING sharing
+								
 								print("|cff00ff00LootCollector:|r Sharing enabled.")
 								if Comm then
 									if L.channelReady then
@@ -555,7 +555,7 @@ local function buildOptions()
 									end
 								end
 							else
-								-- Logic for DISABLING sharing
+								
 								if Comm and Comm.LeavePublicChannel then
 									Comm:LeavePublicChannel()
 								end
@@ -697,19 +697,33 @@ local function buildOptions()
 							stringToList(v, L.db.profile.sharing.blockList)
 						end,
 					},
-                    purgeBlockedData = {
-                        type = "execute",
-                        name = "Purge Blocked Players Data",
-                        desc = "Removes all discoveries from your database where the original finder ('fp') is on your block list.",
+                    purgeGroup = {
+                        type = "group",
+                        name = "",
                         order = 30.1,
-                        func = function()
-                            local Core = L:GetModule("Core", true)
-                            if Core and Core.PurgeDiscoveriesFromBlockedPlayers then
-                                Core:PurgeDiscoveriesFromBlockedPlayers()
-                            else
-                                print("|cffff7f00LootCollector:|r Core module not available to perform purge.")
-                            end
-                        end,
+                        inline = true,
+                        args = {
+                            spacer = {
+                                type = "description",
+                                name = "",
+                                width = "full",
+                                order = 1,
+                            },
+                            purgeBlockedData = {
+                                type = "execute",
+                                name = "Purge Blocked Players Data",
+                                desc = "Removes all discoveries from your database where the original finder ('fp') is on your block list.",
+                                order = 2,
+                                func = function()
+                                    local Core = L:GetModule("Core", true)
+                                    if Core and Core.PurgeDiscoveriesFromBlockedPlayers then
+                                        Core:PurgeDiscoveriesFromBlockedPlayers()
+                                    else
+                                        print("|cffff7f00LootCollector:|r Core module not available to perform purge.")
+                                    end
+                                end,
+                            },
+                        },
                     },
 					whiteList = {
 						type = "input",
@@ -736,7 +750,7 @@ local function buildOptions()
                 args = {
                     intro_text = {
                         type = "description",
-                        name = "Hi there! \n\nI'm Skulltrail, and I'm thrilled to present LootCollector - my first-ever WoW addon! \nI'm over the moon that so many players are finding it useful! 😊\n\nA huge shoutout to all the amazing contributors for their incredible help and hard work. This addon wouldn't be what it is today without you! \nBig thanks to: |cffFFD700Deidre, Rhenyra, Morty, Markosz, Bandit Tech|r, and all the awesome community helpers out there.\n\nIf you'd like to support me, I'd love to hear what you enjoy about LootCollector or any ideas for improvement. Feel free to drop me a message on Discord @Skulltrail!",
+                        name = "Hi there! \n\nI'm Skulltrail, and I'm thrilled to present LootCollector - my first-ever WoW addon! \n\nA huge shoutout to all the amazing contributors for their incredible help and hard work. This addon wouldn't be what it is today without you! \nBig thanks to: |cffFFD700Deidre, Rhenyra, Morty, Markosz, Bandit Tech|r, and all the awesome community helpers out there.\n\nIf you'd like to support me, I'd love to hear what you enjoy about LootCollector or any ideas for improvement. Feel free to drop me a message on Discord @Skulltrail!",
                         fontSize = "large",
                         order = 10,
                     },
@@ -776,7 +790,7 @@ local function buildOptions()
 end
 
 function Settings:OnInitialize()
-	-- This function now runs in legacy mode to provide feedback.
+	
 	
 	local function showLegacyMessage()
 		print("|cffff0000LootCollector is in Legacy Mode!|r")
@@ -786,15 +800,15 @@ function Settings:OnInitialize()
 	end
 
 	if L.LEGACY_MODE_ACTIVE then
-		-- Register commands with a legacy handler
+		
 		self:RegisterChatCommand("lc", showLegacyMessage)
 		self:RegisterChatCommand("lootcollector", showLegacyMessage)
 		SLASH_LCLIST1 = "/lclist"
 		SlashCmdList["LCLIST"] = showLegacyMessage
-		return -- Stop further initialization
+		return 
 	end
 
-	-- Normal initialization code (runs only if not in legacy mode)
+	
 	if not L.db and L.db.profile then return end
 	ensureDefaults()
 
@@ -853,4 +867,3 @@ function Settings:OnInitialize()
 end
 
 return Settings
--- QSBBIEEgQSBBIEEgQSBBIEEgQQrwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5Kl

@@ -1,6 +1,3 @@
--- Reinforce.lua
--- 3.3.5a-safe reinforcement scheduler and distributed takeover for LootCollector
--- UNK.B64.UTF-8
 
 
 local L = LootCollector
@@ -13,12 +10,11 @@ local CONFIRMATION_THRESHOLD = 7
 local GRACE_SEC, MIN_SPACING, JITTER_MIN, JITTER_MAX = 1200, 3.40, 5, 30
 local now = time
 
--- MODIFIED: Reinforce.queue is now used as a dictionary { [guid] = { fireAt, guid } }
 Reinforce.queue, Reinforce.lastSendAt, Reinforce.scanAccum, Reinforce.scanPeriod = {}, 0, 0, 60
 Reinforce.scanNextKey = nil
 Reinforce.scanInProgress = false
-local SCAN_CHUNK_SIZE = 300       -- Records to process per tick during a scan
-local MAX_ENQUEUE_PER_SCAN = 10 -- Max items to add to the reinforcement queue during a single full scan cycle
+local SCAN_CHUNK_SIZE = 300       
+local MAX_ENQUEUE_PER_SCAN = 10 
 
 local function buildGuid3(c,z,i,x,y) return tostring(c or 0).."-"..tostring(z or 0).."-"..tostring(i or 0).."-"..string.format("%.2f",L:Round2(x or 0)).."-"..string.format("%.2f",L:Round2(y or 0)) end
 local function selfName() return UnitName("player") or "?" end
@@ -52,10 +48,10 @@ local function ensurePerDiscoveryFields(d)
     end
 end
 
--- MODIFIED: Replaced linear array search with O(1) dictionary lookup.
 function Reinforce:HandleConfirmation(norm)
     if not norm or not norm.xy then return end
-    local db = L.db.global.discoveries or {}
+    
+    local db = L:GetDiscoveriesDB() or {}
     local guid = buildGuid3(norm.c, norm.z, norm.i, norm.xy.x, norm.xy.y)
     local d = db[guid]
 
@@ -66,7 +62,6 @@ function Reinforce:HandleConfirmation(norm)
     d.at = now() 
     recomputeNextDue(d) 
     
-    -- O(1) removal from queue
     if Reinforce.queue[guid] then
         d.pendingAnnounce = nil 
         Reinforce.queue[guid] = nil
@@ -104,21 +99,27 @@ end
 local function shouldEnqueue(d)
     ensurePerDiscoveryFields(d)
     
+    
+    local Constants = L:GetModule("Constants", true)
+    if Constants and Constants.ALLOWED_DISCOVERY_TYPES and d.dt then
+        if Constants.ALLOWED_DISCOVERY_TYPES[d.dt] == false then
+            
+            return false
+        end
+    end
+    
     if (tonumber(d.ac) or 0) >= MAX_STEPS then return false end
     if not d.nd or d.nd <= 0 then return false end
 
     local tnow = now()
 
-    
     if d.pendingAnnounce and (tnow - (tonumber(d.pendingAnnounce) or 0)) < 120 then
         return false
     end
 
-    
     local origin = d.o or "Unknown"
     local canSend = (origin == selfName() or origin == "Unknown" or origin == "An Unnamed Collector")
 
-    
     if d.onHold then
         if not isMine(d) then
             return false
@@ -126,10 +127,12 @@ local function shouldEnqueue(d)
     end
 
     
+    local gracePeriod = (Constants and Constants.REINFORCE_TAKEOVER_GRACE_SECONDS) or GRACE_SEC
+
     if canSend then
         return tnow >= d.nd
     else
-        return tnow >= (d.nd + GRACE_SEC)
+        return tnow >= (d.nd + gracePeriod)
     end
 end
 
@@ -138,7 +141,9 @@ local function discoveryPayloadFrom(d)
     local s_flag = (fpName == "An Unnamed Collector") and 1 or 0
     if s_flag == 1 then fpName = "" end 
     
-    return {
+    L._debug("Reinforce-Payload", string.format("Building payload for broadcast. Discovery has src: %s, dt: %s", tostring(d.src), tostring(d.dt)))
+
+    local payload = {
       g   = d.g,
       il  = d.il,
       i   = d.i,
@@ -151,10 +156,19 @@ local function discoveryPayloadFrom(d)
       q   = d.q or 1,
       fp  = fpName,
       s   = s_flag,
+      
     }
+
+    
+    local Constants = L:GetModule("Constants", true)
+    if Constants and payload.dt and tonumber(payload.dt) == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
+        payload.src = d.src
+        L._debug("Reinforce-Payload", " -> It's a Mystic Scroll. Added 'src' field: " .. tostring(payload.src))
+    end
+
+    return payload
 end
 
--- MODIFIED: Use GUID as the key for the dictionary.
 local function enqueue(d)
     local jitter = randint(JITTER_MIN, JITTER_MAX)
     local fireAt = math.max(now(), (tonumber(d.nd) or now())) + jitter
@@ -162,14 +176,18 @@ local function enqueue(d)
     d.pendingAnnounce = fireAt
 end
 
--- MODIFIED: Iterate with pairs() over the dictionary and remove by key.
 local function drainQueueOnce()
+    local p = L and L.db and L.db.profile
+    if not (p and p.sharing and p.sharing.enabled) then
+        if next(Reinforce.queue) then wipe(Reinforce.queue) end
+        return 
+    end
+
     local Comm = L:GetModule("Comm", true)
     if not Comm or not Comm.BroadcastReinforcement then return end
     local tnow = now()
     if (tnow - Reinforce.lastSendAt) < MIN_SPACING then return end
     
-    -- Check if the queue is empty
     if not next(Reinforce.queue) then return end
     
     local bestGuid, bestFireAt = nil, nil
@@ -182,13 +200,15 @@ local function drainQueueOnce()
     
     if not bestGuid or bestFireAt > tnow then return end
     
-    -- Retrieve and remove the *best* entry
     local q = Reinforce.queue[bestGuid]
     Reinforce.queue[bestGuid] = nil
     
-    local db = L.db.global.discoveries or {}
+    
+    local db = L:GetDiscoveriesDB() or {}
     local d = db[q.guid]
     if not d or (tonumber(d.ac) or 0) >= MAX_STEPS then return end
+    
+    L._debug("Reinforce", "Broadcasting reinforcement for GUID: " .. tostring(d.g)) 
     
     local payload = discoveryPayloadFrom(d)
     Comm:BroadcastReinforcement(payload)
@@ -207,11 +227,13 @@ local function startScan()
     Reinforce.scanNextKey = nil 
     Reinforce.enqueuedThisCycle = 0
 end
+Reinforce.startScan = startScan
 
 local function processScanChunk()
     if not Reinforce.scanInProgress then return end
     
-    local db = L.db.global.discoveries or {}
+    
+    local db = L:GetDiscoveriesDB() or {}
     if not next(db) then
         Reinforce.scanInProgress = false
         return
@@ -224,7 +246,6 @@ local function processScanChunk()
         local key, value = next(db, currentKey)
 
         if not key then
-            
             Reinforce.scanInProgress = false
             Reinforce.scanNextKey = nil
             return
@@ -241,7 +262,6 @@ local function processScanChunk()
         processedInChunk = processedInChunk + 1
         currentKey = key 
     end
-    
     
     Reinforce.scanNextKey = currentKey
 end
@@ -265,6 +285,15 @@ function Reinforce:OnEnable()
     
     if tickerFrame then
         tickerFrame:SetScript("OnUpdate", function(_, e)
+            
+            local p = L and L.db and L.db.profile
+            if not (p and p.sharing and p.sharing.enabled) then
+                
+                if next(Reinforce.queue) then wipe(Reinforce.queue) end
+                Reinforce.scanInProgress = false
+                return
+            end
+
             Reinforce.scanAccum = Reinforce.scanAccum + e
             if Reinforce.scanAccum >= Reinforce.scanPeriod then
                 Reinforce.scanAccum = 0
@@ -292,4 +321,3 @@ function Reinforce:OnDisable()
 end
 
 return Reinforce
--- QSBBIEEgQSBBIEEgQSBBIEEgQQrwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5Kl

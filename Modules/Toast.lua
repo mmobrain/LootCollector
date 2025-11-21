@@ -1,7 +1,3 @@
--- Toast.lua
--- Displays toast notifications with a buffered queue, "anonymous" batching, and a ticker overflow for heavy load (3.3.5a-safe).
--- Session-based special ticker with smoothing/fades, font controls, and correct routing (normal first, special only after threshold).
--- UNK.B64.UTF-8
 
 
 local L = LootCollector
@@ -1049,28 +1045,17 @@ if L.LEGACY_MODE_ACTIVE then return end
 	end)
 end
 
+    
 local function resolveZoneName(rec)
 	local c = tonumber(rec.c) or 0
 	local z = tonumber(rec.z) or 0
 	local iz = tonumber(rec.iz) or 0
-	if L.ResolveZoneDisplay then
-		return L.ResolveZoneDisplay(c, z, iz)
-	end
-    
-	local ZoneList = L:GetModule("ZoneList", true)
-	if ZoneList then
-		if z == 0 and iz > 0 and ZoneList.ResolveIz then
-			return ZoneList:ResolveIz(iz) or GetRealZoneText() or "Unknown Instance"
-		end
-		if ZoneList.GetZoneName then
-			return ZoneList:GetZoneName(c, z, nil, iz) 
-		end
-	end
-	if z == 0 and iz > 0 then
-		return GetRealZoneText() or "Unknown Instance"
-	end
-	return "Unknown Zone"
+	
+	
+	return L.ResolveZoneDisplay(c, z, iz)
 end
+
+  
 
 local function finderDisplay(rec)
 	local s = tonumber(rec.s) or 0
@@ -1130,4 +1115,3 @@ function Toast:NotifyOnHoldBatch(records)
 end
 
 return Toast
--- QSBBIEEgQSBBIEEgQSBBIEEgQQrwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5Kl

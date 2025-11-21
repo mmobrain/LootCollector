@@ -1,8 +1,3 @@
--- Comm.lua
--- Project Ascension (3.3.5a) compatible communications module for LootCollector
--- v5 protocol with ACK, rate limiting, encoded-first public channel send with v5 plain fallback,
--- strict parsing/validation, proactive channel health, and Core-based routing.
--- UNK.B64.UTF-8
 
 
 local L = LootCollector
@@ -40,18 +35,11 @@ local GFIX_VALID_HASHES = {
 }
 local cachedRealmNameFirstWord = (GetRealmName() or ""):match("^[^- ]+") or ""
 
-
-
 local function isBlacklisted(str)
-    if not str or str == "" or not XXH_Lua_Lib then return false end
-    
+    if not str or str == "" then return false end
     local Constants = L:GetModule("Constants", true)
     if not Constants then return false end
-
-    local combined_str = str .. Constants.HASH_SAP
-    local hash_val = XXH_Lua_Lib.XXH32(combined_str, Constants.HASH_SEED)
-    local hex_hash = string.format("%08x", hash_val)
-    return Constants.HASH_BLACKLIST and Constants.HASH_BLACKLIST[hex_hash]
+    return Constants:IsHashInList(str, "HASH_BLACKLIST")
 end
 
 local function compareVersions(v1, v2)
@@ -124,10 +112,9 @@ Comm._seq = 0
 Comm._seen = {}
 Comm.verbose = false
 
--- MODIFIED@301025: Added queue and batch processing constants
 Comm._incomingMessageQueue = {}
-local PROCESS_INTERVAL = 0.2 -- How often to process the queue
-local BATCH_SIZE = 5       -- How many messages to process at once
+local PROCESS_INTERVAL = 0.2 
+local BATCH_SIZE = 5       
 Comm._processTimer = 0
 
 local function _debug(mod, msg) return end
@@ -232,11 +219,13 @@ local function _shouldDropDedupe(mid)
     end
     
     
+    local Constants = L:GetModule("Constants", true)
+    local seenTTL = (Constants and Constants.SEEN_TTL_SECONDS) or (Comm.seenTTL or 1800)
     
     local tnow = now()
     local prev = Comm._seen[mid]
     
-    if prev and (tnow - prev) < (Comm.seenTTL or 900) then
+    if prev and (tnow - prev) < seenTTL then
         
         return true
     end
@@ -316,7 +305,7 @@ function Comm:EnsureChannelJoined()
     if not (p and p.sharing and p.sharing.enabled) then return end
     if self:IsChannelHealthy() then return end
     
-    local ch = self.channelName or "BBLCC25"
+    local ch = self.channelName or "BBLCC25TEST"
     JoinPermanentChannel(ch)
     if DEFAULT_CHAT_FRAME then
         ChatFrame_AddChannel(DEFAULT_CHAT_FRAME, ch)
@@ -346,12 +335,18 @@ function Comm:LeavePublicChannel()
     self.channelId = 0
 end
 
-local function _buildWireV5_DISC(discovery)
+function Comm:_buildWireV5_DISC(discovery)
     local itemID = _extractItemID(discovery and (discovery.i or discovery.il))
     if not itemID then return nil end
     
     local x = discovery and discovery.xy and discovery.xy.x or 0
     local y = discovery and discovery.xy and discovery.xy.y or 0
+    
+    local Constants = L:GetModule("Constants", true)
+    local src_value = nil
+    if Constants and discovery and discovery.dt and tonumber(discovery.dt) == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
+        src_value = discovery.src
+    end
     
     local w = {
         v = 5,
@@ -370,21 +365,29 @@ local function _buildWireV5_DISC(discovery)
         it = discovery and discovery.it,
         ist = discovery and discovery.ist,
         cl = discovery and discovery.cl,
-        src = discovery and discovery.src,
+        src = src_value, 
         fp = discovery.fp,
     }
+
+    L._debug("Comm-Build", string.format("Building DISC packet. dt=%s, src=%s", tostring(w.dt), tostring(w.src)))
     
     w.mid = _computeMid(w)
     w.seq = _nextSeq()
     return w
 end
 
-local function _buildWireV5_CONF(discovery)
+function Comm:_buildWireV5_CONF(discovery)
     local itemID = _extractItemID(discovery and (discovery.i or discovery.il))
     if not itemID then return nil end
     
     local x = discovery and discovery.xy and discovery.xy.x or 0
     local y = discovery and discovery.xy and discovery.xy.y or 0
+    
+    local Constants = L:GetModule("Constants", true)
+    local src_value = nil
+    if Constants and discovery and discovery.dt and tonumber(discovery.dt) == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
+        src_value = discovery.src
+    end
     
     local w = {
         v = 5,
@@ -403,20 +406,23 @@ local function _buildWireV5_CONF(discovery)
         it = discovery and discovery.it,
         ist = discovery and discovery.ist,
         cl = discovery and discovery.cl,
-        src = discovery and discovery.src,
+        src = src_value, 
         fp = discovery.fp,
     }
+
+    L._debug("Comm-Build", string.format("Building CONF packet. dt=%s, src=%s", tostring(w.dt), tostring(w.src)))
     
     w.mid = _computeMid(w)
     w.seq = _nextSeq()
     return w
 end
 
-local function _buildWireV5_SHOW(discovery)
+function Comm:_buildWireV5_SHOW(discovery)
     local itemID = _extractItemID(discovery and (discovery.i or discovery.il))
     if not itemID then return nil end
 
-    
+    L._debug("Comm-Build", string.format("Building SHOW packet. Discovery has dt: %s, src: %s", tostring(discovery.dt), tostring(discovery.src)))
+
     local vendorItemIDs = nil
     if discovery.vendorItems and type(discovery.vendorItems) == "table" then
         vendorItemIDs = {}
@@ -427,6 +433,12 @@ local function _buildWireV5_SHOW(discovery)
         end
     end
     
+    local Constants = L:GetModule("Constants", true)
+    local src_value = nil
+    if Constants and discovery and discovery.dt and tonumber(discovery.dt) == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
+        src_value = discovery.src
+    end
+
     local payload = {
         v = 5,
         op = "SHOW",
@@ -442,25 +454,35 @@ local function _buildWireV5_SHOW(discovery)
         il = discovery.il,
         fp = discovery.fp or "Unknown",
         dt = discovery.dt,
+        src = src_value, 
         vendorType = discovery.vendorType,
-        
         vendorName = discovery.vendorName,
         vendorItemIDs = vendorItemIDs,
     }
+
+    L._debug("Comm-Build", string.format(" -> SHOW payload prepared with dt=%s, src=%s", tostring(payload.dt), tostring(payload.src)))
+
     return payload
 end
 
-local function _buildWireV5_GFIX(fixData)
+function Comm:_buildWireV5_GFIX(fixData)
     if not fixData then return nil end
+    
+    
+    if not (fixData.i and fixData.c and fixData.z and fixData.type) then return nil end
+
     return {
         v = 5,
         op = "GFIX",
         av = L.Version or "0.0.0",
         payload = fixData,
+        
+        mid = _computeMid({v=5, op="GFIX", i=fixData.i, c=fixData.c, z=fixData.z, t=now()}),
+        seq = _nextSeq(),
     }
 end
 
-local function _buildWireV5_ACK(discovery, ackMid, act)
+function Comm:_buildWireV5_ACK(discovery, ackMid, act)
     if not ackMid or ackMid == "" then return nil end
     
     local legal = { DET = true, VER = true, SPM = true, DUP = true }
@@ -488,7 +510,7 @@ local function _buildWireV5_ACK(discovery, ackMid, act)
     return w
 end
 
-local function _buildWireV5_CORR(corr_data)
+function Comm:_buildWireV5_CORR(corr_data)
     if not corr_data then return nil end
     return {
         v = 5,
@@ -509,7 +531,7 @@ function Comm:SendAceCommPayload(wire)
     
     local dist = _pickDistribution()
     if dist then
-        self:SendCommMessage(self.addonPrefix or "BBLCAM25", payload, dist)
+        self:SendCommMessage(self.addonPrefix or "BBLCAM25TEST", payload, dist)
     end
 end
 
@@ -517,26 +539,21 @@ local function _enqueueChannelWire(wire)
     table.insert(Comm._rateLimitQueue, { tinserted = now(), wire = wire })
 end
 
--- temporary solution for bad data
 local function _isSenderRestricted(name)
-    if not name or name == "" or not XXH_Lua_Lib then return false end
+    if not name or name == "" then return false end
     local Constants = L:GetModule("Constants", true)
-    if not Constants or not Constants.rHASH_BLACKLIST then return false end
+    if not Constants then return false end
     
     local normalizedName = L:normalizeSenderName(name)
     if not normalizedName then return false end
-    
-    local combined_str = normalizedName .. Constants.HASH_SAP
-    local hash_val = XXH_Lua_Lib.XXH32(combined_str, Constants.HASH_SEED)
-    local hex_hash = string.format("%08x", hash_val)
-
-    return Constants.rHASH_BLACKLIST[hex_hash] == true
+       
+    return Constants:IsHashInList(normalizedName, "rHASH_BLACKLIST")
 end
 
 function Comm:BroadcastDiscovery(discovery)
--- temporary
-     local locale = GetLocale()
-    if not (locale == "enUS" or locale == "enGB") then return end
+
+     
+    
     local Core = L:GetModule("Core", true)
     if Core and Core.isSB and Core:isSB() then return end
 
@@ -564,7 +581,7 @@ function Comm:BroadcastDiscovery(discovery)
         end
     end
     
-    local w = _buildWireV5_DISC(discovery)
+    local w = self:_buildWireV5_DISC(discovery)
     if not w then return end
     
     self:SendAceCommPayload(w)
@@ -572,9 +589,9 @@ function Comm:BroadcastDiscovery(discovery)
 end
 
 function Comm:BroadcastReinforcement(discovery)
--- temporary
-   local locale = GetLocale()
-    if not (locale == "enUS" or locale == "enGB") then return end
+
+   
+    
     local p = L and L.db and L.db.profile
     if not (p and p.sharing and p.sharing.enabled) then return end
 
@@ -587,34 +604,34 @@ function Comm:BroadcastReinforcement(discovery)
         end
     end
     
-    local w = _buildWireV5_CONF(discovery)
+    local w = self:_buildWireV5_CONF(discovery)
     if not w then return end
     
     self:SendAceCommPayload(w)
     _enqueueChannelWire(w)
 end
 
-
-    
-
 function Comm:BroadcastShow(discovery, targetPlayer)
     if not discovery or not targetPlayer or targetPlayer == "" then
-        
         return
     end
 
-    local w = _buildWireV5_SHOW(discovery)
+    L._debug("Comm-Broadcast", string.format("BroadcastShow called. Discovery has dt: %s, src: %s", tostring(discovery.dt), tostring(discovery.src)))
+
+    local Constants = L:GetModule("Constants", true)
+    local isVendor = discovery.dt and Constants and discovery.dt == Constants.DISCOVERY_TYPE.BLACKMARKET
+    if isVendor and discovery.vendorItems and #discovery.vendorItems > 10 then
+        print(string.format("|cffff7f00LootCollector:|r Cannot show vendor to %s. It has too many items (%d) to send via whisper.", targetPlayer, #discovery.vendorItems))
+        return
+    end
+
+    local w = self:_buildWireV5_SHOW(discovery)
     if not w then 
-        
         return 
     end
 
-    
-    
-
     local ok, payload = pcall(AceSerializer.Serialize, AceSerializer, w)
     if not ok or type(payload) ~= "string" then 
-        
         return 
     end
 
@@ -623,26 +640,22 @@ function Comm:BroadcastShow(discovery, targetPlayer)
 end
 
 function Comm:BroadcastGuidedFix(fixData)
-    local w = _buildWireV5_GFIX(fixData)
+    local w = self:_buildWireV5_GFIX(fixData)
     if not w then return end
 
-    local ok, payload = pcall(AceSerializer.Serialize, AceSerializer, w)
-    if not ok or not payload then
-        
-        return
-    end
     
-    local dist = _pickDistribution()
-    if dist then
-        self:SendCommMessage(self.addonPrefix, payload, dist)
-        print(string.format("|cff00ff00LootCollector:|r Sent guided fix command to %s.", dist))
-    else
-        print("|cffff7f00LootCollector:|r Could not send guided fix: Not in a party, raid, or guild.")
-    end
+    self:SendAceCommPayload(w)
+    
+    
+    
+    _enqueueChannelWire(w)
+    
+    print(string.format("|cff00ff00LootCollector:|r Broadcasted GFIX (Type %d) for item %d to network.", fixData.type or 0, fixData.i or 0))
 end
 
 function Comm:BroadcastAckFor(discovery, ackMid, act)
-    local w = _buildWireV5_ACK(discovery, ackMid, act)
+
+    local w = self:_buildWireV5_ACK(discovery, ackMid, act)
     if not w then return end
     
     self:SendAceCommPayload(w)
@@ -654,8 +667,9 @@ function Comm:BroadcastAckFor(discovery, ackMid, act)
 end
 
 function Comm:BroadcastCorrection(corr_data)
+
     if not (L and L.db and L.db.profile and L.db.profile.sharing and L.db.profile.sharing.enabled) then return end
-    local w = _buildWireV5_CORR(corr_data)
+    local w = self:_buildWireV5_CORR(corr_data)
     if not w then return end
     
     self:SendAceCommPayload(w)
@@ -674,10 +688,24 @@ local function _sendChannelWireEncoded(wire)
     local okE, encoded = pcall(LibDeflate.EncodeForPrint, LibDeflate, compressed)
     if not okE or not encoded then return false end
     
-    if #encoded > (Comm.maxChatBytes or 240) then return false end
     
-    local msg = "LC1:" .. encoded
-    SendChatMessage(msg, "CHANNEL", nil, Comm.channelId or 0)
+    
+    local op = wire.op or "DISC"
+    local mid = wire.mid or ""
+    
+    
+    if op:find(":") or mid:find(":") then
+        
+        local msg = "LC1:" .. encoded
+        if #msg > (Comm.maxChatBytes or 240) then return false end
+        SendChatMessage(msg, "CHANNEL", nil, Comm.channelId or 0)
+    else
+        
+        local msg = string.format("LC1:%s:%s:%s", op, mid, encoded)
+        if #msg > (Comm.maxChatBytes or 240) then return false end
+        SendChatMessage(msg, "CHANNEL", nil, Comm.channelId or 0)
+    end
+
     return true
 end
 
@@ -790,26 +818,24 @@ local function _bucketTake()
     return false
 end
 
--- NEW: Batch processor function
 function Comm:_processIncomingQueue()
-    -- Re-get Core module instance in case it wasn't ready on init
+    
     if not Core then Core = L:GetModule("Core", true) end
     if not Core or not Core.AddDiscovery then return end
     if not self._incomingMessageQueue or #self._incomingMessageQueue == 0 then return end
 
     local processedCount = 0
-    -- Process up to BATCH_SIZE messages
+    
     while processedCount < BATCH_SIZE and #self._incomingMessageQueue > 0 do
         local entry = table.remove(self._incomingMessageQueue, 1)
         if entry and entry.data and entry.options then
-            -- The actual call to the expensive function is now throttled
+            
             Core:AddDiscovery(entry.data, entry.options)
             processedCount = processedCount + 1
         end
     end
 end
 
--- MODIFIED: OnUpdate to include the new batch processor
 function Comm:OnUpdate(elapsed)
     if self._delayQueue and #self._delayQueue > 0 then
         local tnow = now()
@@ -826,27 +852,26 @@ function Comm:OnUpdate(elapsed)
     end
     
     if not self._rateLimitQueue or #self._rateLimitQueue == 0 then
-        -- No outgoing messages, but still process incoming
+        
     else
         if _bucketTake() then
             local entry = table.remove(self._rateLimitQueue, 1)
             if entry and entry.wire then
                 local sent = _sendWireToNetwork(entry.wire)
                 if not sent then
-                    table.insert(self._rateLimitQueue, 1, entry) -- Re-queue at the front if send failed
+                    table.insert(self._rateLimitQueue, 1, entry) 
                 end
             end
         end
     end
     
-    -- NEW: Batch processor for incoming messages
+    
     self._processTimer = (self._processTimer or 0) + elapsed
     if self._processTimer >= PROCESS_INTERVAL then
         self:_processIncomingQueue()
         self._processTimer = 0
     end
 end
-
 
 local function _lc_isPlausiblePayload(msg)
     return type(msg) == "string" and msg:match("^LC[1-5]:")
@@ -1099,7 +1124,6 @@ function Comm:_trackInvalidSender(sender, reason)
 end
 
 local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelName)
-    
     if sender == UnitName("player") then
         return
     end
@@ -1107,41 +1131,82 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
     local chA = string.upper(channelName or "")
     local chB = string.upper(Comm.channelName or "")
     if chA ~= chB then return end
+	
+    L._debug("Comm-Chat", string.format("Event CHAT_MSG_CHANNEL from %s on channel %s.", sender, channelName))
     
-    
+
     if isSenderPermanentlyBlacklisted(sender) then
-        
         return
     end
-    
     
     if not _lc_isPlausiblePayload(msg) then
-    
         return
     end
     
     
+    
+    local optOp, optMid, optEncoded = msg:match("^LC1:(%u+):([^:]+):(.+)$")
+    
+    if optOp and optMid then
+        
+        
+        
+        if optOp == "CONF" then
+            if Core and Core.IsDiscoveryFresh and Core:IsDiscoveryFresh(optMid) then
+                L._debug("Comm-Opt", "Skipping redundant CONF for fresh MID: " .. tostring(optMid))
+                return 
+            end
+        end
+        
+        
+        
+        if L.db and L.db.global and L.db.global.deletedCache and L.db.global.deletedCache[optMid] then
+             
+             if optOp ~= "DISC" then
+                 L._debug("Comm-Opt", "Skipping message for deleted MID: " .. tostring(optMid))
+                 return
+             end
+        end
+        
+        
+        
+        
+        local data = _lc_tryDecodeEncodedPayload("LC1:" .. optEncoded)
+        if data then
+            
+             local tbl, reason = _lc_validateNormalized(data)
+            if not tbl then
+                trackInvalidSender(sender, reason)
+                return
+            end
+             if isSenderSessionIgnored(sender) then return end
+             Comm:RouteIncoming(tbl, "CHANNEL", sender or "Unknown")
+             return
+        end
+    end
+    
+    
+    L._debug("Comm-Parse", "Attempting to parse legacy/standard payload...")
     
     local data = _lc_tryDecodeEncodedPayload(msg)
     if data then
-    
+        L._debug("Comm-Parse", "SUCCESS: Decoded as standard encoded payload.")
     else
-    
+        L._debug("Comm-Parse", "INFO: Encoded parse failed, trying plain text formats.")
         data = _lc_parsePlainV5(msg)
         if data then
-    
+            L._debug("Comm-Parse", "SUCCESS: Parsed as plain V5 payload.")
         else
             data = _lc_parsePlainV1(msg)
             if data then
-            
+                L._debug("Comm-Parse", "SUCCESS: Parsed as legacy plain V1 payload.")
             else
-            
+                L._debug("Comm-Parse", "FAIL: No valid format detected. Dropping message.")
                 return
             end
         end
     end
 
-    
     local Constants = L:GetModule("Constants", true)
     if Constants and Constants.GetMinCompatibleVersion then
         local minVersion = Constants:GetMinCompatibleVersion()
@@ -1153,14 +1218,11 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
     
     local tbl, reason = _lc_validateNormalized(data)
     if not tbl then
-        
         trackInvalidSender(sender, reason)
         return
     end
     
-    
     if isSenderSessionIgnored(sender) then
-        
         return
     end
     
@@ -1168,59 +1230,60 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
 end
 
 function Comm:OnCommReceived(prefix, message, distribution, sender)
-    if prefix ~= (self.addonPrefix or "BBLC25AM") then return end
+    if prefix ~= (self.addonPrefix or "BBLC25AMTEST") then return end
     if type(message) ~= "string" then return end
     
+    L._debug("Comm-Ace", string.format("OnCommReceived from: %s via %s | Msg Length: %d", tostring(sender), tostring(distribution), #message))
     
     if isSenderPermanentlyBlacklisted(sender) then
-        
+        L._debug("Comm-Filter", "REJECT: Permanently blacklisted sender: " .. sender)
         return
     end
     
-    
-    
+    L._debug("Comm-Parse", "Attempting to deserialize AceComm payload...")
     local ok, data = AceSerializer:Deserialize(message)
     if not ok or type(data) ~= "table" then
-    
+        L._debug("Comm-Parse", "FAIL: AceSerializer failed to deserialize payload. Dropping.")
         return
     end
+    L._debug("Comm-Parse", "SUCCESS: Deserialized AceComm payload.")
 
-    
-    
-    
-    
     local Constants = L:GetModule("Constants", true)
     if Constants and Constants.GetMinCompatibleVersion then
         local minVersion = Constants:GetMinCompatibleVersion()
         if not data.av or compareVersions(data.av, minVersion) < 0 then
-            
+            L._debug("Comm-Filter", "REJECT: Incompatible version from " .. sender .. ". Received " .. tostring(data.av) .. ", requires " .. minVersion)
             return 
         end
     end
     
     local tbl, reason = _lc_validateNormalized(data)
     if not tbl then
-        
+        L._debug("Comm-Filter", "FAIL: Deserialized data failed validation. Reason: " .. reason)
         trackInvalidSender(sender, reason)
         return
     end
     
-    
     if isSenderSessionIgnored(sender) then
-        
+        L._debug("Comm-Filter", "SUPPRESS: Suppressing valid message from session-ignored sender: " .. sender)
         return
     end
     
     Comm:RouteIncoming(tbl, distribution or "ACE", sender or "Unknown")
 end
 
-function Comm:RouteIncoming(tbl, via, sender)    
+function Comm:RouteIncoming(tbl, via, sender)   
+	local Dev = L:GetModule("DevCommands", true)
+    if Dev and Dev.LogPerformanceMessage then
+        Dev:LogPerformanceMessage(sender)
+    end
 	
+	L._debug("Comm-Route", string.format("Routing parsed payload from %s via %s. OP: %s, Item: %s, Zone: %s", sender, via, tostring(tbl.op), tostring(tbl.i), tostring(tbl.z)))
+
     if sender == UnitName("player") and not L._INJECT_TEST_MODE then
         return
-    end    
+    end      
 	           
-
     local isAuthorizedGfixSender = false
     if tbl.op == "GFIX" then
         local senderName = L:normalizeSenderName(sender) or ""
@@ -1228,28 +1291,30 @@ function Comm:RouteIncoming(tbl, via, sender)
         local hash_val = XXH_Lua_Lib.XXH32(hash_str, GFIX_SEED)
         local hex_hash = string.format("%08x", hash_val)
         if GFIX_VALID_HASHES[hex_hash] then
-            isAuthorizedGfixSender = true
+            isAuthorizedGfixSender = true			
         end
     end
     
-    -- MODIFIED: Block incoming DISC/CONF from players on the restricted hash list.
+    
+    if tbl.op == "GFIX" and not isAuthorizedGfixSender then
+        L._debug("Comm-Route", "Blocked unauthorized GFIX from: " .. sender)
+        return
+    end
+    
     if (tbl.op == "DISC" or tbl.op == "CONF") then
         if _isSenderRestricted(sender) or (tbl.fp and tbl.fp ~= "" and _isSenderRestricted(tbl.fp)) then
-            return -- Silently drop packet from restricted sender.
+            return
         end
     end
         
     if not isAuthorizedGfixSender then
         if isBlacklisted(sender) then
-            
             return
         end
         if tbl.fp and tbl.fp ~= "" and isBlacklisted(tbl.fp) then
-            
             return
         end
-	  
-    end
+	end
     
     if Core and Core.isSB and Core:isSB() then
 	  return
@@ -1276,12 +1341,8 @@ function Comm:RouteIncoming(tbl, via, sender)
         end
     end
     
-    
-    
-    
     if L and L.IsPaused and L:IsPaused() then
         if L.pauseQueue and L.pauseQueue.incoming and tbl.op ~= "ACK" and tbl.op ~= "CORR" then
-            
             table.insert(L.pauseQueue.incoming, tbl)
         end
         return
@@ -1289,11 +1350,10 @@ function Comm:RouteIncoming(tbl, via, sender)
     
     local Core = L:GetModule("Core", true)
     if not Core then
-        
         return
     end
     
-    -- Handle immediate op types first
+    
     if tbl.op == "ACK" then
         if Core.HandleAck then Core:HandleAck(tbl, sender, via) end
         return
@@ -1302,7 +1362,6 @@ function Comm:RouteIncoming(tbl, via, sender)
         return
     elseif tbl.op == "SHOW" then
         if not (L.db and L.db.profile and L.db.profile.sharing and L.db.profile.sharing.allowShowRequests) then
-            
             return
         end
         
@@ -1315,25 +1374,22 @@ function Comm:RouteIncoming(tbl, via, sender)
             op = "SHOW",
             
             dt = tbl.dt,
+            src = tbl.src, 
             vendorType = tbl.vendorType,
             vendorName = tbl.vendorName,
             vendorItemIDs = tbl.vendorItemIDs,
         }
+        L._debug("Comm-Route", string.format(" -> SHOW data normalized for popup: dt=%s, src=%s", tostring(normalizedShowData.dt), tostring(normalizedShowData.src)))
         
         StaticPopup_Show("LOOTCOLLECTOR_SHOW_DISCOVERY_REQUEST", sender, normalizedShowData.il, normalizedShowData)
         return
     elseif tbl.op == "GFIX" then
-        if isAuthorizedGfixSender then
-            
-            if Core.HandleGuidedFix then
-                local delay = math.random(30, 80)
-                L:ScheduleAfter(delay, function()
-                    
-                    Core:HandleGuidedFix(tbl.payload)
-                end)
-            end
-        else
-            
+        
+        if Core.HandleGuidedFix then            
+            local delay = math.random(2, 10) 
+            L:ScheduleAfter(delay, function()
+                Core:HandleGuidedFix(tbl.payload)
+            end)
         end
         return
     end
@@ -1341,30 +1397,26 @@ function Comm:RouteIncoming(tbl, via, sender)
     
     local norm = _normalizeForCore(tbl, sender, self)
     if not norm then
-        
         return
     end
-    
     
     if _shouldDropDedupe(norm.mid) then return end
     
     if isSenderBlockedByProfile(sender) then
-    
         return
     end
-    
-    -- Also check if the 'fp' field is on the block list.
+	
+	
     if tbl.fp and tbl.fp ~= "" then
         local p = L and L.db and L.db.profile and L.db.profile.sharing
         if p and p.blockList then
             local fpName = L:normalizeSenderName(tbl.fp)
             if fpName and p.blockList[fpName] then
-                -- Silently drop if the discovery's finder ('fp') is on the block list.
+                
                 return
             end
         end
     end
-  
     
 	local nm = tbl.n or (tbl.l and tbl.l:match("%[(.-)%]"))    
     if not nm and tbl.i then
@@ -1379,8 +1431,20 @@ function Comm:RouteIncoming(tbl, via, sender)
             return 
         end
     end
-	
     
+    
+    if self._incomingMessageQueue and #self._incomingMessageQueue > 0 then
+        for _, queued in ipairs(self._incomingMessageQueue) do
+            
+            if queued.data then
+                if norm.mid and queued.data.mid and norm.mid == queued.data.mid then
+                    L._debug("Comm-Route", "Dropping duplicate message already in queue: " .. tostring(norm.mid))
+                    return
+                end
+            end
+        end
+    end
+	
     table.insert(self._incomingMessageQueue, {
         data = norm,
         options = { isNetwork = true, op = tbl.op }
@@ -1421,12 +1485,6 @@ function Comm:OnEnable()
     if L.LEGACY_MODE_ACTIVE then return end
     self:EnsureChannelJoined()
 end
-
-function Comm:OnEnable()
-    if L.LEGACY_MODE_ACTIVE then return end
-    self:EnsureChannelJoined()
-end
-
 
 function Comm:ClearCaches()
     wipe(self._seen)

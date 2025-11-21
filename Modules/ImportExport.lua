@@ -1,5 +1,4 @@
--- ImportExport.lua
--- UNK.B64.UTF-8
+
 
 local L = LootCollector
 local ImportExport = L:NewModule("ImportExport", "AceEvent-3.0")
@@ -193,70 +192,84 @@ local function countTableKeys(t)
 end
 
 local function buildExport(includeOverlays)
-	local discoveries, count = {}, 0
-	if L.db and L.db.global and L.db.global.discoveries then
-		for guid, d in pairs(L.db.global.discoveries) do
-			local rec = longKeyRecordFromShort(d)
-			if rec and rec.guid then
-				discoveries[rec.guid] = rec
-				count = count + 1
-			end
-		end
-	end
-
     
-    local blackmarketVendors, bm_count = {}, 0
-    if L.db and L.db.global and L.db.global.blackmarketVendors then
-        for guid, d in pairs(L.db.global.blackmarketVendors) do
+    local discoveries, count = {}, 0
+    
+    
+    local dbDiscs = L:GetDiscoveriesDB()
+    if dbDiscs then
+        for guid, d in pairs(dbDiscs) do
             local rec = longKeyRecordFromShort(d)
             if rec and rec.guid then
-                blackmarketVendors[rec.guid] = rec
-                bm_count = bm_count + 1
+                discoveries[rec.guid] = rec
+                count = count + 1
             end
         end
     end
 
-	local overlays = nil
-	if includeOverlays then
-		if L.db and L.db.char then
-			overlays = {looted = {}, hidden = {}}
-			for guid, ts in pairs(L.db.char.looted or {}) do
-				overlays.looted[guid] = tonumber(ts) or 1
-			end
-			for guid, on in pairs(L.db.char.hidden or {}) do
-				if on then overlays.hidden[guid] = true end
-			end
-		end
-	end
     
-	local profilesharing = nil
-	if L.db and L.db.profile and L.db.profile.sharing then
-		profilesharing = {blockList = {}, whiteList = {}}
-		for k, v in pairs(L.db.profile.sharing.blockList or {}) do
-			profilesharing.blockList[k] = v
-		end
-		for k, v in pairs(L.db.profile.sharing.whiteList or {}) do
-			profilesharing.whiteList[k] = v
-		end
-	end
+    local blackmarketVendors, bmcount = {}, 0
+    
+    local dbVends = L:GetVendorsDB()
+    if dbVends then
+        for guid, d in pairs(dbVends) do
+            local rec = longKeyRecordFromShort(d)
+            if rec and rec.guid then
+                blackmarketVendors[rec.guid] = rec
+                bmcount = bmcount + 1
+            end
+        end
+    end
 
-	return {
-		meta = {
-			v = 1,
-			addon = "LootCollector",
-			ts = now(),
-			counts = {
-				discoveries = count,
-                blackmarketVendors = bm_count,
-				looted = (overlays and countTableKeys(overlays.looted)) or 0,
-				hidden = (overlays and countTableKeys(overlays.hidden)) or 0,
-			},
-		},
-		discoveries = discoveries,
+    
+    local overlays = nil
+    if includeOverlays then
+        if L.db and L.db.char then
+            overlays = { looted = {}, hidden = {} }
+            for guid, ts in pairs(L.db.char.looted or {}) do
+                overlays.looted[guid] = tonumber(ts) or 1
+            end
+            for guid, on in pairs(L.db.char.hidden or {}) do
+                if on then
+                    overlays.hidden[guid] = true
+                end
+            end
+        end
+    end
+
+    
+    local profilesharing = nil
+    if L.db and L.db.profile and L.db.profile.sharing then
+        profilesharing = { blockList = {}, whiteList = {} }
+        for k, v in pairs(L.db.profile.sharing.blockList or {}) do
+            profilesharing.blockList[k] = v
+        end
+        for k, v in pairs(L.db.profile.sharing.whiteList or {}) do
+            profilesharing.whiteList[k] = v
+        end
+    end
+
+    local tnow = time()
+    local realmKey = L.GetActiveRealmKey and L:GetActiveRealmKey() or "Unknown Realm"
+
+    return {
+        meta = {
+            v = 1,
+            addon = "LootCollector",
+            ts = tnow,
+            realm = realmKey,
+            counts = {
+                discoveries = count,
+                blackmarketVendors = bmcount,
+                looted = overlays and countTableKeys(overlays.looted) or 0,
+                hidden = overlays and countTableKeys(overlays.hidden) or 0,
+            },
+        },
+        discoveries = discoveries,
         blackmarketVendors = blackmarketVendors,
-		overlays = overlays,
-		profilesharing = profilesharing,
-	}
+        overlays = overlays,
+        profilesharing = profilesharing,
+    }
 end
 
 local function serialize(tbl)
@@ -296,122 +309,112 @@ function ImportExport:ExportString(includeOverlays)
 end
 
 function ImportExport:ApplyImport(parsed, mode, withOverlays, skipBlacklist, skipWhitelist, isStarterDB)
-	if not (L.db and L.db.global) then return nil, "DB not ready" end
+	if not L.db then return nil, "DB not ready" end
+
+    local cityZoneIDsToPurge = {
+        [1] = { [382] = true, [322] = true, [363] = true },
+        [2] = { [342] = true, [302] = true, [383] = true },
+        [3] = { [482] = true },
+        [4] = { [505] = true }
+    }
 	
 	local disc = parsed.discoveries or {}
-	local applied = {total = 0, bm_total = 0, overlays = 0, profilelists = 0}
+	local applied = {total = 0, bm_total = 0, overlays = 0, profilelists = 0, skippedCity = 0}
 	
+    
+	local db = L:GetDiscoveriesDB()
+    local bm_db = L:GetVendorsDB()
+    
+    
+    if not db or not bm_db then return nil, "Realm DBs missing" end
+
 	if mode == "OVERRIDE" then
-		L.db.global.discoveries = {}
-        L.db.global.blackmarketVendors = {}
+        
+		wipe(db)
+        wipe(bm_db)
 	end
 	
-	local db = L.db.global.discoveries
-    local bm_db = L.db.global.blackmarketVendors
-    
-    local earlyBroadcastCandidates = {}
-    if isStarterDB then
-        for guid in pairs(disc) do
-            table.insert(earlyBroadcastCandidates, guid)
-        end
-        for i = #earlyBroadcastCandidates, 2, -1 do
-            local j = math.random(i)
-            earlyBroadcastCandidates[i], earlyBroadcastCandidates[j] = earlyBroadcastCandidates[j], earlyBroadcastCandidates[i]
-        end
-    end
-	
-    local currentTime = now()
-    local earlyBroadcastCount = 0
+    local currentTime = time()
 
 	for guid, d in pairs(disc) do
-		local shortRecord = {
-			g = d.guid,
-			c = d.continent,
-			z = d.zoneID,
-			iz = d.instanceID or 0,
-			i = d.itemID,
-			xy = d.coords,
-			il = d.itemLink,
-			q = d.itemQuality or 0,
-			t0 = d.timestamp,
-			ls = d.lastSeen,
-			st = d.statusTs,
-			s = d.status,
-			mc = d.mergeCount,
-			fp = d.foundBy_player,
-			o = d.originator,
-			src = d.source,
-			cl = d.class,
-			it = d.itemType or 0,
-			ist = d.itemSubType or 0,
-			dt = d.discoveryType or 0,
-			dby = d.deletedBy,
-			mid = d.messageID,
-			ac = d.announceCount,
-			nd = d.nextDueTs,
-			at = d.lastAnnouncedTs,
-			adc = d.ackDelCount,
-            
-            fp_votes = d.fp_votes,
-            ack_votes = d.ack_votes, 
-            
-            vendorType = d.vendorType,
-            vendorName = d.vendorName,
-            vendorItems = d.vendorItems,
-		}
-
-        if isStarterDB then
-            
-            shortRecord.at = currentTime
-            if earlyBroadcastCount < 10 and earlyBroadcastCandidates[earlyBroadcastCount + 1] == guid then
-                shortRecord.ac = 1
-                shortRecord.nd = currentTime + math.random(3600, 7200) 
-                earlyBroadcastCount = earlyBroadcastCount + 1
-            else
-                shortRecord.ac = 2
-                shortRecord.nd = currentTime + 3600 
-            end
+        if d.continent and d.zoneID and cityZoneIDsToPurge[d.continent] and cityZoneIDsToPurge[d.continent][d.zoneID] then
+            applied.skippedCity = applied.skippedCity + 1
         else
-            
-            shortRecord.at = currentTime 
-            shortRecord.ac = 1 
-            shortRecord.nd = currentTime + math.random(7200, 18000) 
-        end
+            local shortRecord = {
+                g = d.guid,
+                c = d.continent,
+                z = d.zoneID,
+                iz = d.instanceID or 0,
+                i = d.itemID,
+                xy = d.coords,
+                il = d.itemLink,
+                q = d.itemQuality or 0,
+                t0 = d.timestamp,
+                ls = d.lastSeen,
+                st = d.statusTs,
+                s = d.status,
+                mc = d.mergeCount,
+                fp = d.foundBy_player,
+                o = d.originator,
+                src = d.source,
+                cl = d.class,
+                it = d.itemType or 0,
+                ist = d.itemSubType or 0,
+                dt = d.discoveryType or 0,
+                dby = d.deletedBy,
+                mid = d.messageID,
+                
+                fp_votes = d.fp_votes,
+                ack_votes = d.ack_votes, 
+                
+                vendorType = d.vendorType,
+                vendorName = d.vendorName,
+                vendorItems = d.vendorItems,
+            }
 
-        if not shortRecord.fp_votes and shortRecord.fp and shortRecord.t0 then
-            shortRecord.fp_votes = { [shortRecord.fp] = { score = 1, t0 = shortRecord.t0 } }
+            shortRecord.ac = math.random(2, 4)
+            shortRecord.at = currentTime
+            shortRecord.nd = nil
+
+            if not shortRecord.fp_votes and shortRecord.fp and shortRecord.t0 then
+                shortRecord.fp_votes = { [shortRecord.fp] = { score = 1, t0 = shortRecord.t0 } }
+            end
+            
+            db[guid] = shortRecord
+            applied.total = applied.total + 1
         end
-		
-		db[guid] = shortRecord
-		applied.total = applied.total + 1
 	end
 	
-    
     local bm_vendors = parsed.blackmarketVendors or {}
     for guid, d in pairs(bm_vendors) do
-        local shortRecord = {
-			g = d.guid,
-			c = d.continent,
-			z = d.zoneID,
-			iz = d.instanceID or 0,
-			i = d.itemID,
-			xy = d.coords,
-			il = d.itemLink,
-			t0 = d.timestamp,
-			ls = d.lastSeen,
-			st = d.statusTs,
-			s = d.status,
-			fp = d.foundBy_player,
-			o = d.originator,
-			dt = d.discoveryType or 0,
-            vendorType = d.vendorType,
-            vendorName = d.vendorName,
-            vendorItems = d.vendorItems,
-		}
-        bm_db[guid] = shortRecord
-        applied.bm_total = applied.bm_total + 1
+        if d.continent and d.zoneID and cityZoneIDsToPurge[d.continent] and cityZoneIDsToPurge[d.continent][d.zoneID] then
+            applied.skippedCity = applied.skippedCity + 1
+        else
+            local shortRecord = {
+                g = d.guid,
+                c = d.continent,
+                z = d.zoneID,
+                iz = d.instanceID or 0,
+                i = d.itemID,
+                xy = d.coords,
+                il = d.itemLink,
+                t0 = d.timestamp,
+                ls = d.lastSeen,
+                st = d.statusTs,
+                s = d.status,
+                fp = d.foundBy_player,
+                o = d.originator,
+                dt = d.discoveryType or 0,
+                vendorType = d.vendorType,
+                vendorName = d.vendorName,
+                vendorItems = d.vendorItems,
+            }
+            bm_db[guid] = shortRecord
+            applied.bm_total = applied.bm_total + 1
+        end
     end
 
+    
 	if withOverlays then
 		if L.db and L.db.char and parsed.overlays then
 			if mode == "OVERRIDE" then
@@ -420,12 +423,12 @@ function ImportExport:ApplyImport(parsed, mode, withOverlays, skipBlacklist, ski
 			end
 			L.db.char.looted = L.db.char.looted or {}
 			for guid, ts in pairs(parsed.overlays.looted or {}) do
-				L.db.char.looted[guid] = tonumber(ts) or now()
+				L.db.char.looted[guid] = tonumber(ts) or time()
 				applied.overlays = applied.overlays + 1
 			end
 			L.db.char.hidden = L.db.char.hidden or {}
 			for guid, on in pairs(parsed.overlays.hidden or {}) do
-				L.db.char.hidden[guid] = (on and true or nil)
+				if on then L.db.char.hidden[guid] = true end
 			end
 		end
     end
@@ -453,33 +456,64 @@ function ImportExport:ApplyImport(parsed, mode, withOverlays, skipBlacklist, ski
         end
     end
 
-    
     if _G.LootCollectorDB_Asc then
-        _G.LootCollectorDB_Asc._schemaVersion = 6
+        _G.LootCollectorDB_Asc._schemaVersion = 7 
     end
 	
 	local Map = L:GetModule("Map", true)
-	if Map and Map.Update then Map:Update() end
+	if Map then
+        
+        Map.cacheIsDirty = true
+        
+        if Map.Update then Map:Update() end
+        if Map.UpdateMinimap then Map:UpdateMinimap() end
+    end
 	
 	return applied
 end
 
 function ImportExport:ApplyImportString(importString, mode, withOverlays, skipBlacklist, skipWhitelist)
-	local parsed, err = deserialize(importString)
-	if not parsed then
-		print("|cffff7f00LootCollector|r Import failed: " .. tostring(err))
-		return
-	end
-	
+    local parsed, err = deserialize(importString)
+    if not parsed then
+        print("|cffff7f00LootCollector|r Import failed: " .. tostring(err))
+        return
+    end
+
+    
     local isStarterDB = (_G.LootCollector_OptionalDB_Data and importString == _G.LootCollector_OptionalDB_Data.data)
-	
-	local res, err2 = self:ApplyImport(parsed, mode, withOverlays, skipBlacklist, skipWhitelist, isStarterDB)
-	if not res then
-		print("|cffff7f00LootCollector|r Failed to apply import: " .. tostring(err2))
-		return
-	end
-	
-	local msg = string.format("|cff00ff00LootCollector|r Import successful! Processed %d discoveries.", res.total)
+
+    
+    if not isStarterDB then
+        local activeRealm = L.GetActiveRealmKey and L:GetActiveRealmKey() or nil
+        local srcRealm = parsed.meta and parsed.meta.realm or nil
+
+        
+        
+        local function isAllowedCrossRealm(a, b)
+            if not a or not b then return false end
+            if (a == "Bronzebeard - Warcraft Reborn" and b == "Malfurion - Warcraft Reborn") then return true end
+            if (a == "Malfurion - Warcraft Reborn" and b == "Bronzebeard - Warcraft Reborn") then return true end
+            return false
+        end
+
+        if not srcRealm or srcRealm == "" then
+            print("|cffff7f00LootCollector|r Import rejected: the data has no realm metadata. Please re-export with a newer version.") 
+            return
+        end
+
+        if activeRealm and srcRealm ~= activeRealm and not isAllowedCrossRealm(srcRealm, activeRealm) then
+            print(string.format("|cffff7f00LootCollector|r Import rejected: source realm '%s' does not match current realm '%s'.", tostring(srcRealm), tostring(activeRealm)))
+            return
+        end
+    end
+
+    local res, err2 = self:ApplyImport(parsed, mode, withOverlays, skipBlacklist, skipWhitelist, isStarterDB)
+    if not res then
+        print("|cffff7f00LootCollector|r Failed to apply import: " .. tostring(err2))
+        return
+    end
+
+    local msg = string.format("|cff00ff00LootCollector|r Import successful! Processed %d discoveries.", res.total)
     if res.bm_total > 0 then
         msg = msg .. string.format(" Processed %d vendors.", res.bm_total)
     end
@@ -488,21 +522,21 @@ function ImportExport:ApplyImportString(importString, mode, withOverlays, skipBl
     elseif res.total > 0 then
         msg = msg .. " Reinforcement schedule has been staggered to prevent network spam."
     end
-	if res.overlays > 0 then
-		msg = msg .. string.format(" Applied %d overlay entries.", res.overlays)
-	end
-	if res.profilelists > 0 then
-		msg = msg .. string.format(" Merged %d player list entries.", res.profilelists)
-	end
-	print(msg)
-	
-    -- Trigger remapping after a successful import
+    if res.overlays > 0 then
+        msg = msg .. string.format(" Applied %d overlay entries.", res.overlays)
+    end
+    if res.profilelists > 0 then
+        msg = msg .. string.format(" Merged %d player list entries.", res.profilelists)
+    end
+    print(msg)
+
+    
     local Core = L:GetModule("Core", true)
     if Core and Core.RemapLootedHistoryV6 then
         Core:RemapLootedHistoryV6()
     end
-	
-	if Core then Core:ScanDatabaseForUncachedItems() end
+
+    if Core then Core:ScanDatabaseForUncachedItems() end
 end
 
 local function CreateEditDialog(name, title, isReadOnly)
@@ -710,12 +744,32 @@ local function abbreviateZoneIfNeeded(itemName, zoneName, d)
 	local zname = tostring(zoneName) or ""
 
 	if string.len(iname) + string.len(zname) > 38 then
+        L._debug("AbbrevCheck", string.format("Line too long (%d > 38). Checking for abbreviation.", string.len(iname) + string.len(zname)))
+        L._debug("AbbrevCheck", string.format(" -> Item: '%s', Zone: '%s'", iname, zname))
+        L._debug("AbbrevCheck", string.format(" -> Discovery data: c=%s, z=%s, iz=%s", tostring(d.c), tostring(d.z), tostring(d.iz)))
 		if ZoneList then
-			if d.z == 0 and d.iz > 0 and ZoneList.IZ_TO_ABBREVIATIONS and ZoneList.IZ_TO_ABBREVIATIONS[d.iz] then
-				return ZoneList.IZ_TO_ABBREVIATIONS[d.iz]
-			end
-			if ZoneList.ZONEABBREVIATIONS and ZoneList.ZONEABBREVIATIONS[zname] then
-				return ZoneList.ZONEABBREVIATIONS[zname]
+            
+            if (d.iz or 0) > 0 and ZoneList.IZ_TO_ABBREVIATIONS then
+                local lookupID = (d.z == 0 and d.iz) or d.z
+                L._debug("AbbrevCheck", " -> Is instance (iz > 0). Checking IZ_TO_ABBREVIATIONS with key: " .. tostring(lookupID))
+                if ZoneList.IZ_TO_ABBREVIATIONS[lookupID] then
+                    local abbrev = ZoneList.IZ_TO_ABBREVIATIONS[lookupID]
+                    L._debug("AbbrevCheck", " -> SUCCESS: Found instance abbreviation: '" .. abbrev .. "'")
+                    return abbrev
+                else
+                    L._debug("AbbrevCheck", " -> FAILED: No instance abbreviation found for ID " .. tostring(lookupID))
+                end
+            end
+            
+			if ZoneList.ZONEABBREVIATIONS then
+                L._debug("AbbrevCheck", " -> Checking ZONEABBREVIATIONS with key (zname): '" .. zname .. "'")
+				if ZoneList.ZONEABBREVIATIONS[zname] then
+                    local abbrev = ZoneList.ZONEABBREVIATIONS[zname]
+					L._debug("AbbrevCheck", " -> SUCCESS: Found world zone abbreviation: '" .. abbrev .. "'")
+                    return abbrev
+				else
+                    L._debug("AbbrevCheck", " -> FAILED: No world zone abbreviation found for that name.")
+                end
 			end
 		end
 	end
@@ -929,9 +983,9 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 		r.btnUnl:SetSize(buttonSize, buttonSize)
 		r.btnUnl:SetPoint("RIGHT", r.btnNav, "LEFT", -buttonSpacing, 0)
 		r.btnUnl:SetText("U")
-		r.btnUnl:SetScript("OnEnter", function()
-			GameTooltip:SetOwner(r.btnUnl, "ANCHOR_TOP")
-			GameTooltip:SetText("Mark as Unlooted")
+		r.btnNav:SetScript("OnEnter", function()
+			GameTooltip:SetOwner(r.btnNav, "ANCHOR_TOP")
+			GameTooltip:SetText("Navigate")
 			GameTooltip:Show()
 		end)
 		r.btnUnl:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -953,12 +1007,14 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 	
 	page.filterTimer = nil
 	function page.refresh()
-		if not L.db or not L.db.global then return end
-		
+		if not L.db then return end
+        
+        
 		local term = string.lower(edit:GetText() or "")
 		local list, totalCount = {}, 0
-		
-		for _, d in pairs(L.db.global.discoveries or {}) do
+		local discoveries = L:GetDiscoveriesDB() or {}
+        
+		for _, d in pairs(discoveries) do
 			if type(d) == "table" and dataFilterFunc(d) then
 				totalCount = totalCount + 1
 				
@@ -970,13 +1026,10 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
                     local iz = tonumber(d.iz) or 0
                     
                     if z == 0 and iz > 0 then
-                        
                         zoneName = (ZoneList and ZoneList.ResolveIz and ZoneList:ResolveIz(iz)) or "Unknown Instance"
                     else
-                        
                         zoneName = (ZoneList and ZoneList.GetZoneName and ZoneList:GetZoneName(c, z)) or "Unknown Zone"
                     end
-                    
                 end
                 zoneName = zoneName or ""
                 
@@ -1008,6 +1061,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 				r.discoveryData = d
 				
 				local lootedByMe = L.db.char.looted and L.db.char.looted[d.g]
+				
 				local zNameFull
 				do
 					local c = tonumber(d.c) or 0
@@ -1019,7 +1073,6 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
                     else
                         zNameFull = (ZoneList and ZoneList.GetZoneName and ZoneList:GetZoneName(c, z)) or "Unknown Zone"
                     end
-                    
 				end
 				zNameFull = zNameFull or ""
 				
@@ -1068,10 +1121,10 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 				end)
 				
 				r.btnNav:SetScript("OnClick", function()
-					local Arrow = L:GetModule("Arrow", true)
-					if Arrow and Arrow.PointToRecordV5 then
-						Arrow:PointToRecordV5(d)
-					end
+				    local Arrow = L:GetModule("Arrow", true)				    
+				    if Arrow and Arrow.NavigateTo then
+					  Arrow:NavigateTo(d)
+				    end
 				end)
 				
 				r.btnDel:SetScript("OnClick", function()
@@ -1254,12 +1307,25 @@ local function BuildBlackmarketPage(parent)
     inventoryTitle:SetPoint("TOPLEFT", 10, 0)
     inventoryTitle:SetText("Vendor Inventory")
 
+    
+    local invScroll = CreateFrame("ScrollFrame", nil, inventoryFrame, "FauxScrollFrameTemplate")
+    invScroll:SetPoint("TOPLEFT", inventoryTitle, "BOTTOMLEFT", 0, -8)
+    invScroll:SetPoint("BOTTOMRIGHT", inventoryFrame, "BOTTOMRIGHT", 0, 0)
+
     inventoryFrame.itemLines = {}
-    for i = 1, 30 do 
+     for i = 1, ROWS do 
         local line = CreateFrame("Button", nil, inventoryFrame)
-        line:SetHeight(20)
-        line:SetPoint("LEFT", 10, 0)
-        line:SetPoint("RIGHT", -10, 0)
+        line:SetHeight(ROWH)
+        
+        
+        line:SetPoint("RIGHT", invScroll, "RIGHT", 0, 0)
+        line:SetPoint("LEFT", invScroll, "LEFT", 8, 0)
+        
+        if i == 1 then
+            line:SetPoint("TOPLEFT", invScroll, "TOPLEFT", 8, 0)
+        else
+            line:SetPoint("TOPLEFT", inventoryFrame.itemLines[i-1], "BOTTOMLEFT", 0, 0)
+        end
         
         line.icon = line:CreateTexture(nil, "ARTWORK")
         line.icon:SetSize(18, 18)
@@ -1293,10 +1359,63 @@ local function BuildBlackmarketPage(parent)
         inventoryFrame.itemLines[i] = line
     end
 
+    
+    local function refreshInventory()
+        if page.selectedVendorGuid then
+            local dbVendors = L:GetVendorsDB()
+            local d = dbVendors and dbVendors[page.selectedVendorGuid]
+            
+            if d and d.vendorItems then
+                inventoryTitle:SetText(d.vendorName .. "'s Inventory")
+                
+                local numItems = #d.vendorItems
+                FauxScrollFrame_Update(invScroll, numItems, ROWS, ROWH)
+                local offset = FauxScrollFrame_GetOffset(invScroll)
+                
+                for i = 1, ROWS do
+                    local line = inventoryFrame.itemLines[i]
+                    local idx = offset + i
+                    if idx <= numItems then
+                        local itemData = d.vendorItems[idx]
+                        if itemData then
+                            local _, _, _, _, _, _, _, _, _, texture = GetItemInfo(itemData.link)
+                            line.icon:SetTexture(texture or "Interface\\Icons\\INV_Misc_QuestionMark")
+                            line.text:SetText(itemData.link)
+                            line.itemLink = itemData.link
+                            line.parentVendorData = d
+                            line:Show()
+                        else
+                            line:Hide()
+                        end
+                    else
+                        line:Hide()
+                    end
+                end
+            else
+                inventoryTitle:SetText("Vendor Inventory")
+                FauxScrollFrame_Update(invScroll, 0, ROWS, ROWH)
+                for _, line in ipairs(inventoryFrame.itemLines) do line:Hide() end
+            end
+        else
+            inventoryTitle:SetText("Select a vendor to view inventory")
+            FauxScrollFrame_Update(invScroll, 0, ROWS, ROWH)
+            for _, line in ipairs(inventoryFrame.itemLines) do line:Hide() end
+        end
+    end
+
+    
+    invScroll:SetScript("OnVerticalScroll", function(s, dlt)
+        FauxScrollFrame_OnVerticalScroll(s, dlt, ROWH, refreshInventory)
+    end)
+
     function page.refresh()
         local term = string.lower(edit:GetText() or "")
         local list = {}
-        for _, d in pairs(L.db.global.blackmarketVendors or {}) do
+        
+        
+        local vendors = L:GetVendorsDB() or {}
+        
+        for _, d in pairs(vendors) do
             if term == "" then
                 table.insert(list, d)
             else
@@ -1324,7 +1443,6 @@ local function BuildBlackmarketPage(parent)
         local offset = FauxScrollFrame_GetOffset(vendorScroll)
         FauxScrollFrame_Update(vendorScroll, #list, ROWS, ROWH)
         
-        
         for i = 1, ROWS do
             local idx = i + offset
             local r = vendorRows[i]
@@ -1334,13 +1452,12 @@ local function BuildBlackmarketPage(parent)
                 r.discoveryData = d
                 local zoneName = L.ResolveZoneDisplay(d.c, d.z, d.iz) or "Unknown Zone"
                 local coords = fmtCoords(d)
-
                 
                 local vendorTypeTag
                 if d.vendorType == "MS" or (d.g and d.g:find("MS-", 1, true)) then
                     vendorTypeTag = "|cffa335ee[MS]|r "
                 else
-                    vendorTypeTag = "|cff663300[BM]|r "
+                    vendorTypeTag = "|cff9400D3[BM]|r " 
                 end
                 r.txt:SetText(string.format("  %s%s | %s | %s", vendorTypeTag, d.vendorName or "Unknown", zoneName, coords))
                 
@@ -1356,41 +1473,7 @@ local function BuildBlackmarketPage(parent)
         end
         
         
-        for _, line in ipairs(inventoryFrame.itemLines) do
-            line:Hide()
-        end
-        
-        if page.selectedVendorGuid then
-            local d = L.db.global.blackmarketVendors[page.selectedVendorGuid]
-            if d and d.vendorItems then
-                
-                inventoryTitle:SetText(d.vendorName .. "'s Inventory")
-                for i, itemData in ipairs(d.vendorItems) do
-                    local line = inventoryFrame.itemLines[i]
-                    if line then
-                        
-                        local _, _, _, _, _, _, _, _, _, texture = GetItemInfo(itemData.link)
-                        line.icon:SetTexture(texture or "Interface\\Icons\\INV_Misc_QuestionMark")
-                        line.text:SetText(itemData.link)
-                        line.itemLink = itemData.link
-                        
-                        
-                        line.parentVendorData = d
-                        
-                        if i == 1 then
-                            line:SetPoint("TOPLEFT", inventoryTitle, "BOTTOMLEFT", 0, -8)
-                        else
-                            line:SetPoint("TOPLEFT", inventoryFrame.itemLines[i-1], "BOTTOMLEFT", 0, -2)
-                        end
-                        line:Show()
-                    end
-                end
-            else
-                inventoryTitle:SetText("Vendor Inventory")
-            end
-        else
-            inventoryTitle:SetText("Select a vendor to view inventory")
-        end
+        refreshInventory()
     end
     
     vendorScroll:SetScript("OnVerticalScroll", function(s, dlt)
@@ -1434,8 +1517,9 @@ if L.LEGACY_MODE_ACTIVE then return end
 	content:SetPoint("TOPLEFT", 16, -88)
 	content:SetPoint("BOTTOMRIGHT", -16, 16)
 	
-	tabPages[1] = BuildListPage(content, "All World Discoveries", function(d) return d.z and d.z > 0 end)
-	tabPages[2] = BuildListPage(content, "Instance Discoveries", function(d) return d.z == 0 end)
+    
+	tabPages[1] = BuildListPage(content, "All World Discoveries", function(d) return (d.iz or 0) == 0 end)
+	tabPages[2] = BuildListPage(content, "Instance Discoveries", function(d) return (d.iz or 0) > 0 end)
 	tabPages[3] = BuildListPage(content, "Looted by this character", function(d) return L.db.char.looted and L.db.char.looted[d.g] end)
 	tabPages[4] = BuildBlackmarketPage(content) 
 	tabPages[5] = BuildImportExportPage(content)
@@ -1580,4 +1664,3 @@ SlashCmdList["LCLIST"] = function()
 end
 
 return ImportExport
--- QSBBIEEgQSBBIEEgQSBBIEEgQQrwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5Kl

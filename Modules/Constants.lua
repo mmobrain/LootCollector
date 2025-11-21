@@ -1,6 +1,3 @@
--- Constants.lua
--- Centralized protocol and runtime constants for LootCollector (3.3.5a-safe).
--- UNK.B64.UTF-8
 
 
 local L = LootCollector
@@ -8,7 +5,7 @@ local Constants = L:NewModule("Constants")
 
 Constants.PROTO_V = 5
 
-Constants.MIN_COMPATIBLE_VERSION = "0.5.1"
+Constants.MIN_COMPATIBLE_VERSION = "0.5.90"
 
 Constants.OP = {
     DISC = "DISC",
@@ -34,7 +31,8 @@ Constants.COORD_PRECISION     = 4
 Constants.MAX_CHAT_BYTES      = 240     
 Constants.DEFLATE_LEVEL       = 9       
 
-Constants.SEEN_TTL_SECONDS    = 900     
+Constants.REINFORCE_TAKEOVER_GRACE_SECONDS = 10800
+Constants.SEEN_TTL_SECONDS    = 1800
 Constants.COOLDOWN_TTL        = 300     
 Constants.CHAT_MIN_INTERVAL   = 3.50    
 
@@ -53,6 +51,7 @@ Constants.DISCOVERY_TYPE = {
 
 Constants.ALLOWED_DISCOVERY_TYPES = {
     [Constants.DISCOVERY_TYPE.WORLDFORGED] = true,
+	[Constants.DISCOVERY_TYPE.MYSTIC_SCROLL] = true,	
 }
 
 Constants.AcceptedLootSrcWF = {
@@ -261,22 +260,51 @@ Constants.CLASS_PROFICIENCIES = {
 
 Constants.HASH_SAP = "LC@Asc.BB25"
 Constants.HASH_SEED = 2025
+
 Constants.HASH_BLACKLIST = {
-    ["376eafb7"] = true, ["17cb02f0"] = true, ["52504009"] = true, ["4d36fc45"] = true,
-    ["661a8da0"] = true, ["68463669"] = true, ["bc7a33a1"] = true, ["df2bdd6b"] = true,
-    ["4c82f6f0"] = true, ["a96fdc03"] = true, ["08348214"] = true, ["407d1fc9"] = true,
-    ["987ca738"] = true, ["98edffbf"] = true, ["f0f44edb"] = true, ["27f22c66"] = true,
-    ["ae985693"] = true, ["57d40e83"] = true, ["6620c0ec"] = true, ["015bea49"] = true,
+   
 }
 
 Constants.rHASH_BLACKLIST = {
-    ["376eafb7"] = true, ["17cb02f0"] = true, ["f0f44edb"] = true, ["27f22c66"] = true, 	
-    ["21cd4aa4"] = true, ["f4f00527"] = true, ["324397dd"] = true, ["4bbed387"] = true, 
-    ["387c7ead"] = true, ["dab462d2"] = true, ["71b23c1d"] = true, ["015bea49"] = true,
-    ["6620c0ec"] = true, ["a84cee53"] = true,
-    
+	["f0f44edb"] = true, ["27f22c66"] = true, ["671cab01"] = true,	
+}
+
+Constants.cHASH_BLACKLIST = {
+["051901b6"] = true, ["da238c3f"] = true, ["cff15644"] = true, ["9a060893"] = true,
+	["2d013949"] = true, ["9eefc783"] = true, ["2f9f0f0a"] = true, ["7e10b250"] = true,
+	["2e8deaa2"] = true, ["bc34aa4f"] = true, ["78cf4671"] = true, ["a9879922"] = true,
+	["b641b413"] = true, ["4c6aab78"] = true,	["fb544442"] = true, ["21cd4aa4"] = true,
+	["324397dd"] = true, ["4bbed387"] = true,	["a84cee53"] = true, ["51ac4ad6"] = true,
+	["387c7ead"] = true, ["dab462d2"] = true, ["71b23c1d"] = true, ["89855da9"] = true,
+	["b0c52c50"] = true, ["2064ff8b"] = true, ["9d113ac7"] = true, ["c42f0d64"] = true,
+	["2ebc9926"] = true,  
+	
+	["8782f429"] = true, ["72aa2219"] = true, ["4c9ca17b"] = true, ["727c0172"] = true,
+	["1d4fb044"] = true, ["e1be2c84"] = true, ["1b6c6c4b"] = true, ["d2f11f88"] = true,	
+	["fe882c07"] = true, ["4837c8dd"] = true,
+	
+	["e6b20cbd"] = true, ["3e931c1f"] = true, ["810003a5"] = true, ["30d5d57f"] = true,
+	["9ac1e6cd"] = true, ["a91117fc"] = true, ["d0ae0c62"] = true, ["e0d4f49b"] = true,	
+	["dbe80f12"] = true, ["1bab3599"] = true, ["657ba6a3"] = true, ["a33da348"] = true,
+	["ffe5ca8c"] = true,
+}
+
+Constants.iHASH_BLACKLIST = {
+	["376eafb7"] = true, ["17cb02f0"] = true, ["f0f44edb"] = true, ["27f22c66"] = true, 	
+	["21cd4aa4"] = true, ["f4f00527"] = true, ["324397dd"] = true, ["4bbed387"] = true, 
+	["387c7ead"] = true, ["dab462d2"] = true, ["71b23c1d"] = true, ["015bea49"] = true,
+	["6620c0ec"] = true, ["a84cee53"] = true, ["89855da9"] = true, ["7e10b250"] = true,	
+	["fb544442"] = true, ["9672c459"] = true, ["30dd772f"] = true, ["cbd6682f"] = true, 	
+	["dd8ece3c"] = true, ["8a250f52"] = true, ["d5309afa"] = true, ["cbe6f90c"] = true, 
+	["051901b6"] = true, ["da238c3f"] = true, ["cff15644"] = true, ["9a060893"] = true,
+	["2d013949"] = true, ["9eefc783"] = true, ["2f9f0f0a"] = true,
+	["2e8deaa2"] = true, ["bc34aa4f"] = true, ["78cf4671"] = true, ["a9879922"] = true,
+	["b641b413"] = true, ["4c6aab78"] = true, ["b0c52c50"] = true, ["2064ff8b"] = true,
+	["2ebc9926"] = true, ["51ac4ad6"] = true, ["9d113ac7"] = true, ["c42f0d64"] = true,
     
 }
+
+Constants.NameHashCache = {}
 
 function Constants.RoundTo(v, places)
     v = tonumber(v) or 0
@@ -294,6 +322,34 @@ end
 
 function Constants.IsValidAct(act)
     return act == Constants.ACT.DET or act == Constants.ACT.VER or act == Constants.ACT.SPM or act == Constants.ACT.DUP
+end
+
+function Constants:GetCachedNameHash(name)
+    if not name or name == "" then return nil end
+    if Constants.NameHashCache[name] then
+        return Constants.NameHashCache[name]
+    end
+    
+    if not XXH_Lua_Lib then return nil end
+    
+    local combined_str = name .. Constants.HASH_SAP
+    local hash_val = XXH_Lua_Lib.XXH32(combined_str, Constants.HASH_SEED)
+    local hex_hash = string.format("%08x", hash_val)
+    
+    Constants.NameHashCache[name] = hex_hash
+    return hex_hash
+end
+
+function Constants:IsHashInList(name, listName)
+    if not name or name == "" or not listName then return false end
+    
+    local blacklist = Constants[listName]
+    if not blacklist or not next(blacklist) then return false end 
+    
+    local hex_hash = self:GetCachedNameHash(name)
+    if not hex_hash then return false end
+    
+    return blacklist[hex_hash] == true
 end
 
 function Constants._DevOverridePrecision(n)
@@ -379,4 +435,3 @@ function Constants:OnInitialize()
 end
 
 return Constants
--- QSBBIEEgQSBBIEEgQSBBIEEgQQrwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5Kl

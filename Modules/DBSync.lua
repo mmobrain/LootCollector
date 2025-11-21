@@ -1,5 +1,3 @@
--- Modules/DBSync.lua
--- UNK.B64.UTF-8
 
 
 local L = LootCollector
@@ -35,7 +33,6 @@ local function pushToConsole(msg)
         if type(Console.Log)     == "function" then pcall(Console.Log,     Console, msg) end
     end
 end
-
 
 local function dprint(msg) return end
     
@@ -151,9 +148,11 @@ local function packRecord(d, cache)
     local itemName = (d and d.il and extractItemNameFromLink(d.il)) or (d and d.itemName) or nil
     local itemNameIdx = nameIndex(cache, itemName)
     
-    local packed = { c, z, i, x4, y4, sNum, fp_t0, fIdx, q, dt, it, ist, clIdx, itemNameIdx }
-
     
+    local iz = tonumber(d and d.iz) or 0
+    
+    local packed = { c, z, i, x4, y4, sNum, fp_t0, fIdx, q, dt, it, ist, clIdx, itemNameIdx, iz }
+
     if d.vendorItems and type(d.vendorItems) == "table" and #d.vendorItems > 0 then
         for _, itemData in ipairs(d.vendorItems) do
             if itemData.itemID then
@@ -217,10 +216,11 @@ local function parseWire(line)
         local rcStr = nextField(rest); if not rcStr then return nil end
         local rc = tonumber(rcStr) or 0
         local recs = {}
-        for r = 1, rc do
+         for r = 1, rc do
             local numFieldsStr = nextField(rest); if not numFieldsStr then return nil end 
             local numFields = tonumber(numFieldsStr) or 0
-            if numFields < 14 then return nil end 
+            
+            if numFields < 15 then return nil end 
             local t = {}
             for k = 1, numFields do
                 local v = nextField(rest); if not v then return nil end
@@ -247,8 +247,8 @@ function DBSync:SendWire(distribution, target, wire)
     return 1
 end
 
-function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, cl, itemName, sender, extraFields)
-    if not (L and L.db and L.db.global and L.db.global.discoveries) then return end
+function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, cl, itemName, sender, iz, extraFields)
+    if not (L and L.db and L.db.global) then return end
     local Core = L:GetModule("Core", true)
     local Constants = L:GetModule("Constants", true)
     if not Core or not Constants then return end
@@ -256,10 +256,12 @@ function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, 
     local x = L:Round4((tonumber(x4) or 0) / 10000)
     local y = L:Round4((tonumber(y4) or 0) / 10000)
 
-    
     local target_db, guid
     if dt == Constants.DISCOVERY_TYPE.BLACKMARKET then
-        target_db = L.db.global.blackmarketVendors
+        
+        target_db = L:GetVendorsDB()
+        if not target_db then return end
+        
         if i >= -399999 and i <= -300000 then 
             guid = "BM-" .. c .. "-" .. z .. "-" .. string.format("%.2f", L:Round2(x)) .. "-" .. string.format("%.2f", L:Round2(y))
         elseif i >= -499999 and i <= -400000 then 
@@ -268,7 +270,10 @@ function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, 
             guid = "BM-" .. c .. "-" .. z .. "-" .. string.format("%.2f", L:Round2(x)) .. "-" .. string.format("%.2f", L:Round2(y))
         end
     else
-        target_db = L.db.global.discoveries
+        
+        target_db = L:GetDiscoveriesDB()
+        if not target_db then return end
+        
         guid = L:GenerateGUID(c, z, i, x, y)
     end
 
@@ -287,7 +292,6 @@ function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, 
         il = string.format("|c%s|Hitem:%d:0:0:0:0:0:0:0:0|h[%s]|h|r", hex, i, itemName)
     end
 
-    
     local vendorItems = nil
     if dt == Constants.DISCOVERY_TYPE.BLACKMARKET and extraFields and #extraFields > 0 then
         vendorItems = {}
@@ -313,7 +317,7 @@ function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, 
             g  = guid, c = c, z = z, i = i, il = il,
             xy = { x = x, y = y }, s = sName,
             st = now, ls = now, t0 = fp_t0,
-            ac = 1,
+            ac = math.random(2, 4),
             o  = sender, fp = foundBy,
             q  = q or 0, dt = dt or 0, it = it or 0, ist = ist or 0, cl = cl,
             vendorType = vendorType,
@@ -321,7 +325,7 @@ function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, 
             fp_votes = { [foundBy] = { score = 1, t0 = fp_t0 } },
             mc = 1, adc = 0, onHold = false,
             at = now,
-            nd = now + math.random(7200, 18000),
+            nd = nil,
         }
         
         local Comm = L:GetModule("Comm", true)
@@ -337,7 +341,6 @@ function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, 
         local Map = L:GetModule("Map", true)
         if Map and Map.Update then Map:Update() end
     else
-        
         if (not existing.il) and il then existing.il = il end
         if (existing.q or 0) == 0 and q and q > 0 then existing.q = q end
         if (existing.dt or 0) == 0 and dt and dt > 0 then existing.dt = dt end
@@ -369,57 +372,87 @@ function DBSync:Share(scope, target)
     return DBSync.Shares(scope, target)
 end
 
-function DBSync.Shares(scope, target)
+function DBSync.Shares(scope, targetOrZone, zoneId)
     local now = GetTime()
-    local cd = DBSync.SHARECOOLDOWN or SHARECOOLDOWN or 60
+    local cd = DBSync.SHARECOOLDOWN or 60
     if (now - lastShareTime) < cd then
         print(string.format("|cffff7f00LootCollector|r: lcshare is on cooldown for %d more seconds.", math.ceil(cd - (now - lastShareTime))))
         return
     end
 
     scope = (scope and scope.upper and scope:upper()) or "PARTY"
-    if scope == "WHISPER" and (not target or target == "") then
-        print("|cffff7f00LootCollector|r: lcshare whisper <PlayerName> required.")
+    
+    local distribution
+    local target
+    local zoneFilterID = nil
+
+    if scope == "WHISPER" then
+        distribution = "WHISPER"
+        target = targetOrZone
+        zoneFilterID = tonumber(zoneId)
+    else
+        distribution = (scope == "PARTY" or scope == "RAID" or scope == "GUILD") and scope or "PARTY"
+        target = nil
+        zoneFilterID = tonumber(targetOrZone)
+    end
+    
+    if distribution == "WHISPER" and (not target or target == "") then
+        print("|cffff7f00LootCollector|r: Usage: /lcshare whisper <PlayerName> [zoneID]")
         return
     end
-    local distribution = (scope == "PARTY" or scope == "RAID" or scope == "GUILD" or scope == "WHISPER") and scope or "PARTY"
 
     if not (L and L.db and L.db.global) then
         print("|cffff7f00LootCollector|r: Database not ready.")
         return
     end
 
-    local totalRecords = 0
+    if zoneFilterID then
+        local zoneName = (L.ResolveZoneDisplay and L:ResolveZoneDisplay(0, zoneFilterID, 0)) or "Unknown Zone"
+        print(string.format("|cffffff00LootCollector:|r Preparing to share discoveries for zone: |cff00ff00%s (%d)|r...", zoneName, zoneFilterID))
+    end
+
+    local recordsToShare = {}
     
-    for _, d in pairs(L.db.global.discoveries or {}) do
+    
+    local discoveries = L:GetDiscoveriesDB()
+    for _, d in pairs(discoveries or {}) do
         if type(d) == "table" and d.i and not d.onHold then
-            totalRecords = totalRecords + 1
+            if not zoneFilterID or (d.z == zoneFilterID) then
+                table.insert(recordsToShare, d)
+            end
         end
     end
-    for _, d in pairs(L.db.global.blackmarketVendors or {}) do
-        if type(d) == "table" and d.i then
-            totalRecords = totalRecords + 1
+
+    
+    local vendors = L:GetVendorsDB()
+    for _, d in pairs(vendors or {}) do
+        if type(d) == "table" and d.i and (not d.vendorItems or #d.vendorItems <= 5) then
+            if not zoneFilterID or (d.z == zoneFilterID) then
+                table.insert(recordsToShare, d)
+            end
         end
     end
     
+    local totalRecords = #recordsToShare
     if totalRecords == 0 then
-        print("|cffffff00LootCollector|r: No records to share.")
+        if zoneFilterID then
+            print("|cffffff00LootCollector|r: No records found for that zone to share.")
+        else
+            print("|cffffff00LootCollector|r: No records to share.")
+        end
         return
     end
 
     local sid = string.format("%s-%d-%04d", UnitName("player") or "player", time(), math.random(0, 9999))
 
-    
     local startWire = string.format("S:%s:%d", sid, totalRecords)
-    
     DBSync:SendWire(distribution, target, startWire)
 
-    
     local seq = 1
     local batch = {}
     local cache = newNameCache()
     local totalSent = 0
-    local limit = DBSync.MAXMSG or MAXMSG
+    local limit = DBSync.MAXMSG or 240
 
     local function reset()
         cache = newNameCache()
@@ -431,7 +464,7 @@ function DBSync.Shares(scope, target)
         local wire = encodeDataWire(sid, seq, batch, cache.list)
         
         if #wire > limit then
-        
+            
         else
             DBSync:SendWire(distribution, target, wire)
             totalSent = totalSent + #batch
@@ -443,7 +476,7 @@ function DBSync.Shares(scope, target)
     local function tableCopyList(t) local r = {}; for i=1,#t do r[i]=t[i] end; return r end
     local function tableCopyMap(m) local r = {}; for k,v in pairs(m) do r[k]=v end; return r end
 
-    local function tryAppendRecord(d, guid)
+    local function tryAppendRecord(d)
         local tmpCache = { list = tableCopyList(cache.list), map = tableCopyMap(cache.map) }
         local tmpRec   = packRecord(d, tmpCache)
         local tmpBatch = {}
@@ -459,39 +492,18 @@ function DBSync.Shares(scope, target)
         return false
     end
 
-    
-    for guid, d in pairs(L.db.global.discoveries or {}) do
-        if type(d) == "table" and not d.onHold then
-            local _, _, i, x4, y4 = guidParts(d)
-            if i and i ~= 0 and not (x4 == 0 or y4 == 0) then
-                if not tryAppendRecord(d, guid) then
-                    sendBatch()
-                    if not tryAppendRecord(d, guid) then
-                        
-                        reset()
-                    end
-                end
-            end
-        end
-    end
-    
-    
-    for guid, d in pairs(L.db.global.blackmarketVendors or {}) do
-        if type(d) == "table" then
-            local _, _, i, x4, y4 = guidParts(d)
-            if i and i ~= 0 and not (x4 == 0 or y4 == 0) then
-                if not tryAppendRecord(d, guid) then
-                    sendBatch()
-                    if not tryAppendRecord(d, guid) then
-                        
-                        reset()
-                    end
+    for _, d in ipairs(recordsToShare) do
+        local _, _, i, x4, y4 = guidParts(d)
+        if i and i ~= 0 and not (x4 == 0 or y4 == 0) then
+            if not tryAppendRecord(d) then
+                sendBatch()
+                if not tryAppendRecord(d) then
+                    reset()
                 end
             end
         end
     end
 
-    
     sendBatch()
     local packets = (seq - 1)
     local endWire = string.format("E:%s:%d", sid, packets)
@@ -503,6 +515,14 @@ function DBSync.Shares(scope, target)
         print(string.format("|cff00ff00LootCollector|r: Sent share request for %d records in %d packets via %s%s.",
             totalSent, packets, distribution, (distribution == "WHISPER" and (" to " .. target) or "")))
     end
+end
+
+SLASH_LootCollectorSHARE1 = "/lcshare"
+SlashCmdList["LootCollectorSHARE"] = function(msg)
+    wipe(importCounters)
+    msg = msg or ""
+    local scope, arg1, arg2 = msg:match("^%s*(%S+)%s*(%S*)%s*(%S*)")
+    DBSync:Share(scope or "PARTY", arg1, arg2)
 end
 
 function DBSync:ProcessBatchForSid(sid)
@@ -535,10 +555,11 @@ function DBSync:ProcessBatchForSid(sid)
                     local ist = rec[12] or 0
                     local clx = rec[13] or 1
                     local nix = rec[14] or 1
+			  local iz  = rec[15] or 0 
                     
                     local extraFields = {}
-                    if #rec > 14 then
-                        for j = 15, #rec do
+                    if #rec > 15 then
+                        for j = 16, #rec do
                             table.insert(extraFields, rec[j])
                         end
                     end
@@ -547,7 +568,7 @@ function DBSync:ProcessBatchForSid(sid)
                         local fName = nameCache[fix] or "Unknown"
                         local cl    = nameCache[clx]
                         local iname = nameCache[nix]
-                        self:ApplyRecord(c, z, i, x4, y4, s, fp_t0, fName, q, dt, it, ist, cl, iname, buffer.sender, extraFields)
+                        self:ApplyRecord(c, z, i, x4, y4, s, fp_t0, fName, q, dt, it, ist, cl, iname, buffer.sender, iz, extraFields)
                         processedInBatch = processedInBatch + 1
                     end
                 end
@@ -609,22 +630,27 @@ StaticPopupDialogs["LOOTCOLLECTOR_DBSYNC_CONFIRM"] = {
 
 function DBSync:OnCommReceived(prefix, message, distribution, sender)
     if prefix ~= PREFIX then return end
-    
+    dprint(string.format("RX prefix=%s dist=%s sender=%s len=%d", tostring(prefix), tostring(distribution), tostring(sender), message and #message or -1))
 
     
+    if sender == UnitName("player") then 
+        dprint("RX drop: self-sender")
+        return 
+    end
+    
+    if isSenderBlockedByProfile(sender, distribution) then dprint("RX drop: blocked by profile"); return end
 
     local payload = parseWire(message)
-    
+    if not payload then dprint("RX drop: parse failed"); return end
 
     if payload.t == "S" then
         local total = tonumber(payload.total) or 0
         local sid   = tostring(payload.sid or "")
-    
+        if total <= 0 or sid == "" or self.incomingBySid[sid] then dprint("RX START ignored: invalid total/sid or duplicate"); return end
 
-    
-        
+        dprint("RX START: total=" .. total .. " sender=" .. tostring(sender) .. " sid=" .. sid)
         local dynamicTimeout = math.max(120, math.min(600, total * 0.16))
-    
+        dprint("Calculated dynamic timeout: " .. dynamicTimeout .. "s")
 
         self.incomingBySid[sid] = {
             sender = sender,
@@ -645,6 +671,11 @@ function DBSync:OnCommReceived(prefix, message, distribution, sender)
         local sid = tostring(payload.sid or "")
         local buffer = self.incomingBySid[sid]
         
+        if not buffer then 
+            dprint("RX DATA ignored: unknown sid=" .. sid)
+            return 
+        end
+        if buffer.state == "ignored" then dprint("RX DATA ignored: state=ignored sid=" .. sid); return end
 
         if buffer.totalRecords >= MAXBUFFEREDRECORDS then
             if not buffer.limitReached then
@@ -659,11 +690,12 @@ function DBSync:OnCommReceived(prefix, message, distribution, sender)
             buffer.packets[seq] = payload
             table.insert(buffer.pendingProcessing, seq)
             buffer.totalRecords = buffer.totalRecords + (#(payload.r or {}))
-            
+            dprint(string.format("RX DATA: sid=%s q=%d r=%d n=%d total=%d", sid, seq, #(payload.r or {}), #(payload.n or {}), buffer.totalRecords))
             if buffer.state == "accepted" and #buffer.pendingProcessing >= PROCESS_BATCH_SIZE then
                 self:ProcessBatchForSid(sid)
             end
-        
+        else
+            dprint("RX DATA ignored: invalid/duplicate seq sid=" .. sid .. " q=" .. tostring(seq))
         end
         return
     end
@@ -671,7 +703,9 @@ function DBSync:OnCommReceived(prefix, message, distribution, sender)
     if payload.t == "E" then
         local sid = tostring(payload.sid or "")
         local buffer = self.incomingBySid[sid]
+        if not buffer then dprint("RX END ignored: unknown sid=" .. sid); return end
         buffer.isComplete = true
+        dprint("RX END: sid=" .. sid .. " packets=" .. tostring(payload.packets))
         if buffer.state == "accepted" then
             if #buffer.pendingProcessing > 0 then
                 self:ProcessBatchForSid(sid)
@@ -738,4 +772,3 @@ function DBSync:OnInitialize()
         summaryTicker:SetScript("OnUpdate", OnSummaryUpdate)
     end
 end
--- QSBBIEEgQSBBIEEgQSBBIEEgQQrwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5KlIPCfkqUg8J+SpSDwn5Kl

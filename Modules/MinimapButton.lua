@@ -1,23 +1,19 @@
--- MinimapButton.lua
--- Provides a draggable minimap button to toggle the viewer window
+
 
 local L = LootCollector
 local MinimapButton = L:NewModule("MinimapButton")
 
--- Button reference
 local button = nil
 local dragFrame = nil
 
--- Default settings
-local DEFAULT_POSITION = 200 -- degrees around minimap
+local DEFAULT_POSITION = 200 
 
--- Helper function to calculate position on minimap edge
 local function UpdateButtonPosition(angle)
     if not button then return end
     
     local x, y
     local q = math.rad(angle or DEFAULT_POSITION)
-    local radius = 80 -- Distance from minimap center
+    local radius = 80 
     
     x = math.cos(q) * radius
     y = math.sin(q) * radius
@@ -25,11 +21,10 @@ local function UpdateButtonPosition(angle)
     button:SetPoint("CENTER", Minimap, "CENTER", x, y)
 end
 
--- Create the minimap button
 local function CreateMinimapButton()
     if button then return button end
     
-    -- Create button frame
+    
     button = CreateFrame("Button", "LootCollectorMinimapButton", Minimap)
     button:SetFrameStrata("MEDIUM")
     button:SetFrameLevel(8)
@@ -37,7 +32,7 @@ local function CreateMinimapButton()
     button:SetHeight(31)
     button:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
     
-    -- Set icon texture (using a default icon for now)
+    
     local icon = button:CreateTexture(nil, "BACKGROUND")
     icon:SetWidth(20)
     icon:SetHeight(20)
@@ -45,7 +40,7 @@ local function CreateMinimapButton()
     icon:SetTexture("Interface\\Icons\\INV_Misc_Bag_10")
     button.icon = icon
     
-    -- Create border overlay
+    
     local overlay = button:CreateTexture(nil, "OVERLAY")
     overlay:SetWidth(53)
     overlay:SetHeight(53)
@@ -53,7 +48,7 @@ local function CreateMinimapButton()
     overlay:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
     button.overlay = overlay
     
-    -- Tooltip
+    
     button:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:SetText("|cffe5cc80LootCollector|r", 1, 1, 1)
@@ -67,23 +62,23 @@ local function CreateMinimapButton()
         GameTooltip:Hide()
     end)
     
-    -- Click handlers
+    
     button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     button:SetScript("OnClick", function(self, btn)
         if btn == "LeftButton" then
-            -- Toggle viewer window
+            
             local Viewer = L:GetModule("Viewer", true)
             if Viewer then
                 Viewer:Toggle()
             end
         elseif btn == "RightButton" then
-            -- Open settings
+            
             InterfaceOptionsFrame_OpenToCategory("LootCollector")
             InterfaceOptionsFrame_OpenToCategory("LootCollector")
         end
     end)
     
-    -- Make draggable
+    
     button:RegisterForDrag("LeftButton")
     button:SetScript("OnDragStart", function(self)
         self:LockHighlight()
@@ -100,7 +95,7 @@ local function CreateMinimapButton()
             
             UpdateButtonPosition(angle)
             
-            -- Save position
+            
             if L.db and L.db.profile then
                 L.db.profile.minimapButtonAngle = angle
             end
@@ -112,7 +107,7 @@ local function CreateMinimapButton()
         self:SetScript("OnUpdate", nil)
     end)
     
-    -- Position button
+    
     local savedAngle = L.db and L.db.profile and L.db.profile.minimapButtonAngle or DEFAULT_POSITION
     UpdateButtonPosition(savedAngle)
     
@@ -121,7 +116,6 @@ local function CreateMinimapButton()
     return button
 end
 
--- Public API
 function MinimapButton:Show()
     if not button then
         CreateMinimapButton()
@@ -156,9 +150,8 @@ function MinimapButton:IsShown()
     return button and button:IsShown()
 end
 
--- Module initialization
 function MinimapButton:OnInitialize()
-    -- Ensure database has a setting for the minimap button
+    
     if L.db and L.db.profile then
         if L.db.profile.minimapButtonHidden == nil then
             L.db.profile.minimapButtonHidden = false
@@ -168,7 +161,7 @@ function MinimapButton:OnInitialize()
         end
     end
     
-    -- Create button after a short delay to ensure UI is ready
+    
     C_Timer.After(1, function()
         if L.db and L.db.profile and not L.db.profile.minimapButtonHidden then
             self:Show()

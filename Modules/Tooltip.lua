@@ -1,6 +1,4 @@
--- Modules/Tooltip.lua
--- Project Ascension 3.3.5a
--- LootCollector-integrated "Enhanced WF Tooltip" (ported from ItemUpgradeTooltip with 3.3.5-safe scanning)
+
 
 local L = LootCollector
 local Tooltip = L:NewModule("Tooltip", "AceEvent-3.0")
@@ -8,18 +6,14 @@ local Tooltip = L:NewModule("Tooltip", "AceEvent-3.0")
 local addonName = "ItemUpgradeTooltip"
 local printPrefix = "|cff33ff99ItemUpgradeTooltip:|r "
 
-
-
 local inHandler = false
 
--- Quality color codes
 local QUALITY_COLORS = {
     [0] = "|cFF9D9D9D", [1] = "|cFFFFFFFF", [2] = "|cFF1EFF00",
     [3] = "|cFF0070DD", [4] = "|cFFA335EE", [5] = "|cFFFF8000",
     [6] = "|cFFE6CC80", [7] = "|cFFE6CC80",
 }
 
--- Difficulty tiers (Ascension)
 local DIFFICULTY_TIERS = {
     { index = 4, name = "Dungeon Upgrade", short = "Dung" },
     { index = 5, name = "ZG Upgrade", short = "ZG" },
@@ -29,7 +23,6 @@ local DIFFICULTY_TIERS = {
     { index = 9, name = "Tier 3 Upgrade", short = "T3" },
 }
 
--- Stat labels
 local STAT_LABELS = {
     ITEM_MOD_STRENGTH_SHORT = "Strength",
     ITEM_MOD_AGILITY_SHORT = "Agility",
@@ -38,16 +31,13 @@ local STAT_LABELS = {
     ITEM_MOD_STAMINA_SHORT = "Stamina",
 }
 
--- Ordered stat list
 local STAT_ORDER = {
     "Strength", "Agility", "Intellect", "Spirit", "Stamina",
 }
 
--- Caches
 local upgradeCache = {}
 local worldforgedCache = {}
 local pendingItemLoads = {} 
-
 
 local function ensureProfileDefaults()
     if not (L and L.db and L.db.profile) then return end
@@ -59,7 +49,6 @@ local function ensureProfileDefaults()
     end
 end
 
--- Debug
 local function DebugPrint(...)
     if not (L and L.db and L.db.profile and L.db.profile.enhancedWFTooltipDebug) then return end
     local t = {}
@@ -69,7 +58,6 @@ local function DebugPrint(...)
     print(printPrefix .. "[DEBUG] " .. table.concat(t, " "))
 end
 
--- Debug Table Printer
 local function DebugPrintTable(tbl, name)
     if not (L and L.db and L.db.profile and L.db.profile.enhancedWFTooltipDebug) then return end
     if not tbl then
@@ -87,19 +75,16 @@ local function DebugPrintTable(tbl, name)
     DebugPrint("--- End Table:", name, "---")
 end
 
--- Extract item ID
 local function GetItemIDFromLink(link)
     if not link then return nil end
     local id = link:match("item:(%d+)")
     return id and tonumber(id) or nil
 end
 
--- Get quality color
 local function GetQualityColor(quality)
     return QUALITY_COLORS[quality] or "|cFFFFFFFF"
 end
 
--- Hidden scanner
 local function GetScanner()
     if not ItemUpgradeTooltip_ScannerTooltip then
         ItemUpgradeTooltip_ScannerTooltip = CreateFrame("GameTooltip", addonName .. "ScannerTooltip", UIParent, "GameTooltipTemplate")
@@ -116,7 +101,6 @@ local function PrimeItemCache(itemID)
     scanner:Hide()
 end
 
--- Get item stats (with tooltip scanning for extra stats) — 3.3.5 safe
 local function GetItemStatsTable(link)
     if not link then return {} end
 
@@ -128,7 +112,7 @@ local function GetItemStatsTable(link)
         end
     end
 
-    -- Hidden scanner for extra stats
+    
     local scanner = GetScanner()
     scanner:ClearLines()
     scanner:SetOwner(UIParent, "ANCHOR_NONE")
@@ -138,7 +122,7 @@ local function GetItemStatsTable(link)
         local leftFS = _G[scanner:GetName() .. "TextLeft" .. i]
         local lineText = leftFS and leftFS:GetText()
         if lineText and lineText ~= "" then
-            -- Negative stats, e.g., "-5 Spirit"
+            
             local negVal, negStatName = lineText:match("^%-([%d]+) ([%a%s]+)$")
             if negVal and negStatName then
                 negStatName = string.trim and string.trim(negStatName) or negStatName:gsub("^%s+", ""):gsub("%s+$", "")
@@ -149,14 +133,14 @@ local function GetItemStatsTable(link)
                     end
                 end
             elseif ITEM_MOD_MANA_REGENERATION then
-                -- MP5 localized pattern *
+                
                 local mp5Pattern = ITEM_MOD_MANA_REGENERATION:gsub("%%d", "([%%d]+)"):gsub("%.", "%%.")
                 local mp5val = lineText:match(mp5Pattern)
                 if mp5val then
                     readableStats["MP5"] = tonumber(mp5val)
                 end
             else
-                -- Custom/potential extras *
+                
                 local pvpPowerVal = lineText:match("Increases PvP Power by (%d+)")
                 if pvpPowerVal then
                     readableStats["PvP Power"] = tonumber(pvpPowerVal)
@@ -179,7 +163,6 @@ local function GetItemStatsTable(link)
     return readableStats
 end
 
--- Check if item is Worldforged
 local function IsWorldforged(tooltip, itemID, itemName)
     DebugPrint(">>> IsWorldforged check for itemID:", itemID, "Name:", itemName)
     if worldforgedCache[itemID] ~= nil then
@@ -220,7 +203,6 @@ local function IsWorldforged(tooltip, itemID, itemName)
     return false
 end
 
--- Count placeholders
 local function CountPlaceholders(upgradeChain)
     local count = 0
     for _, upgrade in ipairs(upgradeChain) do
@@ -231,7 +213,6 @@ local function CountPlaceholders(upgradeChain)
     return count
 end
 
--- Get item stats and generic effect lines (3.3.5-safe scanner)
 local function GetItemInfoAndEffects(link)
     if not link then return {}, {} end
     DebugPrint(">>> GetItemInfoAndEffects for link:", link)
@@ -301,7 +282,6 @@ local function GetItemInfoAndEffects(link)
     return standardStats, effectLines
 end
 
--- Build tier header
 local function BuildTierHeader(upgradeChain)
     local tiers = {}
     for _, upgrade in ipairs(upgradeChain) do
@@ -310,7 +290,6 @@ local function BuildTierHeader(upgradeChain)
     return "Upgrades: " .. table.concat(tiers, ", ")
 end
 
--- Build stat line
 local function BuildStatLine(statName, upgradeChain)
     local values = {}
     local hasAnyValue = false
@@ -337,7 +316,6 @@ local function BuildStatLine(statName, upgradeChain)
     return statName .. ": " .. table.concat(values, ", ")
 end
 
--- Get union of all stats
 local function GetAllStats(upgradeChain)
     local allStats = {}
     for _, upgrade in ipairs(upgradeChain) do
@@ -350,7 +328,6 @@ local function GetAllStats(upgradeChain)
     return allStats
 end
 
--- Add upgrade info to tooltip
 local function AddUpgradeInfo(tooltip, upgradeChain)
     if not upgradeChain or #upgradeChain == 0 then
         DebugPrint(">>> AddUpgradeInfo: empty")
@@ -383,7 +360,7 @@ local function AddUpgradeInfo(tooltip, upgradeChain)
         end
     end
 
-    -- Generic effects (diffed)
+    
     local processedTemplates = {}
     local effectLineCount = 0
 
@@ -483,9 +460,8 @@ local function AddUpgradeInfo(tooltip, upgradeChain)
     return true
 end
 
--- Build or update the upgrade chain for a given item
 local function BuildUpgradeChain(baseItemID)
-    -- Cached path (also try to resolve placeholders if items got cached)
+    
     if upgradeCache[baseItemID] then
         local chain = upgradeCache[baseItemID]
         for _, upgrade in ipairs(chain) do
@@ -556,7 +532,6 @@ local function BuildUpgradeChain(baseItemID)
     return nil
 end
 
--- Main tooltip hook
 local function OnTooltipSetItem(tooltip)
     local Core = L:GetModule("Core", true)
     if Core and Core.isSB and Core:isSB() then
@@ -603,11 +578,11 @@ local function OnTooltipSetItem(tooltip)
     inHandler = false
 end
 
--- Hook tooltips
 local function HookTooltips()
     print(printPrefix .. "Hooking tooltips...")
 
-    local tooltips = { GameTooltip, ItemRefTooltip, ShoppingTooltip1, ShoppingTooltip2 }
+    
+    local tooltips = { GameTooltip, ItemRefTooltip, ShoppingTooltip1, ShoppingTooltip2, WorldMapTooltip }
 
     for _, tip in pairs(tooltips) do
         if tip and tip.HookScript then
@@ -623,7 +598,6 @@ local function HookTooltips()
     print(printPrefix .. "Ready!")
 end
 
--- Clear cache
 local function ClearCache()
     upgradeCache = {}
     worldforgedCache = {}
@@ -631,7 +605,6 @@ local function ClearCache()
     print(printPrefix .. "Cache cleared")
 end
 
--- Module lifecycle
 function Tooltip:OnInitialize()
     ensureProfileDefaults()
 end
@@ -639,16 +612,14 @@ end
 function Tooltip:OnEnable()
     ensureProfileDefaults()
     self:RegisterEvent("PLAYER_LOGIN", function()
-        -- Only hook once UI is fully ready
+        
         HookTooltips()
     end)
 end
 
--- Public API for the Map menu toggle (optional)*
 function Tooltip:ApplySetting()
     
 end
-
 
 SLASH_LCWF1 = "/lcwf"
 SlashCmdList["LCWF"] = function(msg)

@@ -5,7 +5,8 @@ local ProximityList = L:NewModule("ProximityList", "AceEvent-3.0")
 local PANEL_WIDTH = 280
 local ROW_HEIGHT = 22
 local MAX_VISIBLE_ROWS = 15
-local CLUSTER_RADIUS_SQUARED = 20 * 20
+local CLUSTER_RADIUS_PIXELS = 20
+local CLUSTER_RADIUS_SQ = CLUSTER_RADIUS_PIXELS * CLUSTER_RADIUS_PIXELS
 
 ProximityList._frame = nil
 ProximityList._buttons = {}
@@ -73,7 +74,7 @@ function ProximityList:CreateFrame()
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
     closeBtn:SetScript("OnClick", function()
-        ProximityList:Hide()
+        ProximityList:Hide("CloseButton")
     end)
 
     f.scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
@@ -130,8 +131,8 @@ function ProximityList:CreateFrame()
             
             
             if link and not IsAltKeyDown() then
-                
                 local tooltip = GameTooltip
+                
                 if f:GetParent() == WorldMapFrame then
                     tooltip:SetParent(WorldMapFrame)
                     tooltip:SetFrameLevel(f:GetFrameLevel() + 10)
@@ -141,7 +142,6 @@ function ProximityList:CreateFrame()
                 tooltip:SetFrameStrata("TOOLTIP")
                 
                 tooltip:SetOwner(self, "ANCHOR_RIGHT")
-                
                 
                 if type(link) == "number" then
                     tooltip:SetHyperlink("item:" .. link)
@@ -221,9 +221,9 @@ function ProximityList:Refresh()
     end
 
     if self.displayMode == "CLUSTER" then
-        if not self.currentCluster then self:Hide(); return end
+        if not self.currentCluster then self:Hide("Refresh-NoClusterData"); return end
         self._frame.title:SetText("Nearby Discoveries")
-        self._frame.title:SetTextColor(1, 1, 1) 
+        self._frame.title:SetTextColor(1, 1, 1)
         local total = #self.currentCluster
 
         for i = 1, MAX_VISIBLE_ROWS do
@@ -233,7 +233,7 @@ function ProximityList:Refresh()
             if pin and pin.discovery then
                 local d = pin.discovery
                 btn.discovery = d
-                btn.itemData = nil 
+                btn.itemData = nil
                 btn.mapPin = pin
                 
                 if i % 2 == 0 then
@@ -249,16 +249,14 @@ function ProximityList:Refresh()
                 local isVendor = d.dt and Constants and d.dt == Constants.DISCOVERY_TYPE.BLACKMARKET
                 
                 if isVendor then
-                    
                     local vendorName = d.vendorName or "Unknown Vendor"
                     btn.text:SetText(vendorName)
                     if d.vendorType == "MS" or (d.g and d.g:find("MS-", 1, true)) then
-                        btn.text:SetTextColor(1, 0.82, 0) 
+                        btn.text:SetTextColor(1, 0.82, 0)
                     else
-                        btn.text:SetTextColor(0.85, 0.44, 0.85) 
+                        btn.text:SetTextColor(0.85, 0.44, 0.85)
                     end
                 else
-                    
                     local _, _, quality = GetItemInfo(d.il or d.i or 0)
                     local r, g, b = GetQualityColor(quality)
                     btn.text:SetText(d.il or d.n or "Unknown")
@@ -281,15 +279,15 @@ function ProximityList:Refresh()
         self._frame.content:SetHeight(total * (ROW_HEIGHT + 2))
 
     elseif self.displayMode == "VENDOR" then
-        if not self.currentVendorData or not self.currentVendorData.vendorItems then self:Hide(); return end
+        if not self.currentVendorData or not self.currentVendorData.vendorItems then self:Hide("Refresh-NoVendorData"); return end
         
         local v = self.currentVendorData
         if v.vendorType == "BM" or (v.g and v.g:find("BM-", 1, true)) then
             self._frame.title:SetText(v.vendorName .. "'s Items")
-            self._frame.title:SetTextColor(0.85, 0.44, 0.85) 
+            self._frame.title:SetTextColor(0.85, 0.44, 0.85)
         else
             self._frame.title:SetText(v.vendorName .. "'s Items")
-            self._frame.title:SetTextColor(1, 0.82, 0) 
+            self._frame.title:SetTextColor(1, 0.82, 0)
         end
 
         local items = self.currentVendorData.vendorItems
@@ -333,12 +331,13 @@ function ProximityList:Refresh()
         end
         self._frame.content:SetHeight(total * (ROW_HEIGHT + 2))
     else
-        self:Hide()
+        self:Hide("Refresh-UnknownMode")
     end
 end
 
-function ProximityList:Hide()
-    L._debug("ProximityList", "Hide() called.")
+function ProximityList:Hide(reason)
+    reason = reason or "unknown"
+    L._debug("ProximityList", "Hide() called. Reason: " .. tostring(reason))
     self._mouseOverButton = false
     if self._frame then
         self._frame:Hide()
@@ -357,15 +356,13 @@ function ProximityList:IsShown()
 end
 
 function ProximityList:UpdateForPin(hoveredPin)
-    L._debug("ProximityList", "UpdateForPin() called for cluster check.")
-    
     
     if self.displayMode == "VENDOR" then return end
-
+    
+    
+    
     if not hoveredPin or not hoveredPin:IsShown() or not hoveredPin.discovery then
-        if self._frame and self._frame:IsShown() then
-            self:Hide()
-        end
+        
         return
     end
 
@@ -374,14 +371,26 @@ function ProximityList:UpdateForPin(hoveredPin)
     local Map = L:GetModule("Map", true)
     if not Map then return end
 
+    
+    local hd = hoveredPin.discovery
+    if not hd or not hd.xy then return end
+    
+    local hx, hy = hd.xy.x, hd.xy.y
+    
+    local mapW, mapH = WorldMapDetailFrame:GetWidth(), WorldMapDetailFrame:GetHeight()
+    if not mapW or mapW == 0 or not mapH or mapH == 0 then return end
+    
     local cluster = {}
-    local hx, hy = hoveredPin:GetCenter()
     
     for _, pin in ipairs(Map.pins) do
-        if pin:IsShown() and pin.discovery then
-            local px, py = pin:GetCenter()
-            local distSq = (hx - px)^2 + (hy - py)^2
-            if distSq <= CLUSTER_RADIUS_SQUARED then
+        if pin:IsShown() and pin.discovery and pin.discovery.xy then
+            local pd = pin.discovery
+            
+            local dx = (hx - pd.xy.x) * mapW
+            local dy = (hy - pd.xy.y) * mapH
+            local distSq = dx*dx + dy*dy
+            
+            if distSq <= CLUSTER_RADIUS_SQ then
                 table.insert(cluster, pin)
             end
         end
@@ -393,13 +402,15 @@ function ProximityList:UpdateForPin(hoveredPin)
         self.displayMode = "CLUSTER"
         self.currentCluster = cluster
         self.currentVendorData = nil 
+        if not self._frame then self:CreateFrame() end
         self._frame:Show()
         self:Refresh()
         L._debug("ProximityList", "Showing proximity list for CLUSTER.")
         return true 
     else
         self.currentCluster = nil
-        if self._frame then self._frame:Hide() end
+        
+        self:Hide("UpdateForPin-NoCluster")
         L._debug("ProximityList", "Not a cluster, hiding proximity list.")
         return false 
     end
@@ -407,7 +418,7 @@ end
 
 function ProximityList:ShowVendorInventory(vendorDiscovery)
     if not vendorDiscovery or not vendorDiscovery.vendorItems or #vendorDiscovery.vendorItems == 0 then
-        self:Hide()
+        self:Hide("ShowVendorInventory-Invalid")
         return
     end
     L._debug("ProximityList", "ShowVendorInventory called for: " .. (vendorDiscovery.vendorName or "Unknown Vendor"))
@@ -428,3 +439,5 @@ function ProximityList:OnInitialize()
         self:RegisterEvent("WORLD_MAP_UPDATE", "CreateFrame")
     end
 end
+
+return ProximityList

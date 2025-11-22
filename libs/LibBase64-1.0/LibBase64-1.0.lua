@@ -1,10 +1,4 @@
---[[
-Name: LibBase64-1.0
-Author(s): ckknight (ckknight@gmail.com)
-Website: http://www.wowace.com/projects/libbase64-1-0/
-Description: A library to encode and decode Base64 strings
-License: MIT
-]]
+
 
 local LibBase64 = LibStub:NewLibrary("LibBase64-1.0", 1)
 
@@ -38,19 +32,13 @@ local whitespace = {
 
 local t = {}
 
---- Encode a normal bytestring into a Base64-encoded string
--- @param text a bytestring, can be binary data
--- @param maxLineLength This should be a multiple of 4, greater than 0 or nil. If non-nil, it will break up the output into lines no longer than the given number of characters. 76 is recommended.
--- @param lineEnding a string to end each line with. This is "\r\n" by default.
--- @usage LibBase64.Encode("Hello, how are you doing today?") == "SGVsbG8sIGhvdyBhcmUgeW91IGRvaW5nIHRvZGF5Pw=="
--- @return a Base64-encoded string
 function LibBase64.Encode(text, maxLineLength, lineEnding)
     if type(text) ~= "string" then
         error(("Bad argument #1 to `Encode'. Expected %q, got %q"):format("string", type(text)), 2)
     end
     
     if maxLineLength == nil then
-        -- do nothing
+        
     elseif type(maxLineLength) ~= "number" then
         error(("Bad argument #2 to `Encode'. Expected %q or %q, got %q"):format("number", "nil", type(maxLineLength)), 2)
     elseif (maxLineLength % 4) ~= 0 then
@@ -114,12 +102,6 @@ end
 
 local t2 = {}
 
---- Decode a Base64-encoded string into a bytestring
--- this will raise an error if the data passed in is not a Base64-encoded string
--- this will ignore whitespace, but not invalid characters
--- @param text a Base64-encoded string
--- @usage LibBase64.Encode("SGVsbG8sIGhvdyBhcmUgeW91IGRvaW5nIHRvZGF5Pw==") == "Hello, how are you doing today?"
--- @return a bytestring
 function LibBase64.Decode(text)
     if type(text) ~= "string" then
         error(("Bad argument #1 to `Decode'. Expected %q, got %q"):format("string", type(text)), 2)
@@ -128,7 +110,7 @@ function LibBase64.Decode(text)
     for i = 1, #text do
         local byte = text:byte(i)
         if whitespace[byte] or byte == equals_byte then
-            -- do nothing
+            
         else
             local num = byteToNum[byte]
             if not num then

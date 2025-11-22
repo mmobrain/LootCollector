@@ -450,7 +450,7 @@ function Map:OnInitialize()
           
           local ProximityList = L:GetModule("ProximityList", true)
           if ProximityList and ProximityList:IsShown() then
-              ProximityList:Hide()
+              ProximityList:Hide("Call from Map:OnInitialize")
           end
 
           
@@ -977,7 +977,7 @@ function Map:ShowDiscoveryTooltip(discoveryOrPin, anchorFrame)
     if not d then return end
     
     local Constants = L:GetModule("Constants", true)
-    if d.dt == (Constants and Constants.DISCOVERY_TYPE.BLACKMARKET) then
+    if Constants and d.dt == Constants.DISCOVERY_TYPE.BLACKMARKET then
         self:ShowBlackmarketTooltip(d, anchorFrame or discoveryOrPin)
         return
     end
@@ -1893,6 +1893,7 @@ if L.LEGACY_MODE_ACTIVE then return end
             Map._searchTimer = nil
         end
         Map._searchTimer = C_Timer.After(0.7, function()
+            Map.cacheIsDirty = true 
             Map:Update()
             Map._searchTimer = nil
         end)
@@ -1909,7 +1910,13 @@ if L.LEGACY_MODE_ACTIVE then return end
     clearBtn:SetText("Clear")
     clearBtn:SetPoint("LEFT", findBtn, "RIGHT", 5, 0)
     clearBtn:SetScript("OnClick", function()
-        editBox:SetText("")
+        editBox:SetText("") 
+        if Map._searchTimer then 
+            C_Timer.CancelTimer(Map._searchTimer) 
+            Map._searchTimer = nil 
+        end
+        Map.cacheIsDirty = true 
+        Map:Update()
         if Map._searchResultsFrame then Map._searchResultsFrame:Hide() end
     end)
 
@@ -2345,7 +2352,7 @@ local isB = Core and Core.isSB and Core:isSB()
     for _, pin in ipairs(self.pins) do pin:Hide() end
     for _, pin in ipairs(self.clusterPins) do pin:Hide() end
     self:HideDiscoveryTooltip()
-    if ProximityList and ProximityList._frame then ProximityList._frame:Hide() end
+    if ProximityList and ProximityList._frame then ProximityList._frame:Hide("Call from Map:Update@ IsZoneIgnored") end
     return
   end
   
@@ -2357,7 +2364,7 @@ local isB = Core and Core.isSB and Core:isSB()
     for _, pin in ipairs(self.pins) do pin:Hide() end
     for _, pin in ipairs(self.clusterPins) do pin:Hide() end
     self:HideDiscoveryTooltip()
-    if ProximityList and ProximityList._frame then ProximityList._frame:Hide() end
+    if ProximityList and ProximityList._frame then ProximityList._frame:Hide("Call from Map:Update@ no discoveries/vendors") end
     return
   end
 
@@ -2565,7 +2572,7 @@ local isB = Core and Core.isSB and Core:isSB()
 
   if ProximityList and ProximityList._frame and ProximityList._frame:IsShown() then
       if not ProximityList._lastHoveredPin or not ProximityList._lastHoveredPin:IsShown() then
-          ProximityList:Hide()
+          
       end
   end
 end

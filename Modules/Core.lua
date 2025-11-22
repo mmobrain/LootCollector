@@ -1571,12 +1571,34 @@ function Core:HandleLocalLoot(discovery)
         return 
     end
 
-    local name, link, quality, _, _, itemType, itemSubType = GetItemInfo(discovery.il)
-    itemID = itemID or (discovery.il and tonumber((discovery.il:match("item:(%d+)")))) or 0
-    
-    if itemID == 0 then
+    -- Use either the item link from the discovery or the numeric itemID
+    local itemToken = discovery.il or itemID
+    if not itemToken then
+        -- No usable item reference; stop early
         return
     end
+
+    local name, link, quality, _, _, itemType, itemSubType = GetItemInfo(itemToken)
+    if not name then
+        -- Item info not yet available from the client cache
+        return
+    end
+
+    -- Ensure we have a valid numeric itemID
+    if not itemID then
+        if link and type(link) == "string" then
+            itemID = extractItemID(link)
+        elseif discovery.il and type(discovery.il) == "string" then
+            itemID = extractItemID(discovery.il)
+        end
+    end
+    itemID = tonumber(itemID) or 0
+
+    if itemID == 0 then
+        -- Still no valid itemID, do not proceed
+        return
+    end
+
     
     local c = tonumber(discovery.c) or 0
     local z = tonumber(discovery.z) or 0
@@ -2095,12 +2117,36 @@ function Core:AddDiscovery(discoveryData, options)
     end
 
     
-    local name, link, quality, _, _, itemType, itemSubType = GetItemInfo(discoveryData.il)
-    itemID = itemID or (discoveryData.il and tonumber((discoveryData.il:match("item:(%d+)")))) or 0
-    
-    if itemID == 0 then
+    -- Choose a safe token for GetItemInfo: prefer numeric itemID, fall back to item link
+    local itemToken = itemID or discoveryData.il
+    if not itemToken then
+        -- No usable item information; skip this discovery to avoid GetItemInfo(nil) errors
         return
     end
+
+    -- Fetch item data; if the item is not cached yet, this can return nil, so guard it
+    local name, link, quality, _, _, itemType, itemSubType = GetItemInfo(itemToken)
+    if not name then
+        -- Item info not available yet; stop here to avoid working with incomplete data
+        return
+    end
+
+    -- Make sure we end up with a valid numeric itemID
+    if not itemID then
+        -- Try to extract it from the item link returned by GetItemInfo or from the raw discovery link
+        if link and type(link) == "string" then
+            itemID = extractItemID(link)
+        elseif discoveryData.il and type(discoveryData.il) == "string" then
+            itemID = extractItemID(discoveryData.il)
+        end
+    end
+    itemID = tonumber(itemID) or 0
+
+    if itemID == 0 then
+        -- Still no valid itemID, skip this discovery
+        return
+    end
+
     
     local c = tonumber(discoveryData.c) or 0
     local z = tonumber(discoveryData.z) or 0

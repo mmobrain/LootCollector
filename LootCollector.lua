@@ -1010,7 +1010,7 @@ function LootCollector:OnInitialize()
 
     self.channelReady = false
     self.name         = "LootCollector"
-    self.Version      = "alpha-0.5.90"
+    self.Version      = "alpha-0.5.94"
 
     local Constants = self:GetModule("Constants", true)
     if Constants and Constants.GetDefaultChannel then

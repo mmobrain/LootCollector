@@ -1174,6 +1174,28 @@ function Core:PerformOnLoginMaintenance()
         self:RunAutomaticOnLoginCleanup()
     end
 
+    
+    
+    
+    
+    local currentVersion = L.Version or "0.0.0"
+    if L.db.global.lastPurgedInvalidSendersVersion ~= currentVersion then
+        if L.db.profile then
+            
+            if L.db.profile.invalidSenders then
+                wipe(L.db.profile.invalidSenders)
+            end
+            
+            
+            if L.db.profile.sharing and L.db.profile.sharing.blockList then
+                wipe(L.db.profile.sharing.blockList)
+            end
+            
+            print("|cff00ff00LootCollector:|r One-time cleanup: Invalid Senders tracking and Block List have been purged for version " .. currentVersion .. ".")
+        end
+        L.db.global.lastPurgedInvalidSendersVersion = currentVersion
+    end
+
     self:RemapLootedHistoryV6()
 end
 
@@ -1197,9 +1219,16 @@ function Core:IsItemCached(itemID)
 end
 
 function Core:UpdateItemRecordFromCache(itemID)
-    if not (L.db and L.db.global and itemID) then return false end
+    
+    if not itemID or type(itemID) ~= "number" or itemID == 0 then 
+        return false 
+    end
+    
+    if not (L.db and L.db.global) then return false end
+    
     local Constants = L:GetModule("Constants", true)
     if not Constants then return false end
+    
     
     local name, link, quality, _, _, itemType, itemSubType = GetItemInfo(itemID)
     if not (name and link) then return false end
@@ -1628,8 +1657,27 @@ function Core:HandleLocalLoot(discovery)
         return 
     end
 
-    local name, link, quality, _, _, itemType, itemSubType = GetItemInfo(discovery.il)
-    itemID = itemID or (discovery.il and tonumber((discovery.il:match("item:(%d+)")))) or 0
+    
+    
+    local infoTarget = discovery.il or itemID
+    
+    
+    if not infoTarget then
+        return
+    end
+
+    local name, link, quality, _, _, itemType, itemSubType = GetItemInfo(infoTarget)
+    
+    
+    if not itemID then
+        if link then
+            itemID = extractItemID(link)
+        elseif discovery.il and type(discovery.il) == "string" then
+            itemID = extractItemID(discovery.il)
+        end
+    end
+    
+    itemID = tonumber(itemID) or 0
     
     if itemID == 0 then
         return
@@ -1662,11 +1710,16 @@ function Core:HandleLocalLoot(discovery)
     end
     
     local src_numeric
-    if discovery.src then
+	local src_numeric = discovery.src
+	if type(src_numeric) == "string" then
+        local mapped = nil
         if dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
-            src_numeric = Constants.AcceptedLootSrcMS[discovery.src]
+            mapped = Constants.AcceptedLootSrcMS[src_numeric]
         elseif dt == Constants.DISCOVERY_TYPE.WORLDFORGED then
-            src_numeric = Constants.AcceptedLootSrcWF[discovery.src]
+            mapped = Constants.AcceptedLootSrcWF[src_numeric]
+        end
+        if mapped ~= nil then
+            src_numeric = mapped
         end
     end
     
@@ -1990,10 +2043,31 @@ function Core:AddDiscovery(discoveryData, options)
         return
     end
     
-    local itemID = discoveryData.i or extractItemID(discoveryData.il)
-    if not itemID then
+    
+    local infoTarget = discoveryData.il or discoveryData.i
+    if not infoTarget then
         return
     end
+    
+    local name, link, quality, _, _, itemType, itemSubType = GetItemInfo(infoTarget)
+    
+    
+    local itemID = discoveryData.i
+    if not itemID then
+        if link then
+            itemID = extractItemID(link)
+        elseif discoveryData.il and type(discoveryData.il) == "string" then
+            itemID = extractItemID(discoveryData.il)
+        end
+    end
+    
+    itemID = tonumber(itemID) or 0
+    if itemID == 0 then
+        return
+    end
+    
+    
+    discoveryData.i = itemID
     
     local Constants = L:GetModule("Constants", true)
     local dt = discoveryData.dt
@@ -2142,15 +2216,7 @@ function Core:AddDiscovery(discoveryData, options)
     end
 
     
-    local infoTarget = discoveryData.il or itemID
-    local name, link, quality, _, _, itemType, itemSubType = GetItemInfo(infoTarget)
     
-    
-    itemID = itemID or (discoveryData.il and tonumber((discoveryData.il:match("item:(%d+)")))) or 0
-    
-    if itemID == 0 then
-        return
-    end
     
     local c = tonumber(discoveryData.c) or 0
     local z = tonumber(discoveryData.z) or 0

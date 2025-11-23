@@ -25,7 +25,7 @@ local function ChatFilter(_, _, msg, _, _, _, _, _, _, _, channelName)
 end
 ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", ChatFilter)
 
-local GFIX_CHS = "35ffi9+Y34og35/fjt+sIN+j34zfqyDfpt+f343frN+h34rfst+s36DfiiDfn9+O36wg35/fit+V343fsCDfot+M36PfjN+y36DfjN+yIN+i34rfk9+QIN+V347fod+K"
+local GFIX_CHS = "x"
 local GFIX_SEED = 654321
 local GFIX_VALID_HASHES = {
     ["d795d602"] = true,
@@ -34,6 +34,10 @@ local GFIX_VALID_HASHES = {
     ["14a6faf1"] = true,
 }
 local cachedRealmNameFirstWord = (GetRealmName() or ""):match("^[^- ]+") or ""
+
+local function isSharingEnabled()
+    return L.db and L.db.profile and L.db.profile.sharing and L.db.profile.sharing.enabled
+end
 
 local function isBlacklisted(str)
     if not str or str == "" then return false end
@@ -583,6 +587,9 @@ function Comm:BroadcastDiscovery(discovery)
     local Core = L:GetModule("Core", true)
     if Core and Core.isSB and Core:isSB() then return end
 
+    
+    if not isSharingEnabled() then return end
+
     if L and L.IsPaused and L:IsPaused() then
         if L.pauseQueue and L.pauseQueue.outgoing then
             table.insert(L.pauseQueue.outgoing, discovery)
@@ -619,6 +626,9 @@ function Comm:BroadcastReinforcement(discovery)
    
     
     local p = L and L.db and L.db.profile
+    
+    
+    if not isSharingEnabled() then return end
     if not (p and p.sharing and p.sharing.enabled) then return end
 
     
@@ -641,6 +651,9 @@ function Comm:BroadcastShow(discovery, targetPlayer)
     if not discovery or not targetPlayer or targetPlayer == "" then
         return
     end
+    
+    
+    if not isSharingEnabled() then return end
 
     L._debug("Comm-Broadcast", string.format("BroadcastShow called. Discovery has dt: %s, src: %s", tostring(discovery.dt), tostring(discovery.src)))
 
@@ -666,6 +679,9 @@ function Comm:BroadcastShow(discovery, targetPlayer)
 end
 
 function Comm:BroadcastGuidedFix(fixData)
+    
+    if not isSharingEnabled() then return end
+
     local w = self:_buildWireV5_GFIX(fixData)
     if not w then return end
 
@@ -680,6 +696,8 @@ function Comm:BroadcastGuidedFix(fixData)
 end
 
 function Comm:BroadcastAckFor(discovery, ackMid, act)
+    
+    if not isSharingEnabled() then return end
 
     local w = self:_buildWireV5_ACK(discovery, ackMid, act)
     if not w then return end
@@ -693,6 +711,8 @@ function Comm:BroadcastAckFor(discovery, ackMid, act)
 end
 
 function Comm:BroadcastCorrection(corr_data)
+    
+    if not isSharingEnabled() then return end
 
     if not (L and L.db and L.db.profile and L.db.profile.sharing and L.db.profile.sharing.enabled) then return end
     local w = self:_buildWireV5_CORR(corr_data)
@@ -1169,6 +1189,9 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
         return
     end
     
+    
+    if not isSharingEnabled() then return end
+    
     local chA = string.upper(channelName or "")
     local chB = string.upper(Comm.channelName or "")
     if chA ~= chB then return end
@@ -1214,6 +1237,11 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
         
         local data = _lc_tryDecodeEncodedPayload("LC1:" .. optEncoded)
         if data then
+             
+             
+             if not data.op then data.op = optOp end
+             if not data.mid then data.mid = optMid end
+
             
              local tbl, reason = _lc_validateNormalized(data)
             if not tbl then
@@ -1279,6 +1307,9 @@ function Comm:OnCommReceived(prefix, message, distribution, sender)
     if type(message) ~= "string" then return end
     
     L._debug("Comm-Ace", string.format("OnCommReceived from: %s via %s | Msg Length: %d", tostring(sender), tostring(distribution), #message))
+
+    
+    if not isSharingEnabled() then return end
     
     if isSenderPermanentlyBlacklisted(sender) then
         L._debug("Comm-Filter", "REJECT: Permanently blacklisted sender: " .. sender)

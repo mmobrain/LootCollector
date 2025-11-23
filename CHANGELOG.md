@@ -1,3 +1,7 @@
+## **LootCollector 0.5.94 - Fixes**
+
+Bunch of fixes
+
 ## **LootCollector 0.5.90 - Realm Buckets & Stability Overhaul**
 
 ### **Highlights**

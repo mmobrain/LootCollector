@@ -1,5 +1,5 @@
--- LibBabble-3.0 is hereby placed in the Public Domain
--- Credits: ckknight
+
+
 local LIBBABBLE_MAJOR, LIBBABBLE_MINOR = "LibBabble-3.0", 2
 
 local LibBabble = LibStub:NewLibrary(LIBBABBLE_MAJOR, LIBBABBLE_MINOR)
@@ -81,17 +81,6 @@ end
 local prototype = {}
 local prototype_mt = {__index = prototype}
 
---[[---------------------------------------------------------------------------
-Notes:
-	* If you try to access a nonexistent key, it will warn but allow the code to pass through.
-Returns:
-	A lookup table for english to localized words.
-Example:
-	local B = LibStub("LibBabble-Module-3.0") -- where Module is what you want.
-	local BL = B:GetLookupTable()
-	assert(BL["Some english word"] == "Some localized word")
-	DoSomething(BL["Some english word that doesn't exist"]) -- warning!
------------------------------------------------------------------------------]]
 function prototype:GetLookupTable()
 	local db = tablesToDB[self]
 
@@ -101,51 +90,19 @@ function prototype:GetLookupTable()
 	end
 	return initLookup(self, {})
 end
---[[---------------------------------------------------------------------------
-Notes:
-	* If you try to access a nonexistent key, it will return nil.
-Returns:
-	A lookup table for english to localized words.
-Example:
-	local B = LibStub("LibBabble-Module-3.0") -- where Module is what you want.
-	local B_has = B:GetUnstrictLookupTable()
-	assert(B_has["Some english word"] == "Some localized word")
-	assert(B_has["Some english word that doesn't exist"] == nil)
------------------------------------------------------------------------------]]
+
 function prototype:GetUnstrictLookupTable()
 	local db = tablesToDB[self]
 
 	return db.current
 end
---[[---------------------------------------------------------------------------
-Notes:
-	* If you try to access a nonexistent key, it will return nil.
-	* This is useful for checking if the base (English) table has a key, even if the localized one does not have it registered.
-Returns:
-	A lookup table for english to localized words.
-Example:
-	local B = LibStub("LibBabble-Module-3.0") -- where Module is what you want.
-	local B_hasBase = B:GetBaseLookupTable()
-	assert(B_hasBase["Some english word"] == "Some english word")
-	assert(B_hasBase["Some english word that doesn't exist"] == nil)
------------------------------------------------------------------------------]]
+
 function prototype:GetBaseLookupTable()
 	local db = tablesToDB[self]
 
 	return db.base
 end
---[[---------------------------------------------------------------------------
-Notes:
-	* If you try to access a nonexistent key, it will return nil.
-	* This will return only one English word that it maps to, if there are more than one to check, see :GetReverseIterator("word")
-Returns:
-	A lookup table for localized to english words.
-Example:
-	local B = LibStub("LibBabble-Module-3.0") -- where Module is what you want.
-	local BR = B:GetReverseLookupTable()
-	assert(BR["Some localized word"] == "Some english word")
-	assert(BR["Some localized word that doesn't exist"] == nil)
------------------------------------------------------------------------------]]
+
 function prototype:GetReverseLookupTable()
 	local db = tablesToDB[self]
 
@@ -157,17 +114,7 @@ function prototype:GetReverseLookupTable()
 end
 local blank = {}
 local weakVal = {__mode='v'}
---[[---------------------------------------------------------------------------
-Arguments:
-	string - the localized word to chek for.
-Returns:
-	An iterator to traverse all English words that map to the given key
-Example:
-	local B = LibStub("LibBabble-Module-3.0") -- where Module is what you want.
-	for word in B:GetReverseIterator("Some localized word") do
-		DoSomething(word)
-	end
------------------------------------------------------------------------------]]
+
 function prototype:GetReverseIterator(key)
 	local db = tablesToDB[self]
 	local reverseIterators = db.reverseIterators
@@ -189,23 +136,13 @@ function prototype:GetReverseIterator(key)
 	reverseIterators[key] = t or blank
 	return pairs(reverseIterators[key])
 end
---[[---------------------------------------------------------------------------
-Returns:
-	An iterator to traverse all translations English to localized.
-Example:
-	local B = LibStub("LibBabble-Module-3.0") -- where Module is what you want.
-	for english, localized in B:Iterate() do
-		DoSomething(english, localized)
-	end
------------------------------------------------------------------------------]]
+
 function prototype:Iterate()
 	local db = tablesToDB[self]
 
 	return pairs(db.current)
 end
 
--- #NODOC
--- modules need to call this to set the base table
 function prototype:SetBaseTranslations(base)
 	local db = tablesToDB[self]
 	local oldBase = db.base
@@ -238,8 +175,6 @@ local function init(module)
 	db.reverseIterators = nil
 end
 
--- #NODOC
--- modules need to call this to set the current table. if current is true, use the base table.
 function prototype:SetCurrentTranslations(current)
 	local db = tablesToDB[self]
 	if current == true then
@@ -266,8 +201,6 @@ for namespace, db in pairs(data) do
 	init(db.module)
 end
 
--- #NODOC
--- modules need to call this to create a new namespace.
 function LibBabble:New(namespace, minor)
 	local module, oldminor = LibStub:NewLibrary(namespace, minor)
 	if not module then

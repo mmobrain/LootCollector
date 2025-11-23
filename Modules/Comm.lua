@@ -335,18 +335,35 @@ function Comm:LeavePublicChannel()
     self.channelId = 0
 end
 
+local function IsValidMysticScrollSource(src)
+    local Constants = L:GetModule("Constants", true)
+    if not Constants or not Constants.AcceptedLootSrcMS then return false end
+    
+    
+    for k, v in pairs(Constants.AcceptedLootSrcMS) do
+        if src == v then return true end
+    end
+    return false
+end
+
 function Comm:_buildWireV5_DISC(discovery)
     local itemID = _extractItemID(discovery and (discovery.i or discovery.il))
     if not itemID then return nil end
-    
-    local x = discovery and discovery.xy and discovery.xy.x or 0
-    local y = discovery and discovery.xy and discovery.xy.y or 0
     
     local Constants = L:GetModule("Constants", true)
     local src_value = nil
     if Constants and discovery and discovery.dt and tonumber(discovery.dt) == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
         src_value = discovery.src
+        
+        
+        if not IsValidMysticScrollSource(src_value) then
+            L._debug("Comm-Build", "Skipping DISC build for Mystic Scroll with invalid src: " .. tostring(src_value))
+            return nil
+        end
     end
+    
+    local x = discovery and discovery.xy and discovery.xy.x or 0
+    local y = discovery and discovery.xy and discovery.xy.y or 0
     
     local w = {
         v = 5,
@@ -380,14 +397,20 @@ function Comm:_buildWireV5_CONF(discovery)
     local itemID = _extractItemID(discovery and (discovery.i or discovery.il))
     if not itemID then return nil end
     
-    local x = discovery and discovery.xy and discovery.xy.x or 0
-    local y = discovery and discovery.xy and discovery.xy.y or 0
-    
     local Constants = L:GetModule("Constants", true)
     local src_value = nil
     if Constants and discovery and discovery.dt and tonumber(discovery.dt) == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
         src_value = discovery.src
+        
+        
+        if not IsValidMysticScrollSource(src_value) then
+            L._debug("Comm-Build", "Skipping CONF build for Mystic Scroll with invalid src: " .. tostring(src_value))
+            return nil
+        end
     end
+    
+    local x = discovery and discovery.xy and discovery.xy.x or 0
+    local y = discovery and discovery.xy and discovery.xy.y or 0
     
     local w = {
         v = 5,
@@ -421,6 +444,17 @@ function Comm:_buildWireV5_SHOW(discovery)
     local itemID = _extractItemID(discovery and (discovery.i or discovery.il))
     if not itemID then return nil end
 
+    local Constants = L:GetModule("Constants", true)
+    local src_value = nil
+    if Constants and discovery and discovery.dt and tonumber(discovery.dt) == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
+        src_value = discovery.src
+        
+        if not IsValidMysticScrollSource(src_value) then
+             L._debug("Comm-Build", "Skipping SHOW build for Mystic Scroll with invalid src")
+             return nil
+        end
+    end
+
     L._debug("Comm-Build", string.format("Building SHOW packet. Discovery has dt: %s, src: %s", tostring(discovery.dt), tostring(discovery.src)))
 
     local vendorItemIDs = nil
@@ -431,12 +465,6 @@ function Comm:_buildWireV5_SHOW(discovery)
                 table.insert(vendorItemIDs, itemData.itemID)
             end
         end
-    end
-    
-    local Constants = L:GetModule("Constants", true)
-    local src_value = nil
-    if Constants and discovery and discovery.dt and tonumber(discovery.dt) == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
-        src_value = discovery.src
     end
 
     local payload = {
@@ -459,8 +487,6 @@ function Comm:_buildWireV5_SHOW(discovery)
         vendorName = discovery.vendorName,
         vendorItemIDs = vendorItemIDs,
     }
-
-    L._debug("Comm-Build", string.format(" -> SHOW payload prepared with dt=%s, src=%s", tostring(payload.dt), tostring(payload.src)))
 
     return payload
 end
@@ -752,6 +778,7 @@ local function _sendChannelWirePlain(wire)
             _fmtOrNil(wire.ist),
             _fmtOrNil(wire.cl),
             _fmtOrNil(wire.fp),
+            _fmtOrNil(wire.src), 
         }
     end
     
@@ -985,6 +1012,7 @@ local function _lc_parsePlainV5(msg)
         ist = segments[18],
         cl = segments[19],
         fp = segments[20],
+        src = tonumber(segments[21]), 
     }
 end
 
@@ -1074,13 +1102,13 @@ local function _normalizeForCore(tbl, sender, Comm)
     
     if tbl.op == "DISC" then
         if (tbl.s or 0) == 0 then
-            if tbl.fp ~= sender then
+            if tbl.fp and tbl.fp ~= "" and tbl.fp ~= sender then
                 
                 trackInvalidSender(sender, "disc_fp_mismatch")
                 return nil
             end
         else
-            if tbl.fp ~= "" then
+            if tbl.fp and tbl.fp ~= "" then
                 
                 trackInvalidSender(sender, "disc_anon_fp_not_empty")
                 return nil
@@ -1090,9 +1118,22 @@ local function _normalizeForCore(tbl, sender, Comm)
 
     local itemID = tonumber(tbl.i) or _extractItemID(tbl.l)
     
+    
     local historicalFp = tbl.fp
     if tbl.op == "DISC" then
-        historicalFp = (tbl.s == 1 and "An Unnamed Collector" or sender)
+        if (tbl.s or 0) == 1 then
+            historicalFp = "An Unnamed Collector"
+        else
+            
+            if not historicalFp or historicalFp == "" then
+                historicalFp = sender
+            end
+        end
+    else
+        
+        if not historicalFp or historicalFp == "" then
+             historicalFp = sender
+        end
     end
     
     return {
@@ -1113,7 +1154,7 @@ local function _normalizeForCore(tbl, sender, Comm)
         sflag = tbl.s or 0,
         dt = tbl.dt, it = tbl.it, ist = tbl.ist,
         cl = tbl.cl,
-        src = tbl.src,
+        src = tbl.src, 
         fp = historicalFp,
         sender = sender,
     }
@@ -1208,10 +1249,11 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
     end
 
     local Constants = L:GetModule("Constants", true)
-    if Constants and Constants.GetMinCompatibleVersion then
+    if Constants and Constants.GetMinCompatibleVersion then	
         local minVersion = Constants:GetMinCompatibleVersion()
+		L._debug("Comm-Parse", " minVersion: "..minVersion)
         if not data.av or compareVersions(data.av, minVersion) < 0 then
-            
+		 L._debug("VERSION", string.format("REJECT: Incompatible version from %s. Received %s, requires %s.", sender, tostring(data.av), minVersion))
             return 
         end
     end
@@ -1219,13 +1261,16 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
     local tbl, reason = _lc_validateNormalized(data)
     if not tbl then
         trackInvalidSender(sender, reason)
+		L._debug("PARSE", "FAIL: Parsed data failed validation. Dropping message.")
         return
     end
     
     if isSenderSessionIgnored(sender) then
+	L._debug("CHAT", string.format("SUPPRESS: Suppressing valid message from session-ignored sender: %s", sender))
         return
     end
     
+	L._debug("Comm-Filter", "Calling Comm:RouteIncoming")
     Comm:RouteIncoming(tbl, "CHANNEL", sender or "Unknown")
 end
 
@@ -1306,6 +1351,28 @@ function Comm:RouteIncoming(tbl, via, sender)
             return
         end
     end
+	
+	 
+        local Constants = L:GetModule("Constants", true)
+        if Constants and tbl.dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
+             local validSrc = false
+             
+             if tbl.src ~= nil then
+                 for k, v in pairs(Constants.AcceptedLootSrcMS) do
+                     if tbl.src == v then
+                         validSrc = true
+						 L._debug("Comm-Filter", "valid: " .. v)
+                         break
+                     end
+                 end
+             end
+             
+             if not validSrc then
+                 L._debug("Comm-Filter", "Discarded Mystic Scroll with invalid/missing src from " .. sender)
+                 return
+             end
+        end
+    
         
     if not isAuthorizedGfixSender then
         if isBlacklisted(sender) then

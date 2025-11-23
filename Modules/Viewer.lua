@@ -1722,46 +1722,66 @@ function Viewer:UpdateAllDiscoveriesCacheSync()
 
     
     for guid, discovery in pairs(discoveries or {}) do
-        if discovery and type(discovery) == "table" and discovery.il and discovery.il ~= "" then
-            local itemName = discovery.il:match("%[(.+)%]") or ""
-            if itemName and itemName ~= "" then
-                local isMystic       = IsMysticScroll(itemName)
-                local isWorldforged  = IsWorldforged(discovery.il)
-                local characterClass = GetItemCharacterClass(discovery.il, discovery.i)
-                local name, _, _, _, minLevel, itemTypeVal, itemSubTypeVal, _, equipLocVal =
-                    GetItemInfoSafe(discovery.il, discovery.i)
+        if discovery and type(discovery) == "table" then
+            local itemLink = discovery.il
+            local itemID = discovery.i
+            
+            
+            if (not itemLink or itemLink == "") and itemID then
+                 local name, link = GetItemInfo(itemID)
+                 if link then
+                     itemLink = link
+                     
+                     
+                 end
+            end
+            
+            if itemLink and itemLink ~= "" then
+                local itemName = itemLink:match("%[(.+)%]")
                 
+                if not itemName and itemID then
+                    itemName = GetItemInfo(itemID)
+                end
                 
-                local it, ist = discovery.it, discovery.ist
-                if not it or not ist or it == 0 or ist == 0 then
-                    it, ist = GetItemTypeIDs(itemTypeVal, itemSubTypeVal)
-                end
+                if itemName and itemName ~= "" then
+                    local isMystic       = IsMysticScroll(itemName)
+                    local isWorldforged  = IsWorldforged(itemLink)
+                    local characterClass = GetItemCharacterClass(itemLink, discovery.i)
+                    local name, _, _, _, minLevel, itemTypeVal, itemSubTypeVal, _, equipLocVal =
+                        GetItemInfoSafe(itemLink, discovery.i)
+                    
+                    
+                    local it, ist = discovery.it, discovery.ist
+                    if not it or not ist or it == 0 or ist == 0 then
+                        it, ist = GetItemTypeIDs(itemTypeVal, itemSubTypeVal)
+                    end
 
-                _tinsert(Cache.discoveries, {
-                    guid          = guid,
-                    discovery     = discovery,
-                    itemName      = itemName,
-                    isMystic      = isMystic,
-                    isWorldforged = isWorldforged,
-                    itemType      = itemTypeVal,
-                    itemSubType   = itemSubTypeVal,
-                    it            = it,
-                    ist           = ist,
-                    equipLoc      = equipLocVal,
-                    characterClass= characterClass,
-                    minLevel      = minLevel,
-                    cl            = discovery.cl,
-                    isVendor      = false, 
-                })
+                    _tinsert(Cache.discoveries, {
+                        guid          = guid,
+                        discovery     = discovery,
+                        itemName      = itemName,
+                        isMystic      = isMystic,
+                        isWorldforged = isWorldforged,
+                        itemType      = itemTypeVal,
+                        itemSubType   = itemSubTypeVal,
+                        it            = it,
+                        ist           = ist,
+                        equipLoc      = equipLocVal,
+                        characterClass= characterClass,
+                        minLevel      = minLevel,
+                        cl            = discovery.cl,
+                        isVendor      = false, 
+                    })
 
-                processedItems = processedItems + 1
-                if processedItems % 200 == 0 then
-                    VDebug("UpdateAllDiscoveriesCacheSync: processed items=" ..
-                        tostring(processedItems))
-                end
+                    processedItems = processedItems + 1
+                    if processedItems % 200 == 0 then
+                        VDebug("UpdateAllDiscoveriesCacheSync: processed items=" ..
+                            tostring(processedItems))
+                    end
 
-                if discovery.i then
-                    Cache.duplicateItems[discovery.i] = (Cache.duplicateItems[discovery.i] or 0) + 1
+                    if discovery.i then
+                        Cache.duplicateItems[discovery.i] = (Cache.duplicateItems[discovery.i] or 0) + 1
+                    end
                 end
             end
         end
@@ -4478,6 +4498,8 @@ function Viewer:AddDiscoveryToCache(guid, discovery)
     if not guid or not discovery then
         return false
     end
+	
+	if not discovery.il then return false end
 
     
     if not Cache.discoveriesBuilt or Cache.discoveriesBuilding then
@@ -4679,7 +4701,8 @@ function Viewer:FindDiscoveriesByPlayer(playerName)
     
     local discoveries = L:GetDiscoveriesDB()
     for guid, discovery in pairs(discoveries or {}) do
-        if discovery and discovery.fp == playerName then
+        
+        if discovery and type(discovery) == "table" and discovery.fp == playerName then
             _tinsert(discoveriesByPlayer, {
                 guid = guid,
                 discovery = discovery

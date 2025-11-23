@@ -794,6 +794,11 @@ function Core:_isFinderOnBlacklist(name, listName)
 end
 
 function Core:PurgeByFinderBlacklist(listName)
+    
+    if _G.LootCollectorDB_Asc and (_G.LootCollectorDB_Asc._schemaVersion or 0) >= 7 then
+        return 0
+    end
+
     local discoveries = L:GetDiscoveriesDB()
     if not discoveries then return 0 end
     
@@ -809,6 +814,55 @@ function Core:PurgeByFinderBlacklist(listName)
     if removedCount > 0 then
         for _, guid in ipairs(guidsToRemove) do
             L._debug("Cleanup", "Purging by finder blacklist (" .. listName .. "): " .. guid .. " (" .. tostring(discoveries[guid].il) .. ")")
+            discoveries[guid] = nil
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
+        end
+    end
+    
+    return removedCount
+end
+
+function Core:PurgeInvalidMysticScrolls()
+    local discoveries = L:GetDiscoveriesDB()
+    if not discoveries then return 0 end
+    
+    local Constants = L:GetModule("Constants", true)
+    if not Constants then return 0 end
+    
+    local guidsToRemove = {}
+    
+    for guid, d in pairs(discoveries) do
+        
+        local isMS = (d.dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL)
+        
+        
+        if not isMS and d.il and d.il:find("Mystic Scroll") then
+            isMS = true
+        end
+        
+        if isMS then
+            local validSrc = false
+            if d.src ~= nil then
+                
+                for k, v in pairs(Constants.AcceptedLootSrcMS) do
+                    if d.src == v then validSrc = true; break end
+                end
+                
+                if not validSrc and Constants.AcceptedLootSrcMS[d.src] then
+                    validSrc = true
+                end
+            end
+            
+            if not validSrc then
+                table.insert(guidsToRemove, guid)
+            end
+        end
+    end
+    
+    local removedCount = #guidsToRemove
+    if removedCount > 0 then
+        for _, guid in ipairs(guidsToRemove) do
+            L._debug("Cleanup", "Purging Mystic Scroll with invalid src: " .. guid)
             discoveries[guid] = nil
             L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
         end
@@ -896,6 +950,9 @@ end
 function Core:RunInitialCleanup()
     local initialPurged = self:PurgeByFinderBlacklist("iHASH_BLACKLIST")
     local zeroCoordRemoved = self:PurgeZeroCoordDiscoveries()
+    
+    
+    local invalidScrollsRemoved = self:PurgeInvalidMysticScrolls()
 
     local cityGuidsToRemove = {}
     local discoveries = L:GetDiscoveriesDB() or {}
@@ -917,8 +974,8 @@ function Core:RunInitialCleanup()
     local ignoredRemoved = self:PurgeAllIgnoredItems()
     local wfRemoved, msRemoved = self:DeduplicateItems(true)
 
-    if (initialPurged + zeroCoordRemoved + cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved) > 0 then
-        print("|cff00ff00LootCollector:|r Initial cleanup complete. Removed: " .. initialPurged .. " (initial blacklist), " .. zeroCoordRemoved .. " (0,0) coords, " .. cityRemoved .. " city, " .. prefixRemoved .. " prefix, " .. ignoredRemoved .. " ignored, " .. wfRemoved .. " WF dupes, " .. msRemoved .. " MS dupes.")
+    if (initialPurged + zeroCoordRemoved + cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved + invalidScrollsRemoved) > 0 then
+        print("|cff00ff00LootCollector:|r Initial cleanup complete. Removed: " .. initialPurged .. " (blacklist), " .. invalidScrollsRemoved .. " (invalid scrolls), " .. zeroCoordRemoved .. " (0,0), " .. cityRemoved .. " city, " .. prefixRemoved .. " prefix, " .. ignoredRemoved .. " ignored, " .. wfRemoved .. " WF dupes, " .. msRemoved .. " MS dupes.")
         local Map = L:GetModule("Map", true)
         if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
             Map:Update()
@@ -1936,17 +1993,9 @@ function Core:AddDiscovery(discoveryData, options)
             return 
         end
 	  
-	  
-       
-           
-        
-        
-        
         local z = tonumber(discoveryData.z) or 0
         local ZoneList = L:GetModule("ZoneList", true)
-        if not (ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[z]) then
-             
-             
+        if not (ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[z]) then           
             return
         end
     end
@@ -2040,8 +2089,6 @@ function Core:AddDiscovery(discoveryData, options)
         else
             guid = "BM-" .. c .. "-" .. z .. "-" .. string.format("%.2f", L:Round2(x)) .. "-" .. string.format("%.2f", L:Round2(y))
         end
-        
-        
         
         
         discoveryData.g = guid
@@ -2174,12 +2221,25 @@ function Core:AddDiscovery(discoveryData, options)
         end
     end
     
-    local src_numeric
-    if discoveryData.src then
+    
+	local src_numeric = discoveryData.src
+    
+        
+            
+        
+            
+        
+    
+	
+	if type(src_numeric) == "string" then
+        local mapped = nil
         if dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
-            src_numeric = Constants.AcceptedLootSrcMS[discoveryData.src]
+            mapped = Constants.AcceptedLootSrcMS[src_numeric]
         elseif dt == Constants.DISCOVERY_TYPE.WORLDFORGED then
-            src_numeric = Constants.AcceptedLootSrcWF[discoveryData.src]
+            mapped = Constants.AcceptedLootSrcWF[src_numeric]
+        end
+        if mapped ~= nil then
+            src_numeric = mapped
         end
     end
     
@@ -2242,10 +2302,6 @@ function Core:AddDiscovery(discoveryData, options)
         L:SendMessage("LootCollector_DiscoveriesUpdated", "update", rec.g, rec)
     end
     
-    
-    if not L.db.char then L.db.char = {} end
-    L.db.char.looted = L.db.char.looted or {}
-    L.db.char.looted[rec.g] = time()
     
     if not self:IsItemCached(itemID) then
         if self.QueueItemForCaching then

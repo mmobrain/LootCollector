@@ -1,3 +1,9 @@
+## LootCollector 0.6.00 - Fixes
+
+- Added support when `GetCurrentMapContinent()` returning -1 in some cases.
+- Improved detection of Mystic Scroll acquisition from quests.
+- Various minor fixes and stability improvements.
+
 ## **LootCollector 0.5.97 - Fixes**
 
 Bunch of fixes

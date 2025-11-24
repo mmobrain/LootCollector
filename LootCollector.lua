@@ -163,7 +163,8 @@ local dbDefaults = {
         ignoreZones = {},
         decay = { fadeAfterDays  = 30, staleAfterDays = 90, },
 	    debugMode = false,
-	    mdebugMode = false,
+	    mdebugMode = false,	  
+	    idebugMode = false,
         discoveries = {},
     },
     char = { looted = {}, hidden = {} },
@@ -194,6 +195,12 @@ end
 
 function LootCollector._mdebug(module, message)
     if LootCollector.db and LootCollector.db.profile and LootCollector.db.profile.mdebugMode then
+        print(string.format("|cffffff00[LC-Debug|cffff8c00][%s]|r %s", tostring(module), tostring(message)))
+    end
+end
+
+function LootCollector._idebug(module, message)
+    if LootCollector.db and LootCollector.db.profile and LootCollector.db.profile.idebugMode then
         print(string.format("|cffffff00[LC-Debug|cffff8c00][%s]|r %s", tostring(module), tostring(message)))
     end
 end
@@ -1010,7 +1017,7 @@ function LootCollector:OnInitialize()
 
     self.channelReady = false
     self.name         = "LootCollector"
-    self.Version      = "alpha-0.5.97"
+    self.Version      = "alpha-0.6.00"
 
     local Constants = self:GetModule("Constants", true)
     if Constants and Constants.GetDefaultChannel then
@@ -1152,7 +1159,7 @@ function LootCollector:IsZoneIgnored()
 end
 
 function LootCollector:DelayedChannelInit()
-    pcall(LeaveChannelByName, "BBLCC25TEST")
+    pcall(LeaveChannelByName, "BBLCC25")
     local Comm = self:GetModule("Comm", true)
     if not Comm then return end
     local DELAY_SECONDS = 12.0

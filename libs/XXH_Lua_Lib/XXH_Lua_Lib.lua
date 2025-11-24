@@ -1,4 +1,28 @@
+--[[
 
+XXH_Lua_Lib.lua
+
+A high-performance, pure Lua 5.1 implementation of XXHash32 and XXHash64 optimized for World of Warcraft (3.35) addon environment, relying on the native `bit` library for maximum speed and compatibility. 
+It provides both 32-bit and 64-bit hashing functions (64-bit arithmetic via two 32-bit halves)
+
+
+  ------------------------------------------------------------------------------
+  Version: 1.0.0
+  Date: October 12, 2025
+  Author: Skulltrail
+  Algorithm Credit: Based on the original XXHash algorithm by Yann Collet.
+  ------------------------------------------------------------------------------
+
+
+API:
+- XXH32(inputString, [seed]) -> 32-bit unsigned integer (Lua number, masked to 0xFFFFFFFF) | 1234567890 (32-bit number)
+- XXH64(inputString, [seed]) -> 16-char uppercase hex string
+- RunSelfTests([opts]) -> Prints test results to chat and returns boolean status.
+  opts:
+    - hexDumpAlways    = true|false  -- if true, shows hex dump for every test
+    - which            = "all"|"lua"|"ascii"|"hex" -- select subset of tests
+
+]]
 
 local bit    = bit
 local band   = bit.band
@@ -12,12 +36,17 @@ local sbyte  = string.byte
 local table  = table
 local _G     = _G
 
+-- =========================================================================
+-- CONSTANTS
+-- =========================================================================
+
 local P32_1 = 0x9E3779B1
 local P32_2 = 0x85EBCA77
 local P32_3 = 0xC2B2AE3D
 local P32_4 = 0x27D4EB2F
 local P32_5 = 0x165667B1
 
+-- 64-bit primes split into hi/lo 32-bit words
 local P64_1_H, P64_1_L = 0x9E3779B1, 0x85EBCA87
 local P64_2_H, P64_2_L = 0xC2B2AE3D, 0x27D4EB4F
 local P64_3_H, P64_3_L = 0x165667B1, 0x9E3779F9
@@ -26,6 +55,10 @@ local P64_5_H, P64_5_L = 0x27D4EB2F, 0x165667C5
 
 local U32_MASK = 0xFFFFFFFF
 local TWO32    = 4294967296
+
+-- =========================================================================
+-- 32-bit helpers
+-- =========================================================================
 
 local function rol32_fallback(x, s)
     s = band(s or 0, 31)
@@ -57,6 +90,10 @@ local function read_u32_le(str, offset)
     b1, b2, b3, b4 = b1 or 0, b2 or 0, b3 or 0, b4 or 0
     return b1 + b2 * 256 + b3 * 65536 + b4 * 16777216
 end
+
+-- =========================================================================
+-- XXH32
+-- =========================================================================
 
 local function XXH32(str, seed)
     local len = #str
@@ -93,7 +130,7 @@ local function XXH32(str, seed)
         index = index + 4
     end
 
-    
+    -- At most three tail bytes;
     local rem = len - index + 1
     if rem >= 1 then
         h32 = band(h32 + imul32(sbyte(str, index), P32_5), U32_MASK)
@@ -119,6 +156,10 @@ local function XXH32(str, seed)
     return h32
 end
 
+-- =========================================================================
+-- 64-bit helpers (hi, lo)
+-- =========================================================================
+
 local function mul32_to64(a, b)
     a = band(a or 0, U32_MASK)
     b = band(b or 0, U32_MASK)
@@ -143,6 +184,7 @@ local function mul64(a_hi, a_lo, b_hi, b_lo)
     return hi, lo
 end
 
+-- Specialized: 32-bit value x times 64-bit constant (C_H, C_L)
 local function mul_u32_const64(x, C_H, C_L)
     local hi_part, lo_part = mul32_to64(x, C_L)
     hi_part = band(hi_part + imul32(x, C_H), U32_MASK)
@@ -207,13 +249,14 @@ local function rshift64(hi, lo, bits)
     end
 end
 
+-- Specialized right shifts used in avalanche (fewer branches)
 local function rshift64_33(hi, lo)
-    
+    -- Shift right 64 by 33: new_hi = 0, new_lo = hi >> 1
     return 0, rshift(band(hi, U32_MASK), 1)
 end
 
 local function rshift64_29(hi, lo)
-    
+    -- Shift right 64 by 29: new_hi = hi >> 29, new_lo = (lo >> 29) | (hi << 3)
     hi = band(hi, U32_MASK); lo = band(lo, U32_MASK)
     local new_hi = rshift(hi, 29)
     local new_lo = bor(rshift(lo, 29), lshift(hi, 3))
@@ -221,9 +264,13 @@ local function rshift64_29(hi, lo)
 end
 
 local function rshift64_32(hi, lo)
-    
+    -- Shift right 64 by 32: new_hi = 0, new_lo = hi
     return 0, band(hi, U32_MASK)
 end
+
+-- =========================================================================
+-- XXH64
+-- =========================================================================
 
 local function merge_accumulators(h_h, h_l, a_h, a_l)
     local t_h, t_l = mul64(a_h, a_l, P64_2_H, P64_2_L)
@@ -235,19 +282,19 @@ local function merge_accumulators(h_h, h_l, a_h, a_l)
 end
 
 local function XXH64_small(str, seed)
-    
+    -- Specialized fast path for len <= 16 (avoids extra branching/loops)
     local len = #str
     local h_hi, h_lo = 0, band(seed or 0, U32_MASK)
-    
+    -- h = seed + P5
     h_hi, h_lo = add64(h_hi, h_lo, P64_5_H, P64_5_L)
-    
+    -- h += len
     h_hi, h_lo = add64(h_hi, h_lo, 0, len)
 
     local index = 1
     if len >= 8 then
         local ll = read_u32_le(str, index)
         local lh = read_u32_le(str, index + 4)
-        
+        -- h ^= (lane * P2).rotl(31) * P1
         local t_h, t_l = mul64(lh, ll, P64_2_H, P64_2_L)
         t_h, t_l = rol64(t_h, t_l, 31)
         t_h, t_l = mul64(t_h, t_l, P64_1_H, P64_1_L)
@@ -280,7 +327,7 @@ local function XXH64_small(str, seed)
         len = len - 1
     end
 
-    
+    -- Avalanche with specialized shifts
     local s1_h, s1_l = rshift64_33(h_hi, h_lo)
     h_hi = bxor(h_hi, s1_h); h_lo = bxor(h_lo, s1_l)
     h_hi, h_lo = mul64(h_hi, h_lo, P64_2_H, P64_2_L)
@@ -314,7 +361,7 @@ local function XXH64(str, seed)
 
         local limit = len - 31
         while index <= limit do
-            
+            -- Inline read_u64_le
             local l1l = read_u32_le(str, index)
             local l1h = read_u32_le(str, index + 4)
             local l2l = read_u32_le(str, index + 8)
@@ -369,10 +416,10 @@ local function XXH64(str, seed)
         h_hi, h_lo = add64(seed_hi, seed_lo, P64_5_H, P64_5_L)
     end
 
-    
+    -- h += len
     h_hi, h_lo = add64(h_hi, h_lo, 0, len)
 
-    
+    -- 8-byte lanes
     local limit8 = len - (index - 1) - 7
     while limit8 >= 0 do
         local ll = read_u32_le(str, index)
@@ -388,7 +435,7 @@ local function XXH64(str, seed)
         limit8 = limit8 - 8
     end
 
-    
+    -- 4-byte tail: h ^= (read32 * P1); h = rotl(h, 23) * P2 + P3
     if index <= #str - 3 then
         local v32 = read_u32_le(str, index)
         local m_h, m_l = mul_u32_const64(v32, P64_1_H, P64_1_L)
@@ -399,7 +446,7 @@ local function XXH64(str, seed)
         index = index + 4
     end
 
-    
+    -- 1-byte tails: for each b, h ^= (b * P5); h = rotl(h, 11) * P1
     while index <= #str do
         local b = sbyte(str, index)
         local m_h, m_l = mul_u32_const64(b, P64_5_H, P64_5_L)
@@ -409,7 +456,7 @@ local function XXH64(str, seed)
         index = index + 1
     end
 
-    
+    -- Final mix (avalanche) with specialized shifts
     local s1_h, s1_l = rshift64_33(h_hi, h_lo)
     h_hi = bxor(h_hi, s1_h); h_lo = bxor(h_lo, s1_l)
     h_hi, h_lo = mul64(h_hi, h_lo, P64_2_H, P64_2_L)
@@ -423,6 +470,10 @@ local function XXH64(str, seed)
 
     return string.format("%08X%08X", h_hi, h_lo)
 end
+
+-- =========================================================================
+-- DEBUG/TEST UTILITIES
+-- =========================================================================
 
 local function to_hex_bytes(str)
     local t = {}
@@ -449,19 +500,23 @@ local function printable_echo(str)
         end))
 end
 
+-- =========================================================================
+-- SELF-TESTING FUNCTION
+-- =========================================================================
+
 local function RunSelfTests(opts)
     opts = opts or {}
     local hexAlways = not not opts.hexDumpAlways
     local which     = opts.which or "all"
 
-    
-    
-    
-    
-    
-    
-    
-    
+    -- Expectations aligned with Python xxhash and exact bytes:
+    -- ""            -> XXH32 02CC5D05, XXH64 EF46DB3751D8E999
+    -- 00            -> XXH32 CF65B03E, XXH64 E934A84ADB052768
+    -- 5C 30 ("\\0") -> XXH32 6257410B, XXH64 5263B0A7F5A1FD64
+    -- 61 62 63      -> XXH32 32D153FF, XXH64 44BC2CF5AD770999
+    -- empty seed 0x9E3779B1 -> XXH32 36B78AE7, XXH64 AC75FDA2929B17EF
+    -- 5C30 61 5C30 62 5C30 63 5C30 -> XXH32 737C5242, XXH64 43AB68FB8CD6407D
+    -- "Skulltrail" seed 2025 -> XXH32 4A31242C, XXH64 A56F88A6999B63F5
 
     local tests = {
         lua = {
@@ -556,6 +611,10 @@ local function RunSelfTests(opts)
     print("--------------------------------------")
     return success
 end
+
+-- =========================================================================
+-- MODULE EXPORT
+-- =========================================================================
 
 local XXH_Lua_Lib = {
     XXH32        = XXH32,

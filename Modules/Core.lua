@@ -1150,6 +1150,69 @@ function Core:FixMissingFpVotes()
     return fixedCount
 end
 
+function Core:FixInvalidContinentIDs()
+    
+    
+    if L.db.global.invalidContinentFix_v1 then return end
+
+    print("|cff00ff00LootCollector:|r Scanning database for records with invalid continent IDs (c=-1)...")
+
+    local discoveries = L:GetDiscoveriesDB()
+    if not (discoveries and next(discoveries)) then
+        L.db.global.invalidContinentFix_v1 = true
+        return
+    end
+
+    local ZoneList = L:GetModule("ZoneList", true)
+    if not (ZoneList and ZoneList.MapDataByID) then
+        print("|cffff0000LootCollector:|r ZoneList module not ready. Skipping continent fix.")
+        return
+    end
+
+    local fixedCount = 0
+    local guidsToFix = {}
+    
+    
+    for guid, d in pairs(discoveries) do
+        if d and (tonumber(d.c) or 0) == -1 and d.z then
+            table.insert(guidsToFix, guid)
+        end
+    end
+
+    
+    for _, oldGuid in ipairs(guidsToFix) do
+        local d = discoveries[oldGuid]
+        if d then
+            local zInfo = ZoneList.MapDataByID[tonumber(d.z)]
+            if zInfo and zInfo.continentID then
+                
+                discoveries[oldGuid] = nil
+                
+                
+                d.c = zInfo.continentID
+                
+                
+                local newGuid = L:GenerateGUID(d.c, d.z, d.i, d.xy.x, d.xy.y)
+                d.g = newGuid
+                
+                
+                discoveries[newGuid] = d
+                fixedCount = fixedCount + 1
+                
+                L._debug("Core-Fix", string.format("Fixed c=-1 -> c=%d for zone %d. Old GUID: %s -> New GUID: %s", d.c, d.z, oldGuid, newGuid))
+            end
+        end
+    end
+
+    if fixedCount > 0 then
+        print(string.format("|cff00ff00LootCollector:|r Repaired %d records with invalid continent IDs.", fixedCount))
+        
+        L:SendMessage("LOOTCOLLECTOR_DISCOVERY_LIST_UPDATED")
+    end
+    
+    L.db.global.invalidContinentFix_v1 = true
+end
+
 function Core:PerformOnLoginMaintenance()
     if self.onLoginCleanupPerformed then return end
     self.onLoginCleanupPerformed = true
@@ -1163,6 +1226,9 @@ function Core:PerformOnLoginMaintenance()
     if fixedVotesCount > 0 then
         print(string.format("|cff00ff00LootCollector:|r Updated %d older records with the new finder consensus system.", fixedVotesCount))
     end
+    
+    
+    self:FixInvalidContinentIDs()
 
     local phase = L.db.global.autoCleanupPhase or 0
     if phase < 3 then

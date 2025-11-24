@@ -1,4 +1,11 @@
-
+--[[
+Name: LibBabble-Inventory-3.0
+Revision: $Rev: 104 $
+Maintainers: ckknight, nevcairiel, Ackis
+Website: http://www.wowace.com/projects/libbabble-inventory-3-0/
+Dependencies: None
+License: MIT
+]]
 
 local MAJOR_VERSION = "LibBabble-Inventory-3.0"
 local MINOR_VERSION = 90000 + tonumber(("$Rev: 104 $"):match("%d+"))
@@ -153,6 +160,7 @@ lib:SetBaseTranslations {
 	Wrist = "Wrist",
 	Yellow = "Yellow",
 }
+
 
 if GAME_LOCALE == "enUS" then
 	lib:SetCurrentTranslations(true)
@@ -449,7 +457,7 @@ elseif GAME_LOCALE == "frFR" then
 elseif GAME_LOCALE == "koKR" then
 	lib:SetCurrentTranslations {
 	Alchemy = "연금술",
-	["Ammo Pouch"] = "탄환 주머니", 
+	["Ammo Pouch"] = "탄환 주머니", -- Needs review
 	Armor = "방어구",
 	["Armor Enchantment"] = "방어구 마부",
 	Arrow = "화살",
@@ -465,24 +473,24 @@ elseif GAME_LOCALE == "koKR" then
 	Bullet = "탄환",
 	Chest = "가슴",
 	Cloth = "천",
-	Consumable = "소비 용품", 
-	Container = "가방", 
+	Consumable = "소비 용품", -- Needs review
+	Container = "가방", -- Needs review
 	Cooking = "요리",
 	Crossbow = "석궁",
 	Crossbows = "석궁류",
 	Dagger = "단검",
 	Daggers = "단검류",
 	["Death Knight"] = "죽음의 기사",
-	Devices = "장치", 
+	Devices = "장치", -- Needs review
 	Drink = "음료",
 	Druid = "드루이드",
 	Elemental = "원소",
-	Elixir = "영약", 
+	Elixir = "영약", -- Needs review
 	Enchanting = "마법부여",
 	["Enchanting Bag"] = "마법부여 가방",
 	Engineering = "기계공학",
 	["Engineering Bag"] = "기계공학 가방",
-	Explosives = "폭탄", 
+	Explosives = "폭탄", -- Needs review
 	Feet = "발",
 	["First Aid"] = "응급치료",
 	Fishing = "낚시",
@@ -490,7 +498,7 @@ elseif GAME_LOCALE == "koKR" then
 	["Fishing Poles"] = "낚싯대",
 	["Fist Weapon"] = "장착 무기",
 	["Fist Weapons"] = "장착 무기류",
-	Flask = "비약", 
+	Flask = "비약", -- Needs review
 	Food = "음식",
 	["Food & Drink"] = "음식과 음료",
 	Gem = "보석",
@@ -508,7 +516,7 @@ elseif GAME_LOCALE == "koKR" then
 	Hunter = "사냥꾼",
 	Idol = "우상",
 	Idols = "우상",
-	["Inscription Bag"] = "주문각인 가방", 
+	["Inscription Bag"] = "주문각인 가방", -- Needs review
 	["Item Enhancement"] = "아이템 강화",
 	Jewelcrafting = "보석세공",
 	Junk = "잡동사니",
@@ -575,7 +583,7 @@ elseif GAME_LOCALE == "koKR" then
 	Thrown = "투척 무기",
 	Totem = "토템",
 	Totems = "토템",
-	["Trade Goods"] = "직업 용품", 
+	["Trade Goods"] = "직업 용품", -- Needs review
 	Trinket = "장신구",
 	["Two-Hand"] = "양손",
 	["Two-Handed Axes"] = "양손 도끼류",

@@ -169,6 +169,9 @@ Detect._ctx = {
   lastMailTakeAt = nil,
   mailOpen = false,
   lastQuestCompleteAt = nil,
+  lastQuestFinishedAt = nil, 
+  lastQuestTurnedInAt = nil, 
+  lastQuestMsgAt = nil,      
   lastTradeAcceptedAt = nil,
   tradeOpen = false,
   craftingOpen = false,
@@ -451,6 +454,12 @@ function Detect:OnLootClosed()
     self._expectingItemUntil = GetTime() + ITEM_EXPECTATION_WINDOW
 end
 
+function Detect:OnSystemMessage(_, msg)
+    if msg and string.find(msg, " completed.") then
+        self._ctx.lastQuestMsgAt = time()
+    end
+end
+
 function Detect:OnInitialize()
   if L.LEGACY_MODE_ACTIVE then return end
   
@@ -467,7 +476,13 @@ function Detect:OnInitialize()
   self:RegisterEvent("MAIL_SHOW", function() self._ctx.mailOpen = true end)
   self:RegisterEvent("MAIL_CLOSED", function() self._ctx.mailOpen = false end)
   self:RegisterEvent("CHAT_MSG_LOOT", "OnChatMsgLoot")
+  
+  
   self:RegisterEvent("QUEST_COMPLETE", function() self._ctx.lastQuestCompleteAt = time() end)
+  self:RegisterEvent("QUEST_FINISHED", function() self._ctx.lastQuestFinishedAt = time() end)
+  self:RegisterEvent("QUEST_TURNED_IN", function() self._ctx.lastQuestTurnedInAt = time() end)
+  self:RegisterEvent("CHAT_MSG_SYSTEM", "OnSystemMessage")
+
   self:RegisterEvent("TRADE_SHOW", function() self._ctx.tradeOpen = true end)
   self:RegisterEvent("TRADE_CLOSED", function() self._ctx.tradeOpen = false; self._ctx.lastTradeAcceptedAt = nil end)
   self:RegisterEvent("TRADE_ACCEPTED", function() self._ctx.lastTradeAcceptedAt = time() end)
@@ -495,11 +510,21 @@ function Detect:OnInitialize()
 end
 
 local function classifySource(ctx, now)
+  local QUEST_WINDOW = 9.0 
+
   if ctx.mailOpen or (ctx.lastMailTakeAt and (now - ctx.lastMailTakeAt <= 3)) then return "mail" end
   if ctx.tradeOpen or (ctx.lastTradeAcceptedAt and (now - ctx.lastTradeAcceptedAt <= 3)) then return "trade" end
   if ctx.bankOpen then return "bank" end
   if ctx.guildBankOpen then return "guild_bank" end
-  if ctx.lastQuestCompleteAt and (now - ctx.lastQuestCompleteAt <= 3) then return "quest_reward" end
+  
+  
+  if (ctx.lastQuestCompleteAt and (now - ctx.lastQuestCompleteAt <= 5)) or
+     (ctx.lastQuestFinishedAt and (now - ctx.lastQuestFinishedAt <= QUEST_WINDOW)) or
+     (ctx.lastQuestTurnedInAt and (now - ctx.lastQuestTurnedInAt <= QUEST_WINDOW)) or
+     (ctx.lastQuestMsgAt and (now - ctx.lastQuestMsgAt <= QUEST_WINDOW)) then 
+     return "quest_reward" 
+  end
+
   if ctx.lastAchievementAt and (now - ctx.lastAchievementAt <= 3) then return "achievement" end
   if ctx.craftingOpen then return "crafting" end
   if _G.C_MysticEnchant and _G.C_MysticEnchant.HasNearbyMysticAltar and _G.C_MysticEnchant.HasNearbyMysticAltar() then return "mystic_altar" end
@@ -539,6 +564,7 @@ function Detect:OnChatMsgLoot(_, msg)
         local zoneInfo = ZoneList and ZoneList.MapDataByID[mapID]
 
         if zoneInfo then
+            c = zoneInfo.continentID 
             z = mapID
             iz = 0
         else
@@ -598,6 +624,7 @@ function Detect:ProcessPotentialDiscovery(link, sourceHint, looterName)
         local zoneInfo = ZoneList and ZoneList.MapDataByID[mapID]
 
         if zoneInfo then
+            c = zoneInfo.continentID 
             z = mapID
             iz = 0
         else

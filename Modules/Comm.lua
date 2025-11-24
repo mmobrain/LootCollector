@@ -124,8 +124,22 @@ Comm._processTimer = 0
 local function _debug(mod, msg) return end
     
 
-local function trackInvalidSender(sender, reason)
+local function trackInvalidSender(sender, reason, payload)
     if not (L.db and L.db.profile) then return end
+    
+    
+    if L.db.profile.idebugMode then
+        local payloadStr = "nil"
+        if payload then
+            
+            local parts = {}
+            for k, v in pairs(payload) do
+                table.insert(parts, tostring(k) .. "=" .. tostring(v))
+            end
+            payloadStr = "{" .. table.concat(parts, ", ") .. "}"
+        end
+        print(string.format("|cffff00ff[LC-Invalid]|r Sender: %s | Reason: %s | Payload: %s", tostring(sender), tostring(reason), payloadStr))
+    end
     
     L.db.profile.invalidSenders = L.db.profile.invalidSenders or {}
     local track = L.db.profile.invalidSenders[sender] or { count = 0, lastInvalid = 0 }
@@ -136,14 +150,10 @@ local function trackInvalidSender(sender, reason)
     
     L.db.profile.invalidSenders[sender] = track
     
-    
-    
-    
     if track.count == 3 and not track.sessionIgnored then
         track.sessionIgnored = true
         print(string.format("|cffff7f00[LootCollector]|r %s sent 3 invalid discoveries. Suppressing messages for this session.", sender))
     end
-    
     
     if track.count >= 7 and not track.permanent then
         track.permanent = true
@@ -309,7 +319,7 @@ function Comm:EnsureChannelJoined()
     if not (p and p.sharing and p.sharing.enabled) then return end
     if self:IsChannelHealthy() then return end
     
-    local ch = self.channelName or "BBLCC25TEST"
+    local ch = self.channelName or "BBLCC25"
     JoinPermanentChannel(ch)
     if DEFAULT_CHAT_FRAME then
         ChatFrame_AddChannel(DEFAULT_CHAT_FRAME, ch)
@@ -1119,18 +1129,15 @@ local function _normalizeForCore(tbl, sender, Comm)
         return tbl
     end
     
-    
     if tbl.op == "DISC" then
         if (tbl.s or 0) == 0 then
             if tbl.fp and tbl.fp ~= "" and tbl.fp ~= sender then
-                
-                trackInvalidSender(sender, "disc_fp_mismatch")
+                trackInvalidSender(sender, "disc_fp_mismatch", tbl)
                 return nil
             end
         else
             if tbl.fp and tbl.fp ~= "" then
-                
-                trackInvalidSender(sender, "disc_anon_fp_not_empty")
+                trackInvalidSender(sender, "disc_anon_fp_not_empty", tbl)
                 return nil
             end
         end
@@ -1180,8 +1187,8 @@ local function _normalizeForCore(tbl, sender, Comm)
     }
 end
 
-function Comm:_trackInvalidSender(sender, reason)
-    trackInvalidSender(sender, reason)
+function Comm:_trackInvalidSender(sender, reason, payload)
+    trackInvalidSender(sender, reason, payload)
 end
 
 local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelName)
@@ -1242,10 +1249,20 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
              if not data.op then data.op = optOp end
              if not data.mid then data.mid = optMid end
 
+             
+             if (tonumber(data.c) or 0) == -1 and data.z then
+                 local ZoneList = L:GetModule("ZoneList", true)
+                 local zInfo = ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[tonumber(data.z)]
+                 if zInfo and zInfo.continentID then
+                     data.c = zInfo.continentID
+                     L._debug("Comm-Sanitize", string.format("Repaired c=-1 to c=%d for zone %d from %s", data.c, data.z, sender))
+                 end
+             end
+
             
              local tbl, reason = _lc_validateNormalized(data)
             if not tbl then
-                trackInvalidSender(sender, reason)
+                trackInvalidSender(sender, reason, data)
                 return
             end
              if isSenderSessionIgnored(sender) then return end
@@ -1286,9 +1303,19 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
         end
     end
     
+    
+    if (tonumber(data.c) or 0) == -1 and data.z then
+         local ZoneList = L:GetModule("ZoneList", true)
+         local zInfo = ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[tonumber(data.z)]
+         if zInfo and zInfo.continentID then
+             data.c = zInfo.continentID
+             L._debug("Comm-Sanitize", string.format("Repaired c=-1 to c=%d for zone %d from %s (Fallback Path)", data.c, data.z, sender))
+         end
+    end
+    
     local tbl, reason = _lc_validateNormalized(data)
     if not tbl then
-        trackInvalidSender(sender, reason)
+        trackInvalidSender(sender, reason, data)
 		L._debug("PARSE", "FAIL: Parsed data failed validation. Dropping message.")
         return
     end
@@ -1333,10 +1360,20 @@ function Comm:OnCommReceived(prefix, message, distribution, sender)
         end
     end
     
+    
+    if (tonumber(data.c) or 0) == -1 and data.z then
+         local ZoneList = L:GetModule("ZoneList", true)
+         local zInfo = ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[tonumber(data.z)]
+         if zInfo and zInfo.continentID then
+             data.c = zInfo.continentID
+             L._debug("Comm-Sanitize", string.format("Repaired c=-1 to c=%d for zone %d from %s (AceComm)", data.c, data.z, sender))
+         end
+    end
+    
     local tbl, reason = _lc_validateNormalized(data)
     if not tbl then
         L._debug("Comm-Filter", "FAIL: Deserialized data failed validation. Reason: " .. reason)
-        trackInvalidSender(sender, reason)
+        trackInvalidSender(sender, reason, data)
         return
     end
     

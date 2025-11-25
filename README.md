@@ -12,7 +12,7 @@ Screenhots from 0.5.1S-alpha:
 ![image](https://i.imgur.com/W7oPo9L.jpeg)
 
 Screenhots from 0.5.90-alpha:
-![image](https://i.imgur.com/OhmYUJR.jpeg)
+![image](https://i.imgur.com/HGY0ITz.jpeg)
 
 
 ## Installation

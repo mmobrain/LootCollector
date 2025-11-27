@@ -1,4 +1,9 @@
-## LootCollector 0.6.00 - Fixes
+## LootCollector 0.6.10 - Fixes + Small Optimizations**
+
+- Fixed issue where out-of-distance minimap icons appeared on the edges of minimap and "floated".
+- Minimum compatible version to accept discoveries is now 0.6.10
+
+## LootCollector 0.6.00 - Fixes**
 
 - Added support when `GetCurrentMapContinent()` returning -1 in some cases.
 - Improved detection of Mystic Scroll acquisition from quests.

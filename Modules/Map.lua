@@ -363,6 +363,9 @@ function Map:OnInitialize()
     if L.LEGACY_MODE_ACTIVE then return end
     if not (L.db and L.db.profile and L.db.global and L.db.char) then return end
     
+    
+    self.cacheIsDirty = true
+    
     self:RegisterEvent("WORLD_MAP_UPDATE", function()
         if Map.isOpeningMenu then
             Map.isOpeningMenu = false
@@ -386,6 +389,9 @@ function Map:OnInitialize()
     C_Timer.After(3, function()
         if ShowFriends then ShowFriends() end
         if GuildRoster then GuildRoster() end
+        
+        
+        if Map.UpdateMinimap then Map:UpdateMinimap() end
     end)
 
     GameTooltip:HookScript("OnHide", function()
@@ -1612,8 +1618,12 @@ function Map:UpdateMinimap()
     return
   end
 
+  
   if self.cachingEnabled then
-    self:RebuildFilteredCache()
+      if self.cacheIsDirty or #self.cachedVisibleDiscoveries == 0 then
+           self.cacheIsDirty = true 
+           self:RebuildFilteredCache()
+      end
   end
 
   local currentContinent, currentMapID = self:GetPlayerLocation()
@@ -1678,12 +1688,26 @@ function Map:UpdateMinimap()
           end
       end
       
+      
       pin:Show()
       
     else
       pin:Hide()
       pin.discovery = nil
     end
+  end
+  
+  
+  self._minimapPinsDirty = true
+  
+  
+  if self._mmTicker then
+      self._mmInterval = 0 
+      if not self._mmTicker:GetScript("OnUpdate") then
+           self:EnsureMinimapTicker() 
+      end
+  else
+      self:EnsureMinimapTicker()
   end
 end
 
@@ -1748,27 +1772,32 @@ function Map:EnsureMinimapTicker()
                 math.abs(py - (state.py or -1)) < 0.0001 and
                 math.abs(facing - (state.facing or -1)) < 0.001
             )
-
-            if not playerMoved then
+		
+		 
+            if not playerMoved and not Map._minimapPinsDirty then
                 L._mdebug("Map-Ticker", "Player state unchanged. Skipping position recalculation.")
                 Map._mmInterval = 0.5
                 Map._playerStateChanged = false
-                Map:UpdateMinimap()
+                
                 return
             end
 
+            
             Map._playerStateChanged = true
+            Map._minimapPinsDirty = false 
             Map._mmInterval = 0.1
 
             state.c, state.mapID, state.px, state.py, state.facing = c, mapID, px, py, facing
-            L._mdebug("Map-Ticker", "Player state changed. Recalculating pin positions.")
 
-            Map:UpdateMinimap()
-
-            L._mdebug(
-                "Map-Ticker",
-                string.format("Ticker Position Update: c=%s, mapID=%s. Player at %.4f, %.4f", tostring(c), tostring(mapID), px, py)
-            )
+            if playerMoved then
+                 L._mdebug(
+                    "Map-Ticker",
+                    string.format("Ticker Position Update: c=%s, mapID=%s. Player at %.4f, %.4f", tostring(c), tostring(mapID), px, py)
+                )
+            else
+                
+                 L._mdebug("Map-Ticker", "Forced ticker update (pins dirty).")
+            end
 
             local minimapRadius = Minimap:GetViewRadius()
             local mapWidth = Minimap:GetWidth()
@@ -1792,7 +1821,7 @@ function Map:EnsureMinimapTicker()
             local minimapShape = GetCurrentMinimapShape()
 
             for _, pin in ipairs(Map._mmPins) do
-                if pin:IsShown() and pin.discovery then
+                if pin.discovery then 
                     local d = pin.discovery
 
                     local distYards, xDist, yDist = ComputeDistance(
@@ -1801,9 +1830,11 @@ function Map:EnsureMinimapTicker()
                     )
 
                     if distYards and xDist and yDist then
+                        
                         if maxDistSq and (distYards * distYards) > maxDistSq then
                             pin:Hide()
                         else
+                            
                             if rotateEnabled then
                                 local dx, dy = xDist, yDist
                                 xDist = dx * cos_f - dy * sin_f
@@ -1843,8 +1874,12 @@ function Map:EnsureMinimapTicker()
                             end
                         end
                     else
+                        
                         pin:Hide()
                     end
+                else
+                    
+                    pin:Hide()
                 end
             end
         end

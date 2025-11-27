@@ -281,7 +281,7 @@ function LootCollector:ActivateRealmBucket()
                 end
             end
             if count > 0 then
-                self:Print(string.format("|cff00ff00LootCollector:|r Migrated %d legacy global discoveries to realm bucket: %s", count, realmKey))
+                print(string.format("|cff00ff00LootCollector:|r Migrated %d legacy global discoveries to realm bucket: %s", count, realmKey))
             end
         end
         
@@ -299,7 +299,7 @@ function LootCollector:ActivateRealmBucket()
                 end
             end
             if count > 0 then
-                self:Print(string.format("|cff00ff00LootCollector:|r Migrated %d legacy global vendors to realm bucket: %s", count, realmKey))
+                print(string.format("|cff00ff00LootCollector:|r Migrated %d legacy global vendors to realm bucket: %s", count, realmKey))
             end
         end
         

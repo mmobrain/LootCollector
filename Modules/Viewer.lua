@@ -2174,6 +2174,180 @@ local function GetColorForDiscovery(discovery, itemID)
     return GetQualityColor(q)
 end
 
+function Viewer:HasActiveFilters()
+    
+    if self.searchTerm and self.searchTerm ~= "" then
+        return true
+    end
+
+    
+    if size(self.columnFilters.zone) > 0 then
+        return true
+    end
+
+    
+    
+    if self.columnFilters.eq and (size(self.columnFilters.eq.slot) > 0 or size(self.columnFilters.eq.type) > 0 or size(self.columnFilters.eq.class) > 0) then
+        return true
+    end
+
+    
+    if self.columnFilters.ms and size(self.columnFilters.ms.class) > 0 then
+        return true
+    end
+    
+
+    
+    if size(self.columnFilters.source) > 0 then
+        return true
+    end
+
+    
+    if size(self.columnFilters.quality) > 0 then
+        return true
+    end
+
+    
+    if self.lootedFilterState ~= nil or size(self.columnFilters.looted) > 0 then
+        return true
+    end
+
+    
+    if self.columnFilters.duplicates then
+        return true
+    end
+
+    return false
+end
+
+function Viewer:UpdateClearAllButton()
+    if not self.clearAllBtn or not self.actionsLabel then
+        return 
+    end
+
+    if self:HasActiveFilters() then
+        self.clearAllBtn:Show()
+        self.clearAllBtn:SetText("Clear All Filters")
+    else
+        self.clearAllBtn:Hide()
+        
+        self.actionsLabel:Show()
+    end
+end
+
+function Viewer:UpdateFilterButtonStates()
+    if not self.sourceFilterBtn or not self.qualityFilterBtn or not self.lootedFilterBtn then
+        return 
+    end
+
+    
+    local function setButtonTextColor(button, r, g, b)
+        local fontString = button:GetFontString()
+        if fontString then
+            fontString:SetTextColor(r, g, b)
+        end
+    end
+
+    
+    local sourceActive = size(self.columnFilters.source) > 0
+    if sourceActive then
+        setButtonTextColor(self.sourceFilterBtn, 1, 0.8, 0.2) 
+        self.sourceFilterBtn:SetText("Source [F]")
+    else
+        setButtonTextColor(self.sourceFilterBtn, 1, 1, 1) 
+        self.sourceFilterBtn:SetText("Source")
+    end
+
+    
+    local qualityActive = size(self.columnFilters.quality) > 0
+    if qualityActive then
+        setButtonTextColor(self.qualityFilterBtn, 1, 0.8, 0.2) 
+        self.qualityFilterBtn:SetText("Quality [F]")
+    else
+        setButtonTextColor(self.qualityFilterBtn, 1, 1, 1) 
+        self.qualityFilterBtn:SetText("Quality")
+    end
+
+    
+    if self.lootedFilterState == true then
+        setButtonTextColor(self.lootedFilterBtn, 1, 0.8, 0.2) 
+        self.lootedFilterBtn:SetText("Looted: Yes")
+    elseif self.lootedFilterState == false then
+        setButtonTextColor(self.lootedFilterBtn, 1, 0.8, 0.2) 
+        self.lootedFilterBtn:SetText("Looted: No")
+    else
+        setButtonTextColor(self.lootedFilterBtn, 1, 1, 1) 
+        self.lootedFilterBtn:SetText("Looted: All")
+    end
+    
+    
+    if self.slotsFilterBtn then
+            local slotsActive = size(self.columnFilters.eq.slot) > 0
+            if slotsActive then
+            setButtonTextColor(self.slotsFilterBtn, 1, 0.8, 0.2)
+            self.slotsFilterBtn:SetText("Slots [F]")
+            else
+            setButtonTextColor(self.slotsFilterBtn, 1, 1, 1)
+            self.slotsFilterBtn:SetText("Slots")
+            end
+    end
+    
+    
+    if self.usableByFilterBtn then
+            local classActive = false
+            if self.currentFilter == "eq" then
+                classActive = size(self.columnFilters.eq.class) > 0
+            elseif self.currentFilter == "ms" then
+                classActive = size(self.columnFilters.ms.class) > 0
+            end
+            
+            if classActive then
+            setButtonTextColor(self.usableByFilterBtn, 1, 0.8, 0.2)
+            self.usableByFilterBtn:SetText("Usable By [F]")
+            else
+            setButtonTextColor(self.usableByFilterBtn, 1, 1, 1)
+            self.usableByFilterBtn:SetText("Usable By")
+            end
+    end
+
+    
+    if self.duplicatesFilterBtn then
+        local duplicatesActive = self.columnFilters.duplicates
+        if duplicatesActive then
+            setButtonTextColor(self.duplicatesFilterBtn, 1, 0.8, 0.2) 
+            self.duplicatesFilterBtn:SetText("Duplicates [F]")
+        else
+            setButtonTextColor(self.duplicatesFilterBtn, 1, 1, 1) 
+            self.duplicatesFilterBtn:SetText("Duplicates")
+        end
+    end
+end
+
+    
+function Viewer:UpdateRefreshButton()
+    if not self.refreshDataBtn then return end
+    
+    local count = self.pendingUpdatesCount or 0
+    if count > 0 then
+        
+        self.refreshDataBtn:SetText("Refresh *")
+        self.refreshDataBtn:Enable()
+        if self.refreshDataBtn.GetFontString then
+             local fs = self.refreshDataBtn:GetFontString()
+             if fs then fs:SetTextColor(0, 1, 0) end 
+        end
+    else
+        self.refreshDataBtn:SetText("Refresh")
+        self.refreshDataBtn:Disable()
+         if self.refreshDataBtn.GetFontString then
+             local fs = self.refreshDataBtn:GetFontString()
+             if fs then fs:SetTextColor(0.5, 0.5, 0.5) end 
+        end
+    end
+end
+
+  
+
 function Viewer:CreateWindow()
     if self.window then return end
     
@@ -3057,7 +3231,7 @@ function Viewer:CreateWindow()
     inventoryHeader:SetPoint("LEFT", vendorZoneHeader, "RIGHT", GRID_LAYOUT.COLUMN_SPACING, 0)
     inventoryHeader:SetText("Inventory")
     
-
+    
     local actionsLabel = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     actionsLabel:SetPoint("RIGHT", -5, 0)
     actionsLabel:SetText("Actions")
@@ -3104,157 +3278,18 @@ function Viewer:CreateWindow()
         Viewer:UpdateFilterButtonStates()
     end)
 
-    
-    function Viewer:HasActiveFilters()
-    
-    if self.searchTerm and self.searchTerm ~= "" then
-        return true
-    end
-
-    
-    if size(self.columnFilters.zone) > 0 then
-        return true
-    end
-
-    
-    
-    if self.columnFilters.eq and (size(self.columnFilters.eq.slot) > 0 or size(self.columnFilters.eq.type) > 0 or size(self.columnFilters.eq.class) > 0) then
-        return true
-    end
-
-    
-    if self.columnFilters.ms and size(self.columnFilters.ms.class) > 0 then
-        return true
-    end
-    
-
-    
-    if size(self.columnFilters.source) > 0 then
-        return true
-    end
-
-    
-    if size(self.columnFilters.quality) > 0 then
-        return true
-    end
-
-    
-    if self.lootedFilterState ~= nil or size(self.columnFilters.looted) > 0 then
-        return true
-    end
-
-    
-    if self.columnFilters.duplicates then
-        return true
-    end
-
-    return false
-end
-
-    
-    function Viewer:UpdateClearAllButton()
-        if not self.clearAllBtn or not self.actionsLabel then
-            return 
-        end
-
-        if self:HasActiveFilters() then
-            self.clearAllBtn:Show()
-            self.clearAllBtn:SetText("Clear All Filters")
-        else
-            self.clearAllBtn:Hide()
-            
-            self.actionsLabel:Show()
-        end
-    end
-
-    
-    function Viewer:UpdateFilterButtonStates()
-        if not self.sourceFilterBtn or not self.qualityFilterBtn or not self.lootedFilterBtn then
-            return 
-        end
-
-        
-        local function setButtonTextColor(button, r, g, b)
-            local fontString = button:GetFontString()
-            if fontString then
-                fontString:SetTextColor(r, g, b)
-            end
-        end
-
-        
-        local sourceActive = size(self.columnFilters.source) > 0
-        if sourceActive then
-            setButtonTextColor(self.sourceFilterBtn, 1, 0.8, 0.2) 
-            self.sourceFilterBtn:SetText("Source [F]")
-        else
-            setButtonTextColor(self.sourceFilterBtn, 1, 1, 1) 
-            self.sourceFilterBtn:SetText("Source")
-        end
-
-        
-        local qualityActive = size(self.columnFilters.quality) > 0
-        if qualityActive then
-            setButtonTextColor(self.qualityFilterBtn, 1, 0.8, 0.2) 
-            self.qualityFilterBtn:SetText("Quality [F]")
-        else
-            setButtonTextColor(self.qualityFilterBtn, 1, 1, 1) 
-            self.qualityFilterBtn:SetText("Quality")
-        end
-
-        
-        if self.lootedFilterState == true then
-            setButtonTextColor(self.lootedFilterBtn, 1, 0.8, 0.2) 
-            self.lootedFilterBtn:SetText("Looted: Yes")
-        elseif self.lootedFilterState == false then
-            setButtonTextColor(self.lootedFilterBtn, 1, 0.8, 0.2) 
-            self.lootedFilterBtn:SetText("Looted: No")
-        else
-            setButtonTextColor(self.lootedFilterBtn, 1, 1, 1) 
-            self.lootedFilterBtn:SetText("Looted: All")
-        end
-        
-        
-        if self.slotsFilterBtn then
-             local slotsActive = size(self.columnFilters.eq.slot) > 0
-             if slotsActive then
-                setButtonTextColor(self.slotsFilterBtn, 1, 0.8, 0.2)
-                self.slotsFilterBtn:SetText("Slots [F]")
-             else
-                setButtonTextColor(self.slotsFilterBtn, 1, 1, 1)
-                self.slotsFilterBtn:SetText("Slots")
-             end
-        end
-        
-        
-        if self.usableByFilterBtn then
-             local classActive = false
-             if self.currentFilter == "eq" then
-                 classActive = size(self.columnFilters.eq.class) > 0
-             elseif self.currentFilter == "ms" then
-                 classActive = size(self.columnFilters.ms.class) > 0
-             end
-             
-             if classActive then
-                setButtonTextColor(self.usableByFilterBtn, 1, 0.8, 0.2)
-                self.usableByFilterBtn:SetText("Usable By [F]")
-             else
-                setButtonTextColor(self.usableByFilterBtn, 1, 1, 1)
-                self.usableByFilterBtn:SetText("Usable By")
-             end
-        end
-
-        
-        if self.duplicatesFilterBtn then
-            local duplicatesActive = self.columnFilters.duplicates
-            if duplicatesActive then
-                setButtonTextColor(self.duplicatesFilterBtn, 1, 0.8, 0.2) 
-                self.duplicatesFilterBtn:SetText("Duplicates [F]")
-            else
-                setButtonTextColor(self.duplicatesFilterBtn, 1, 1, 1) 
-                self.duplicatesFilterBtn:SetText("Duplicates")
-            end
-        end
-    end
+     local refreshDataBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
+    refreshDataBtn:SetSize(100, 22) 
+    refreshDataBtn:SetPoint("BOTTOM", duplicatesFilterBtn, "CENTER", -10, -40)
+    refreshDataBtn:SetText("Refresh")
+    refreshDataBtn:SetFrameStrata(FRAME_STRATA)
+    refreshDataBtn:SetFrameLevel(FRAME_LEVEL + 1)
+    refreshDataBtn:SetScript("OnClick", function()
+        Viewer.pendingUpdatesCount = 0
+        Viewer:UpdateRefreshButton()
+        Viewer:RefreshData()
+    end)
+    self.refreshDataBtn = refreshDataBtn
 
     
     local paginationFrame = CreateFrame("Frame", nil, window)
@@ -4360,8 +4395,14 @@ function Viewer:ToggleLootedState(guid, discoveryData)
 
     
     local Map = L:GetModule("Map", true)
-    if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
-        Map:Update()
+    if Map then
+        Map.cacheIsDirty = true 
+        if Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
+            Map:Update()
+        end
+        if Map.UpdateMinimap then
+            Map:UpdateMinimap()
+        end
     end
 
     
@@ -4801,32 +4842,22 @@ function Viewer:OnInitialize()
     self:CreateWindow()
     L:RegisterMessage("LootCollector_DiscoveriesUpdated", function(event, action, guid, discoveryData)
         
+        local updated = false
+        
         if action == "add" and guid and discoveryData then
             
             if Cache.discoveriesBuilt and not Cache.discoveriesBuilding then
-                self:AddDiscoveryToCache(guid, discoveryData)
-                
-                if self.window and self.window:IsShown() then
-                    self:RefreshData()
-                end
+                updated = self:AddDiscoveryToCache(guid, discoveryData)
             end
         elseif action == "update" and guid and discoveryData then
             
             if Cache.discoveriesBuilt and not Cache.discoveriesBuilding then
-                self:AddDiscoveryToCache(guid, discoveryData) 
-                
-                if self.window and self.window:IsShown() then
-                    self:RefreshData()
-                end
+                updated = self:AddDiscoveryToCache(guid, discoveryData) 
             end
         elseif action == "remove" and guid then
             
             if Cache.discoveriesBuilt and not Cache.discoveriesBuilding then
-                self:RemoveDiscoveryFromCache(guid)
-                
-                if self.window and self.window:IsShown() then
-                    self:RefreshData()
-                end
+                updated = self:RemoveDiscoveryFromCache(guid)
             end
         elseif action == "clear" then
             
@@ -4840,8 +4871,12 @@ function Viewer:OnInitialize()
             Cache.duplicateItems = {}
             
             if self.window and self.window:IsShown() then
+                
+                self.pendingUpdatesCount = 0
+                self:UpdateRefreshButton()
                 self:RefreshData()
             end
+            return
         else
             
             if Cache.discoveriesBuilt and not Cache.discoveriesBuilding then
@@ -4849,10 +4884,18 @@ function Viewer:OnInitialize()
                 Cache.lastFilterState = nil
                 Cache.uniqueValuesValid = false
                 Cache.uniqueValuesContext = {}
+                updated = true
+            end
+        end
+        
+        if updated then
+            if self.window and self.window:IsShown() then
                 
-                if self.window and self.window:IsShown() then
-                    self:RefreshData()
-                end
+                self.pendingUpdatesCount = (self.pendingUpdatesCount or 0) + 1
+                self:UpdateRefreshButton()
+            else
+                
+                self.pendingUpdatesCount = 0
             end
         end
     end)
@@ -4883,27 +4926,35 @@ function Viewer:OnInitialize()
     self:UpdateFilterButtonStates()
 end
 
-function Viewer:Show() 
+function Viewer:Show()
     if not self.window then
         self:CreateWindow()
     end
-
-    local t0 = time()
+    
+      local t0 = time()
     VDebug("Show: start, currentFilter=" .. tostring(self.currentFilter) ..
         ", cacheBuilt=" .. tostring(Cache.discoveriesBuilt) ..
         ", building=" .. tostring(Cache.discoveriesBuilding))
 
+    
+    
+    
     if WorldMapFrame and WorldMapFrame.GetFrameLevel then
         local level = WorldMapFrame:GetFrameLevel() - 1
-        -- avoiding -1 if nill
+        
 		if level < 1 then 
             level = 1
         end
         self.window:SetFrameLevel(level)
     else
-        -- fallback safe
+        
         self.window:SetFrameLevel(FRAME_LEVEL or 1)
     end
+    
+
+    
+    self.pendingUpdatesCount = 0
+    self:UpdateRefreshButton()
 
     self.window:Show()
     self.currentPage = self.currentPage or 1
@@ -4913,6 +4964,7 @@ function Viewer:Show()
     self:UpdateFilterButtonStates()
     self:RefreshData()
 
+    
     self.pendingMapAreaID = nil
     VDebug("Show: end, elapsed=" .. tostring(time() - t0) .. "s")
 end

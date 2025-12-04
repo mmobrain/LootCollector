@@ -5,6 +5,7 @@ local Core = L:GetModule("Core", true)
 local Map = L:NewModule("Map", "AceEvent-3.0")
 
 local PIN_FALLBACK_TEXTURE = "Interface\\AddOns\\LootCollector\\media\\pin"
+local MAP_UPDATE_THROTTLE = 0.4
 
 local mapOverlay 
 
@@ -14,6 +15,7 @@ Map.cacheIsDirty = true
 Map.cachingEnabled = true
 Map._lastLocationFetchTime = 0
 Map._cachedLocation = { c = nil, mapID = nil, px = nil, py = nil }
+Map._minimapPinsDirty = false 
 
 Map.pins = Map.pins or {}
 
@@ -46,6 +48,10 @@ local BM_ICON_SIZE_IN_LINE = 18
 Map.clusterPins = Map.clusterPins or {}
 local CLUSTER_PIN_SIZE = 32
 local CLUSTER_PIN_BACKGROUND_TEXTURE = "Interface\\AddOns\\LootCollector\\media\\pin"
+
+Map.worldMapUpdatePending = false
+Map.worldMapUpdateTimer = 0
+Map.throttleFrame = nil
 
 local function CreateOrShowPersistentOverlayPin(px, py, discovery)
     local parent = WorldMapDetailFrame or WorldMapFrame
@@ -359,9 +365,26 @@ function Map:ClearPinHighlight()
     end
 end
 
+function Map:EnsureThrottleFrame()
+    if self.throttleFrame then return end
+    self.throttleFrame = CreateFrame("Frame")
+    self.throttleFrame:SetScript("OnUpdate", function(frame, elapsed)
+        if Map.worldMapUpdatePending then
+            Map.worldMapUpdateTimer = Map.worldMapUpdateTimer + elapsed
+            if Map.worldMapUpdateTimer >= MAP_UPDATE_THROTTLE then
+                Map:DrawWorldMapPins()
+                Map.worldMapUpdatePending = false
+                Map.worldMapUpdateTimer = 0
+            end
+        end
+    end)
+end
+
 function Map:OnInitialize()
     if L.LEGACY_MODE_ACTIVE then return end
     if not (L.db and L.db.profile and L.db.global and L.db.char) then return end
+    
+    self:EnsureThrottleFrame()
     
     
     self.cacheIsDirty = true
@@ -372,7 +395,11 @@ function Map:OnInitialize()
             return
         end
         if WorldMapFrame and WorldMapFrame:IsShown() then
-            Map:Update()
+            
+            
+            
+            
+            Map:Update() 
         end
         
         if WorldMapFrame and WorldMapFrame.viewerOverlayPin then
@@ -1137,11 +1164,13 @@ function Map:OpenPinMenu(anchorFrame)
         if not (L.db and L.db.char) then return end
         L.db.char.looted = L.db.char.looted or {}
         L.db.char.looted[d.g] = time()
+        Map.cacheIsDirty = true 
         Map:Update()
       end })
       table.insert(menuList, { text = "Set as unlooted", notCheckable = true, func = function()
         if not (L.db and L.db.char and L.db.char.looted) then return end
         L.db.char.looted[d.g] = nil
+        Map.cacheIsDirty = true 
         Map:Update()
       end })
   end
@@ -1618,7 +1647,6 @@ function Map:UpdateMinimap()
     return
   end
 
-  
   if self.cachingEnabled then
       if self.cacheIsDirty or #self.cachedVisibleDiscoveries == 0 then
            self.cacheIsDirty = true 
@@ -1687,6 +1715,8 @@ function Map:UpdateMinimap()
               pin.color_frame:Show()
           end
       end
+      
+      
       
       
       pin:Show()
@@ -1772,13 +1802,13 @@ function Map:EnsureMinimapTicker()
                 math.abs(py - (state.py or -1)) < 0.0001 and
                 math.abs(facing - (state.facing or -1)) < 0.001
             )
-		
-		 
+
+            
             if not playerMoved and not Map._minimapPinsDirty then
-                L._mdebug("Map-Ticker", "Player state unchanged. Skipping position recalculation.")
+                
+                 L._mdebug("Map-Ticker", "Player state unchanged. Skipping position recalculation.")
                 Map._mmInterval = 0.5
                 Map._playerStateChanged = false
-                
                 return
             end
 
@@ -2375,241 +2405,251 @@ function Map:RefreshPinIconsForItem(itemID)
     end
 end
 
-function Map:Update()
-local isB = Core and Core.isSB and Core:isSB()
-  if not WorldMapFrame or not WorldMapFrame:IsShown() then return end  
- 
-  self:EnsureSearchUI()
+function Map:DrawWorldMapPins()
+    local isB = Core and Core.isSB and Core:isSB()
+    if not WorldMapFrame or not WorldMapFrame:IsShown() then return end  
+    
+    self:EnsureSearchUI()
 
-  local ProximityList = L:GetModule("ProximityList", true)
+    local ProximityList = L:GetModule("ProximityList", true)
 
-  if L.IsZoneIgnored and L:IsZoneIgnored() then
-    for _, pin in ipairs(self.pins) do pin:Hide() end
-    for _, pin in ipairs(self.clusterPins) do pin:Hide() end
-    self:HideDiscoveryTooltip()
-    if ProximityList and ProximityList._frame then ProximityList._frame:Hide("Call from Map:Update@ IsZoneIgnored") end
-    return
-  end
+    if L.IsZoneIgnored and L:IsZoneIgnored() then
+        for _, pin in ipairs(self.pins) do pin:Hide() end
+        for _, pin in ipairs(self.clusterPins) do pin:Hide() end
+        self:HideDiscoveryTooltip()
+        if ProximityList and ProximityList._frame then ProximityList._frame:Hide("Call from Map:Update@ IsZoneIgnored") end
+        return
+    end
   
+    
+    local discoveries = L:GetDiscoveriesDB()
+    local vendors = L:GetVendorsDB()
   
-  local discoveries = L:GetDiscoveriesDB()
-  local vendors = L:GetVendorsDB()
-  
-  if not (discoveries or vendors) then
-    for _, pin in ipairs(self.pins) do pin:Hide() end
-    for _, pin in ipairs(self.clusterPins) do pin:Hide() end
-    self:HideDiscoveryTooltip()
-    if ProximityList and ProximityList._frame then ProximityList._frame:Hide("Call from Map:Update@ no discoveries/vendors") end
-    return
-  end
+    if not (discoveries or vendors) then
+        for _, pin in ipairs(self.pins) do pin:Hide() end
+        for _, pin in ipairs(self.clusterPins) do pin:Hide() end
+        self:HideDiscoveryTooltip()
+        if ProximityList and ProximityList._frame then ProximityList._frame:Hide("Call from Map:Update@ no discoveries/vendors") end
+        return
+    end
 
-  self:EnsureFilterUI()
-  local filters = L:GetFilters()
-  if filters.hideAll then
-    for _, pin in ipairs(self.pins) do pin:Hide() end
-    for _, pin in ipairs(self.clusterPins) do pin:Hide() end
-    self:HideDiscoveryTooltip()
-    if ProximityList and ProximityList._frame then ProximityList._frame:Hide() end
-    return
-  end
+    self:EnsureFilterUI()
+    local filters = L:GetFilters()
+    if filters.hideAll then
+        for _, pin in ipairs(self.pins) do pin:Hide() end
+        for _, pin in ipairs(self.clusterPins) do pin:Hide() end
+        self:HideDiscoveryTooltip()
+        if ProximityList and ProximityList._frame then ProximityList._frame:Hide() end
+        return
+    end
 
-  if self.cachingEnabled then
-      self:RebuildFilteredCache()
-  end
+    if self.cachingEnabled then
+        self:RebuildFilteredCache()
+    end
 
-  local currentContinent, currentMapID = GetCurrentMapContinent(), GetCurrentMapAreaID()
+    local currentContinent, currentMapID = GetCurrentMapContinent(), GetCurrentMapAreaID()
   
-  if not WorldMapDetailFrame or not WorldMapButton then return end
-  local mapWidth, mapHeight = WorldMapDetailFrame:GetWidth(), WorldMapDetailFrame:GetHeight()
-  if not mapWidth or mapWidth == 0 then return end
+    if not WorldMapDetailFrame or not WorldMapButton then return end
+    local mapWidth, mapHeight = WorldMapDetailFrame:GetWidth(), WorldMapDetailFrame:GetHeight()
+    if not mapWidth or mapWidth == 0 then return end
   
   
-  local mapLeft, mapTop = WorldMapDetailFrame:GetLeft(), WorldMapDetailFrame:GetTop()
-  local parentLeft, parentTop = WorldMapButton:GetLeft(), WorldMapButton:GetTop()
+    local mapLeft, mapTop = WorldMapDetailFrame:GetLeft(), WorldMapDetailFrame:GetTop()
+    local parentLeft, parentTop = WorldMapButton:GetLeft(), WorldMapButton:GetTop()
   
-  if not mapLeft or not mapTop or not parentLeft or not parentTop then
-      L._mdebug("Map", "Aborting Update: Map frame geometry data is nil.")
-      return
-  end
+    if not mapLeft or not mapTop or not parentLeft or not parentTop then
+        L._mdebug("Map", "Aborting Update: Map frame geometry data is nil.")
+        return
+    end
   
-  local offsetX, offsetY = mapLeft - parentLeft, mapTop - parentTop
+    local offsetX, offsetY = mapLeft - parentLeft, mapTop - parentTop
 
-  local pinIndex = 1
+    local pinIndex = 1
   
-  if ProximityList and ProximityList._lastHoveredPin then
-      ProximityList._lastHoveredPin:SetScale(1.0)
-      ProximityList._lastHoveredPin = nil
-  end
+    if ProximityList and ProximityList._lastHoveredPin then
+        ProximityList._lastHoveredPin:SetScale(1.0)
+        ProximityList._lastHoveredPin = nil
+    end
   
-  local iterationSource
-  if self.cachingEnabled then
-      iterationSource = self.cachedVisibleDiscoveries
-  else
-      iterationSource = {}
-      
-      local discs = L:GetDiscoveriesDB()
-      if discs then
-          for guid, d in pairs(discs) do table.insert(iterationSource, d) end
-      end
-      local vends = L:GetVendorsDB()
-      if vends then
-          for guid, d in pairs(vends) do table.insert(iterationSource, d) end
-      end
-  end
-
-  for _, d in ipairs(iterationSource) do
-    if (not self.cachingEnabled and not passesFilters(d)) then
+    local iterationSource
+    if self.cachingEnabled then
+        iterationSource = self.cachedVisibleDiscoveries
     else
-        if type(d) == "table" and d.xy then
-            local recordContinent = d.c
-            local recordZone = d.z
-            
-            local isInstanceDiscovery = (tonumber(recordContinent) == 0)
-            local showOnThisMap = false
+        iterationSource = {}
+        
+        local discs = L:GetDiscoveriesDB()
+        if discs then
+            for guid, d in pairs(discs) do table.insert(iterationSource, d) end
+        end
+        local vends = L:GetVendorsDB()
+        if vends then
+            for guid, d in pairs(vends) do table.insert(iterationSource, d) end
+        end
+    end
 
-            if isInstanceDiscovery then
-                showOnThisMap = (tonumber(recordZone) == tonumber(currentMapID))
-            else
-                showOnThisMap = (tonumber(recordContinent) == tonumber(currentContinent) and tonumber(recordZone) == tonumber(currentMapID))
-            end
-            
-            if showOnThisMap then
-              if isB then
-                else            
-                local pin = self.pins[pinIndex] or self:BuildPin()   
-                pinIndex = pinIndex + 1
-                pin.discovery = d
-                pin:SetSize((filters.pinSize or 16), (filters.pinSize or 16))
+    for _, d in ipairs(iterationSource) do
+        if (not self.cachingEnabled and not passesFilters(d)) then
+        else
+            if type(d) == "table" and d.xy then
+                local recordContinent = d.c
+                local recordZone = d.z
                 
-                local icon = self:GetDiscoveryIcon(d)
-                pin.texture:SetTexture(icon or PIN_FALLBACK_TEXTURE)
-                
-                local isLooted = L:IsLootedByChar(d.g)
-                local isFallback = (icon == PIN_FALLBACK_TEXTURE)
+                local isInstanceDiscovery = (tonumber(recordContinent) == 0)
+                local showOnThisMap = false
 
-                if pin.border then pin.border:Show() end
-
-                if d.s == "STALE" then
-                    pin.texture:SetVertexColor(0.9, 0.5, 0.0)
-                    if pin.unlootedOutline then
-                        pin.unlootedOutline:Show()
-                        pin.unlootedOutline:SetVertexColor(1, 1, 1)
-                    end
-                elseif isLooted then
-                    pin.texture:SetVertexColor(0.5, 0.5, 0.5)
-                    if pin.unlootedOutline then pin.unlootedOutline:Hide() end
+                if isInstanceDiscovery then
+                    showOnThisMap = (tonumber(recordZone) == tonumber(currentMapID))
                 else
-                    if isFallback then
-                        if pin.unlootedOutline then pin.unlootedOutline:Hide() end
-                        local r, g, b = GetQualityColor(d.q or select(3,GetItemInfo(d.il or d.i)))
-                        pin.texture:SetVertexColor(r, g, b)
-                    else
-                        pin.texture:SetVertexColor(1, 1, 1)
-                        if pin.unlootedOutline then
-                            pin.unlootedOutline:Show()
-                            local r, g, b = GetQualityColor(d.q or select(3, GetItemInfo(d.il or d.i)))
-                            pin.unlootedOutline:SetVertexColor(r, g, b)
+                    showOnThisMap = (tonumber(recordContinent) == tonumber(currentContinent) and tonumber(recordZone) == tonumber(currentMapID))
+                end
+                
+                if showOnThisMap then
+                    if isB then
+                    else            
+                        local pin = self.pins[pinIndex] or self:BuildPin()   
+                        pinIndex = pinIndex + 1
+                        pin.discovery = d
+                        pin:SetSize((filters.pinSize or 16), (filters.pinSize or 16))
+                        
+                        local icon = self:GetDiscoveryIcon(d)
+                        pin.texture:SetTexture(icon or PIN_FALLBACK_TEXTURE)
+                        
+                        local isLooted = L:IsLootedByChar(d.g)
+                        local isFallback = (icon == PIN_FALLBACK_TEXTURE)
+
+                        if pin.border then pin.border:Show() end
+
+                        if d.s == "STALE" then
+                            pin.texture:SetVertexColor(0.9, 0.5, 0.0)
+                            if pin.unlootedOutline then
+                                pin.unlootedOutline:Show()
+                                pin.unlootedOutline:SetVertexColor(1, 1, 1)
+                            end
+                        elseif isLooted then
+                            pin.texture:SetVertexColor(0.5, 0.5, 0.5)
+                            if pin.unlootedOutline then pin.unlootedOutline:Hide() end
+                        else
+                            if isFallback then
+                                if pin.unlootedOutline then pin.unlootedOutline:Hide() end
+                                local r, g, b = GetQualityColor(d.q or select(3,GetItemInfo(d.il or d.i)))
+                                pin.texture:SetVertexColor(r, g, b)
+                            else
+                                pin.texture:SetVertexColor(1, 1, 1)
+                                if pin.unlootedOutline then
+                                    pin.unlootedOutline:Show()
+                                    local r, g, b = GetQualityColor(d.q or select(3, GetItemInfo(d.il or d.i)))
+                                    pin.unlootedOutline:SetVertexColor(r, g, b)
+                                end
+                            end
+                        end
+
+                        pin:SetAlpha(AlphaForStatus(L:GetDiscoveryStatus(d)))
+                        pin:ClearAllPoints()
+                        pin:SetPoint("CENTER", WorldMapButton, "TOPLEFT", offsetX + d.xy.x * mapWidth, offsetY - d.xy.y * mapHeight)
+                        pin:Show()
+                        if d.mid then self._pinsByMid[d.mid] = pin end
+                    end
+                end
+            end
+        end
+    end
+  
+    for i = pinIndex, #self.pins do self.pins[i]:Hide() self.pins[i].discovery = nil end
+  
+    local ZoneList = L:GetModule("ZoneList", true)
+    local clusterPinIndex = 1
+  
+    if ZoneList and ZoneList.ParentToSubzones and ZoneList.ParentToSubzones[currentMapID] then
+        
+        local db = L:GetDiscoveriesDB()
+        if db then
+            for _, childMapID in ipairs(ZoneList.ParentToSubzones[currentMapID]) do
+                local subzoneData = ZoneList.ZoneRelationships and ZoneList.ZoneRelationships[childMapID]
+                if subzoneData then
+                    local count = 0
+                    for guid, d in pairs(db) do
+                        if d.c == subzoneData.c and d.z == subzoneData.z and passesFilters(d) then
+                            count = count + 1
                         end
                     end
+                    if count > 0 then
+                        local pin = self.clusterPins[clusterPinIndex] or self:BuildClusterPin(clusterPinIndex)
+                        clusterPinIndex = clusterPinIndex + 1
+                        pin.count:SetText(count)
+                        
+                        if subzoneData.label and subzoneData.label ~= "" then
+                            pin.label:SetText(subzoneData.label)
+                        else
+                            pin.label:SetText("disc\ninside!")
+                        end
+                        
+                        pin:ClearAllPoints()
+                        pin:SetPoint("CENTER", WorldMapButton, "TOPLEFT", offsetX + subzoneData.entrance.x * mapWidth, offsetY + subzoneData.entrance.y * -mapHeight)
+                        pin:SetScript("OnEnter", function()
+                            GameTooltip:SetOwner(pin, "ANCHOR_RIGHT")
+                            GameTooltip:AddLine(subzoneData.name, 1,1,0); GameTooltip:AddLine(count .. " discoveries inside.", 1,1,1)
+                            GameTooltip:AddLine("\n|cff00ff00Click to view this zone.|r", .8,.8,.8, true); GameTooltip:Show()
+                        end)
+                        pin:SetScript("OnClick", function() if SetMapByID then SetMapByID(subzoneData.z - 1) end end)
+                        pin:Show()
+                    end
                 end
-
-                pin:SetAlpha(AlphaForStatus(L:GetDiscoveryStatus(d)))
-                pin:ClearAllPoints()
-                pin:SetPoint("CENTER", WorldMapButton, "TOPLEFT", offsetX + d.xy.x * mapWidth, offsetY - d.xy.y * mapHeight)
-                pin:Show()
-                if d.mid then self._pinsByMid[d.mid] = pin end
             end
-          end
         end
     end
-  end
   
-  for i = pinIndex, #self.pins do self.pins[i]:Hide() self.pins[i].discovery = nil end
-  
-  local ZoneList = L:GetModule("ZoneList", true)
-  local clusterPinIndex = 1
-  
-  if ZoneList and ZoneList.ParentToSubzones and ZoneList.ParentToSubzones[currentMapID] then
+    local isContinentView = (currentMapID == 14 or currentMapID == 15 or currentMapID == 467 or currentMapID == 486)
+    if filters.showZoneSummaries and isContinentView and ZoneList and ZoneList.ZoneRelationshipsC then
+        
+        local db = L:GetDiscoveriesDB()
+        if db then
+            for _, zoneData in pairs(ZoneList.ZoneRelationshipsC) do
+                if zoneData and zoneData.parent and zoneData.parent.c == currentContinent then
+                    local count = 0
+                    for guid, d in pairs(db) do
+                        if d.c == zoneData.c and d.z == zoneData.z and passesFilters(d) then
+                            count = count + 1
+                        end
+                    end
+                    
+                    if count > 0 then
+                        local pin = self.clusterPins[clusterPinIndex] or self:BuildClusterPin(clusterPinIndex)
+                        clusterPinIndex = clusterPinIndex + 1
+                        pin.count:SetText(count)
+                        pin.label:SetText(zoneData.label or "L00Ts")
+                        
+                        pin:ClearAllPoints()
+                        pin:SetPoint("CENTER", WorldMapButton, "TOPLEFT", offsetX + zoneData.entrance.x * mapWidth, offsetY + zoneData.entrance.y * -mapHeight)
+                        pin:SetScript("OnEnter", function()
+                            GameTooltip:SetOwner(pin, "ANCHOR_RIGHT")
+                            GameTooltip:AddLine(zoneData.name, 1,1,0); GameTooltip:AddLine(count .. " discoveries in this zone.", 1,1,1)
+                            GameTooltip:AddLine("\n|cff00ff00Click to view this zone.|r", .8,.8,.8, true); GameTooltip:Show()
+                        end)
+                        pin:SetScript("OnClick", function() if SetMapByID then SetMapByID(zoneData.z - 1) end end)
+                        pin:Show()
+                    end
+                end
+            end
+        end
+    end
+
+    for i = clusterPinIndex, #self.clusterPins do self.clusterPins[i]:Hide() end
+
+    if ProximityList and ProximityList._frame and ProximityList._frame:IsShown() then
+        if not ProximityList._lastHoveredPin or not ProximityList._lastHoveredPin:IsShown() then
+            
+        end
+    end
+end
+
+function Map:Update()
+    if not WorldMapFrame or not WorldMapFrame:IsShown() then return end
     
-    local db = L:GetDiscoveriesDB()
-    if db then
-        for _, childMapID in ipairs(ZoneList.ParentToSubzones[currentMapID]) do
-            local subzoneData = ZoneList.ZoneRelationships and ZoneList.ZoneRelationships[childMapID]
-            if subzoneData then
-                local count = 0
-                for guid, d in pairs(db) do
-                    if d.c == subzoneData.c and d.z == subzoneData.z and passesFilters(d) then
-                        count = count + 1
-                    end
-                end
-                if count > 0 then
-                    local pin = self.clusterPins[clusterPinIndex] or self:BuildClusterPin(clusterPinIndex)
-                    clusterPinIndex = clusterPinIndex + 1
-                    pin.count:SetText(count)
-                    
-                    if subzoneData.label and subzoneData.label ~= "" then
-                        pin.label:SetText(subzoneData.label)
-                    else
-                        pin.label:SetText("disc\ninside!")
-                    end
-                    
-                    pin:ClearAllPoints()
-                    pin:SetPoint("CENTER", WorldMapButton, "TOPLEFT", offsetX + subzoneData.entrance.x * mapWidth, offsetY + subzoneData.entrance.y * -mapHeight)
-                    pin:SetScript("OnEnter", function()
-                        GameTooltip:SetOwner(pin, "ANCHOR_RIGHT")
-                        GameTooltip:AddLine(subzoneData.name, 1,1,0); GameTooltip:AddLine(count .. " discoveries inside.", 1,1,1)
-                        GameTooltip:AddLine("\n|cff00ff00Click to view this zone.|r", .8,.8,.8, true); GameTooltip:Show()
-                    end)
-                    pin:SetScript("OnClick", function() if SetMapByID then SetMapByID(subzoneData.z - 1) end end)
-                    pin:Show()
-                end
-            end
-        end
-    end
-  end
-  
-  local isContinentView = (currentMapID == 14 or currentMapID == 15 or currentMapID == 467 or currentMapID == 486)
-  if filters.showZoneSummaries and isContinentView and ZoneList and ZoneList.ZoneRelationshipsC then
     
-    local db = L:GetDiscoveriesDB()
-    if db then
-        for _, zoneData in pairs(ZoneList.ZoneRelationshipsC) do
-            if zoneData and zoneData.parent and zoneData.parent.c == currentContinent then
-                local count = 0
-                for guid, d in pairs(db) do
-                    if d.c == zoneData.c and d.z == zoneData.z and passesFilters(d) then
-                        count = count + 1
-                    end
-                end
-                
-                if count > 0 then
-                    local pin = self.clusterPins[clusterPinIndex] or self:BuildClusterPin(clusterPinIndex)
-                    clusterPinIndex = clusterPinIndex + 1
-                    pin.count:SetText(count)
-                    pin.label:SetText(zoneData.label or "L00Ts")
-                    
-                    pin:ClearAllPoints()
-                    pin:SetPoint("CENTER", WorldMapButton, "TOPLEFT", offsetX + zoneData.entrance.x * mapWidth, offsetY + zoneData.entrance.y * -mapHeight)
-                    pin:SetScript("OnEnter", function()
-                        GameTooltip:SetOwner(pin, "ANCHOR_RIGHT")
-                        GameTooltip:AddLine(zoneData.name, 1,1,0); GameTooltip:AddLine(count .. " discoveries in this zone.", 1,1,1)
-                        GameTooltip:AddLine("\n|cff00ff00Click to view this zone.|r", .8,.8,.8, true); GameTooltip:Show()
-                    end)
-                    pin:SetScript("OnClick", function() if SetMapByID then SetMapByID(zoneData.z - 1) end end)
-                    pin:Show()
-                end
-            end
-        end
-    end
-  end
-
-  for i = clusterPinIndex, #self.clusterPins do self.clusterPins[i]:Hide() end
-
-  if ProximityList and ProximityList._frame and ProximityList._frame:IsShown() then
-      if not ProximityList._lastHoveredPin or not ProximityList._lastHoveredPin:IsShown() then
-          
-      end
-  end
+    self:EnsureThrottleFrame()
+    
+    
+    self.worldMapUpdatePending = true
 end
 
 function Map:AddOrUpdatePinV5(rec)
@@ -2647,6 +2687,21 @@ function Map:OnRecordStatusChanged(rec)
   else
     self:AddOrUpdatePinV5(rec)
   end
+end
+
+function Map:EnsureThrottleFrame()
+    if self.throttleFrame then return end
+    self.throttleFrame = CreateFrame("Frame")
+    self.throttleFrame:SetScript("OnUpdate", function(frame, elapsed)
+        if Map.worldMapUpdatePending then
+            Map.worldMapUpdateTimer = Map.worldMapUpdateTimer + elapsed
+            if Map.worldMapUpdateTimer >= MAP_UPDATE_THROTTLE then
+                Map:DrawWorldMapPins()
+                Map.worldMapUpdatePending = false
+                Map.worldMapUpdateTimer = 0
+            end
+        end
+    end)
 end
 
 return Map

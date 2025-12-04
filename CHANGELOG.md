@@ -1,3 +1,8 @@
+## LootCollector 0.6.40 - Fixes + Small Optimizations**
+
+- Fixed few reported issues in Map, Settings and Viewer.
+- Map Optimization.
+
 ## LootCollector 0.6.10 - Fixes + Small Optimizations**
 
 - Fixed issue where out-of-distance minimap icons appeared on the edges of minimap and "floated".

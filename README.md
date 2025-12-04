@@ -97,13 +97,16 @@ Additionally, old databases from before version 0.5.1 will likely not work.
 **Q: I can't click the map pins or open the right-click menu.**
 **A:** The default "M" map key opens the map in a mode that sometimes blocks LC interaction. To fully interact with pins, use the command `/script WorldMapFrame:Show()` (you can create macro and keyind it) or install a map addon like **Magnify (WotLK Edition)** or **ElvUI**, which handle this automatically.
 
+**Q: I don't see any tooltip changes with "Enhanced WF Toltip" enabled.**
+**A:** You need AtlasLoot installed and AtlasLoot_Cache enabled for the enhanced tooltips to appear.
+
 ## Contributing
 
 This project is open to contributions from the community. If you are interested in fixing a bug or adding a new feature, please refer to the **[CONTRIBUTING.md](CONTRIBUTING.md)** guide for developer guidelines and best practices.
 
 ## Credits
 *   **Author:** Skulltrail
-*   **Contributors:** Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan
+*   **Contributors:** Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan, Stilnight
 *   **Early alpha Top Collectors:** Morty, Laya, Brokenheart, Mie, Rhen, Aaltrix, Insanestar, Harrydn, Blutact
 
 ## License

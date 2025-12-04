@@ -60,13 +60,19 @@ end
 
 local function refreshUI()
 	local Map = L:GetModule("Map", true)
-	if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
-		Map:Update()
-	end
-    
-    if Map and Map.UpdateMinimap then
-        Map:UpdateMinimap() 
+	if Map then
+        
+        Map.cacheIsDirty = true
+        
+        if Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
+            Map:Update()
+        end
+        
+        if Map.UpdateMinimap then
+            Map:UpdateMinimap() 
+        end
     end
+    
 	local Arrow = L:GetModule("Arrow", true)
 	if Arrow and Arrow.frame and L.db and L.db.profile and L.db.profile.mapFilters and L.db.profile.mapFilters.hideAll then
 		Arrow.frame:Hide()

@@ -4883,26 +4883,27 @@ function Viewer:OnInitialize()
     self:UpdateFilterButtonStates()
 end
 
-function Viewer:Show()
+function Viewer:Show() 
     if not self.window then
         self:CreateWindow()
     end
-    
-      local t0 = time()
+
+    local t0 = time()
     VDebug("Show: start, currentFilter=" .. tostring(self.currentFilter) ..
         ", cacheBuilt=" .. tostring(Cache.discoveriesBuilt) ..
         ", building=" .. tostring(Cache.discoveriesBuilding))
 
-    
-    
-    
-    if WorldMapFrame then
-        self.window:SetFrameLevel(WorldMapFrame:GetFrameLevel() - 1)
+    if WorldMapFrame and WorldMapFrame.GetFrameLevel then
+        local level = WorldMapFrame:GetFrameLevel() - 1
+        -- avoiding -1 if nill
+		if level < 1 then 
+            level = 1
+        end
+        self.window:SetFrameLevel(level)
     else
-        
-        self.window:SetFrameLevel(FRAME_LEVEL)
+        -- fallback safe
+        self.window:SetFrameLevel(FRAME_LEVEL or 1)
     end
-    
 
     self.window:Show()
     self.currentPage = self.currentPage or 1
@@ -4912,7 +4913,6 @@ function Viewer:Show()
     self:UpdateFilterButtonStates()
     self:RefreshData()
 
-    
     self.pendingMapAreaID = nil
     VDebug("Show: end, elapsed=" .. tostring(time() - t0) .. "s")
 end

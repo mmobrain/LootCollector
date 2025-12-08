@@ -1,3 +1,11 @@
+## LootCollector 0.6.90 - Fixes**
+
+- Fixed a bug where HideDiscoveryTooltip was hiding other map tooltips.  
+- Improved minimap icon visibility.  
+- Fixed a bug where Mystic Scrolls were not filtered correctly.  
+- The default addon channel is now hidden from users.
+- You can now reposition the LC map button by holding Shift and dragging it.
+
 ## LootCollector 0.6.40 - Fixes + Small Optimizations**
 
 - Fixed few reported issues in Map, Settings and Viewer.

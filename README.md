@@ -64,6 +64,7 @@ Screenhots from 0.5.90-alpha:
 *   `Ctrl+Alt+click` - Link discovery with coords to chat.
 *   `Ctrl+mouseover` - Disables Proximity List feature when hovering over multiple icons are clustered closely on Map.
 *   `Alt+mouseover` - Shows additional info about Map discovery.
+*   `Shift+LMB (on LC button)` - Repositions the LC map button.
 
 ## FAQ & Known Issues
 

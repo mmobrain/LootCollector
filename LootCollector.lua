@@ -1017,7 +1017,7 @@ function LootCollector:OnInitialize()
 
     self.channelReady = false
     self.name         = "LootCollector"
-    self.Version      = "alpha-0.6.40"
+    self.Version      = "alpha-0.6.90"
 
     local Constants = self:GetModule("Constants", true)
     if Constants and Constants.GetDefaultChannel then
@@ -1025,8 +1025,8 @@ function LootCollector:OnInitialize()
         self.addonPrefix = Constants:GetDefaultPrefix()
     else
         
-        self.chatChannel = "BBLC25C_TEST"
-        self.addonPrefix = "BBLC25AM_TEST"
+        self.chatChannel = "BBLC25C"
+        self.addonPrefix = "BBLC25AM"
     end
 
     local Comm = self:GetModule("Comm", true)

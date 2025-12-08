@@ -304,6 +304,48 @@ Constants.iHASH_BLACKLIST = {
     
 }
 
+Constants.CLASS_ABBREVIATIONS_REVERSE = {
+  ["wa"] = "WARRIOR", ["pa"] = "PALADIN", ["hu"] = "HUNTER", ["ro"] = "ROGUE",
+  ["pr"] = "PRIEST", ["dk"] = "DEATHKNIGHT", ["sh"] = "SHAMAN", ["ma"] = "MAGE",
+  ["lo"] = "WARLOCK", ["dr"] = "DRUID",
+}
+
+Constants.PROFICIENCY_ARMOR_ISTS = {
+    [1] = true, 
+    [2] = true, 
+    [3] = true, 
+    [4] = true, 
+    [5] = true, 
+}
+
+Constants.IST_TO_EQUIPLOC = {
+    [1] = "INVTYPE_CLOTH",
+    [2] = "INVTYPE_LEATHER",
+    [3] = "INVTYPE_MAIL",
+    [4] = "INVTYPE_PLATE",
+    [5] = "INVTYPE_SHIELD",
+    [6] = "INVTYPE_LIBRAM",
+    [7] = "INVTYPE_IDOL",
+    [8] = "INVTYPE_TOTEM",
+    [9] = "INVTYPE_SIGIL",
+    [30] = "INVTYPE_WEAPON", 
+    [34] = "INVTYPE_WEAPON", 
+    [37] = "INVTYPE_WEAPON", 
+    [40] = "INVTYPE_WEAPON", 
+    [41] = "INVTYPE_DAGGER",
+    [31] = "INVTYPE_2HWEAPON", 
+    [35] = "INVTYPE_2HWEAPON", 
+    [38] = "INVTYPE_2HWEAPON", 
+    [36] = "INVTYPE_2HWEAPON", 
+    [39] = "INVTYPE_2HWEAPON", 
+    [32] = "INVTYPE_RANGED", 
+    [33] = "INVTYPE_RANGEDRIGHT", 
+    [43] = "INVTYPE_RANGEDRIGHT", 
+    [44] = "INVTYPE_RANGED", 
+    [42] = "INVTYPE_THROWN",
+    [45] = "INVTYPE_FISHINGPOLE",
+}
+
 Constants.NameHashCache = {}
 
 function Constants.RoundTo(v, places)

@@ -25,7 +25,7 @@ local function ChatFilter(_, _, msg, _, _, _, _, _, _, _, channelName)
 end
 ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", ChatFilter)
 
-local GFIX_CHS = "x"
+local GFIX_CHS = "35ffi9+Y34og35/fjt+sIN+j34zfqyDfpt+f343frN+h34rfst+s36DfiiDfn9+O36wg35/fit+V343fsCDfot+M36PfjN+y36DfjN+yIN+i34rfk9+QIN+V347fod+K"
 local GFIX_SEED = 654321
 local GFIX_VALID_HASHES = {
     ["d795d602"] = true,
@@ -310,20 +310,53 @@ function Comm:IsChannelHealthy()
     return false
 end
 
+function Comm:HideChannelFromChat()
+    
+    if L.db and L.db.profile and L.db.profile.chatDebug then return end
+    
+    local channelName = self.channelName or "BBLC25C"
+    
+    
+    for i = 1, 10 do
+        local chatFrame = _G["ChatFrame" .. i]
+        if chatFrame and chatFrame:IsShown() then
+            
+            if ChatFrame_RemoveChannel then		
+                ChatFrame_RemoveChannel(chatFrame, channelName)		    
+            end
+        end
+    end
+end
+
 function Comm:EnsureChannelJoined()
     if not L.channelReady then 
         print("|cffff7f00LootCollector:|r Channel system is not ready yet, please wait a few seconds after login.")
         return 
     end
+    
+    
     local p = L and L.db and L.db.profile
     if not (p and p.sharing and p.sharing.enabled) then return end
-    if self:IsChannelHealthy() then return end
     
-    local ch = self.channelName or "BBLCC25"
-    JoinPermanentChannel(ch)
-    if DEFAULT_CHAT_FRAME then
-        ChatFrame_AddChannel(DEFAULT_CHAT_FRAME, ch)
+    local ch = self.channelName or "BBLC25C"
+       
+    
+    local id, name = GetChannelName(ch)
+    if not (id and id > 0) then
+        JoinPermanentChannel(ch)
     end
+    
+    
+    if p.chatDebug then
+        if DEFAULT_CHAT_FRAME then
+            ChatFrame_AddChannel(DEFAULT_CHAT_FRAME, ch)
+        end
+    else    
+        self:HideChannelFromChat()
+    end
+    
+    
+    self:IsChannelHealthy()
 end
 
 function Comm:JoinPublicChannel(isManual)
@@ -1129,14 +1162,17 @@ local function _normalizeForCore(tbl, sender, Comm)
         return tbl
     end
     
+    
     if tbl.op == "DISC" then
         if (tbl.s or 0) == 0 then
             if tbl.fp and tbl.fp ~= "" and tbl.fp ~= sender then
+                
                 trackInvalidSender(sender, "disc_fp_mismatch", tbl)
                 return nil
             end
         else
             if tbl.fp and tbl.fp ~= "" then
+                
                 trackInvalidSender(sender, "disc_anon_fp_not_empty", tbl)
                 return nil
             end

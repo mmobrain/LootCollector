@@ -587,7 +587,7 @@ local function buildOptions()
 								print(string.format("|cffff7f00LootCollector:|r Sharing disabled. Cleared %d pending broadcasts and %d pending notifications.", clearedBroadcasts, clearedToasts))
 							end
 						end,
-					},
+					},					
 					namelessSharing = {
 						type = "toggle",
 						name = "Nameless Sharing",
@@ -646,6 +646,27 @@ local function buildOptions()
                         get = function() return L.db.profile.sharing.allowShowRequests end,
                         set = function(_, v) L.db.profile.sharing.allowShowRequests = v end,
                     },
+			   
+					  dataTypesHeader = {
+								type = "header",
+								name = "Data Types",
+								order = 14.1,
+							},
+					  disableMysticScrolls = {
+						type = "toggle",
+						name = "Disable Mystic Scrolls",
+						desc = "If checked, Mystic Scroll discoveries will not be recorded, shared, or received from others.",
+						order = 14.2,
+						get = function() return L.db.profile.disableMysticScrolls end,
+						set = function(_, v) 
+						    L.db.profile.disableMysticScrolls = v 
+						    
+						    local Constants = L:GetModule("Constants", true)
+						    if Constants and Constants.UpdateAllowedTypes then
+							  Constants:UpdateAllowedTypes()
+						    end
+						end,
+					  },
 					syncHeader = {
 						type = "header",
 						name = "Sync Restrictions",

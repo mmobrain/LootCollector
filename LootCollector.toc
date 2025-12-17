@@ -1,10 +1,10 @@
 ## Interface: 30300
-## Title: |ce5cc80ffLootCollector|r |cffff5555[alpha.0.6.90]
+## Title: |ce5cc80ffLootCollector|r |cffff5555[alpha.0.7.40]
 ## Notes: Community-driven addon enables players to collaboratively discover and share locations of lootable objects, enriching exploration and boosting gameplay efficiency. Designed for Ascension.Bronzebeard by Skulltrail. |cffffffffContributors:|r |cffffff00Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan, Stilnight|r. |cffffffffAlpha Top Collectors:|r |cffffff00Morty, Laya, Brokenheart, Mie, Rhen, Aaltrix, Insanestar, Harrydn, Blutact|r.
 ## Author: Skulltrail
 ## Contributors: Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan, Stilnight
 ## AlphaTopCollectors: Morty, Laya, Brokenheart, Mie, Rhen, Aaltrix, Insanestar, Harrydn, Blutact
-## Version: alpha 0.6.90
+## Version: alpha 0.7.40
 ## SavedVariables: LootCollectorDB_Asc
 ## OptionalDeps: Ace3, TomTom, AtlasLoot_Cache
 
@@ -53,7 +53,6 @@ Modules\Map.lua
 Modules\Arrow.lua
 Modules\Settings.lua
 Modules\Toast.lua
-Modules\HistoryTab.lua
 Modules\ImportExport.lua
 Modules\Viewer.lua
 Modules\MinimapButton.lua

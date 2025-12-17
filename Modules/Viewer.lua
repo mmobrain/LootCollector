@@ -1516,6 +1516,12 @@ function Viewer:UpdateAllDiscoveriesCache(onCompleteCallback)
 end
 
 function Viewer:ProcessScanQueueBatch()
+ 
+    if InCombatLockdown() then
+        
+        createTimer(1.0, function() Viewer:ProcessScanQueueBatch() end)
+        return
+    end
     local totalQueued = #scanQueue
     VDebug("ProcessScanQueueBatch: start, cursor=" .. tostring(scanCursor) ..
         ", totalQueued=" .. tostring(totalQueued))
@@ -4841,6 +4847,7 @@ end
 function Viewer:OnInitialize()
     self:CreateWindow()
     L:RegisterMessage("LootCollector_DiscoveriesUpdated", function(event, action, guid, discoveryData)
+
         
         local updated = false
         

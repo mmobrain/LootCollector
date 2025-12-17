@@ -459,6 +459,11 @@ function ImportExport:ApplyImport(parsed, mode, withOverlays, skipBlacklist, ski
     if _G.LootCollectorDB_Asc then
         _G.LootCollectorDB_Asc._schemaVersion = 7 
     end
+    
+    local Core = L:GetModule("Core", true)
+    if Core and Core.RebuildZoneIndex then
+        Core:RebuildZoneIndex()
+    end
 	
 	local Map = L:GetModule("Map", true)
 	if Map then

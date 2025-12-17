@@ -117,8 +117,12 @@ Comm._seen = {}
 Comm.verbose = false
 
 Comm._incomingMessageQueue = {}
+Comm.rawBuffer = {}
 local PROCESS_INTERVAL = 0.2 
-local BATCH_SIZE = 5       
+local BATCH_SIZE_NORMAL = 6
+local BATCH_SIZE_COMBAT = 2
+
+local RAW_PROCESS_BUDGET_MS = 3
 Comm._processTimer = 0
 
 local function _debug(mod, msg) return end
@@ -908,25 +912,41 @@ local function _bucketTake()
     return false
 end
 
-function Comm:_processIncomingQueue()
     
+function Comm:_processIncomingQueue()
     if not Core then Core = L:GetModule("Core", true) end
     if not Core or not Core.AddDiscovery then return end
     if not self._incomingMessageQueue or #self._incomingMessageQueue == 0 then return end
 
-    local processedCount = 0
+    local currentBatchSize = BATCH_SIZE_NORMAL
+    if InCombatLockdown() then
+        currentBatchSize = BATCH_SIZE_COMBAT
+    end
+
     
-    while processedCount < BATCH_SIZE and #self._incomingMessageQueue > 0 do
+    Core.IsBatchProcessing = true
+
+    local processedCount = 0
+    while processedCount < currentBatchSize and #self._incomingMessageQueue > 0 do
         local entry = table.remove(self._incomingMessageQueue, 1)
         if entry and entry.data and entry.options then
-            
             Core:AddDiscovery(entry.data, entry.options)
             processedCount = processedCount + 1
         end
     end
+    
+    
+    Core.IsBatchProcessing = false
+    if processedCount > 0 then
+        
+        L:SendMessage("LootCollector_DiscoveriesUpdated", "bulk", nil, nil)
+    end
 end
 
+  
+
 function Comm:OnUpdate(elapsed)
+    
     if self._delayQueue and #self._delayQueue > 0 then
         local tnow = now()
         local i = 1
@@ -941,9 +961,8 @@ function Comm:OnUpdate(elapsed)
         end
     end
     
-    if not self._rateLimitQueue or #self._rateLimitQueue == 0 then
-        
-    else
+    
+    if self._rateLimitQueue and #self._rateLimitQueue > 0 then
         if _bucketTake() then
             local entry = table.remove(self._rateLimitQueue, 1)
             if entry and entry.wire then
@@ -953,6 +972,11 @@ function Comm:OnUpdate(elapsed)
                 end
             end
         end
+    end
+    
+    
+    if #Comm.rawBuffer > 0 then
+        self:_ProcessRawBuffer()
     end
     
     
@@ -1228,60 +1252,84 @@ function Comm:_trackInvalidSender(sender, reason, payload)
 end
 
 local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelName)
-    if sender == UnitName("player") then
-        return
-    end
-    
-    
+    if sender == UnitName("player") then return end
     if not isSharingEnabled() then return end
     
     local chA = string.upper(channelName or "")
     local chB = string.upper(Comm.channelName or "")
     if chA ~= chB then return end
-	
-    L._debug("Comm-Chat", string.format("Event CHAT_MSG_CHANNEL from %s on channel %s.", sender, channelName))
     
+    if isSenderPermanentlyBlacklisted(sender) then return end
+    
+    
+    table.insert(Comm.rawBuffer, { type="CHAT", msg=msg, sender=sender, channel=channelName })
+end
 
-    if isSenderPermanentlyBlacklisted(sender) then
-        return
-    end
+function Comm:OnCommReceived(prefix, message, distribution, sender)
+    if prefix ~= (self.addonPrefix or "BBLC25AMTEST") then return end
+    if type(message) ~= "string" then return end
+    if not isSharingEnabled() then return end
+    if isSenderPermanentlyBlacklisted(sender) then return end
     
-    if not _lc_isPlausiblePayload(msg) then
-        return
-    end
     
+    table.insert(Comm.rawBuffer, { type="ACE", msg=message, dist=distribution, sender=sender })
+end
+
+function Comm:_ProcessRawBuffer()
+    
+    local startTime = debugprofilestop()
+    
+    local processed = 0
+    
+    local safetyLimit = 50 
+    
+    
+    local budget = InCombatLockdown() and 1.0 or RAW_PROCESS_BUDGET_MS
+
+    while #Comm.rawBuffer > 0 and processed < safetyLimit do
+        local entry = table.remove(Comm.rawBuffer, 1)
+        
+        if entry.type == "CHAT" then
+            self:_ProcessChatMsg(entry.msg, entry.sender, entry.channel)
+        elseif entry.type == "ACE" then
+            self:_ProcessAceMsg(entry.msg, entry.dist, entry.sender)
+        end
+        
+        processed = processed + 1
+        
+        
+        if (debugprofilestop() - startTime) >= budget then
+            break
+        end
+    end
+end
+
+function Comm:_ProcessChatMsg(msg, sender, channelName)
+    
+    if isSenderPermanentlyBlacklisted(sender) then return end
+    
+    if not _lc_isPlausiblePayload(msg) then return end
     
     
     local optOp, optMid, optEncoded = msg:match("^LC1:(%u+):([^:]+):(.+)$")
     
     if optOp and optMid then
         
-        
-        
         if optOp == "CONF" then
             if Core and Core.IsDiscoveryFresh and Core:IsDiscoveryFresh(optMid) then
-                L._debug("Comm-Opt", "Skipping redundant CONF for fresh MID: " .. tostring(optMid))
                 return 
             end
         end
         
         
-        
         if L.db and L.db.global and L.db.global.deletedCache and L.db.global.deletedCache[optMid] then
-             
              if optOp ~= "DISC" then
-                 L._debug("Comm-Opt", "Skipping message for deleted MID: " .. tostring(optMid))
                  return
              end
         end
         
-        
-        
-        
         local data = _lc_tryDecodeEncodedPayload("LC1:" .. optEncoded)
         if data then
-             
-             
              if not data.op then data.op = optOp end
              if not data.mid then data.mid = optMid end
 
@@ -1291,11 +1339,9 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
                  local zInfo = ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[tonumber(data.z)]
                  if zInfo and zInfo.continentID then
                      data.c = zInfo.continentID
-                     L._debug("Comm-Sanitize", string.format("Repaired c=-1 to c=%d for zone %d from %s", data.c, data.z, sender))
                  end
              end
 
-            
              local tbl, reason = _lc_validateNormalized(data)
             if not tbl then
                 trackInvalidSender(sender, reason, data)
@@ -1308,22 +1354,12 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
     end
     
     
-    L._debug("Comm-Parse", "Attempting to parse legacy/standard payload...")
-    
     local data = _lc_tryDecodeEncodedPayload(msg)
-    if data then
-        L._debug("Comm-Parse", "SUCCESS: Decoded as standard encoded payload.")
-    else
-        L._debug("Comm-Parse", "INFO: Encoded parse failed, trying plain text formats.")
+    if not data then
         data = _lc_parsePlainV5(msg)
-        if data then
-            L._debug("Comm-Parse", "SUCCESS: Parsed as plain V5 payload.")
-        else
+        if not data then
             data = _lc_parsePlainV1(msg)
-            if data then
-                L._debug("Comm-Parse", "SUCCESS: Parsed as legacy plain V1 payload.")
-            else
-                L._debug("Comm-Parse", "FAIL: No valid format detected. Dropping message.")
+            if not data then
                 return
             end
         end
@@ -1332,9 +1368,7 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
     local Constants = L:GetModule("Constants", true)
     if Constants and Constants.GetMinCompatibleVersion then	
         local minVersion = Constants:GetMinCompatibleVersion()
-		L._debug("Comm-Parse", " minVersion: "..minVersion)
         if not data.av or compareVersions(data.av, minVersion) < 0 then
-		 L._debug("VERSION", string.format("REJECT: Incompatible version from %s. Received %s, requires %s.", sender, tostring(data.av), minVersion))
             return 
         end
     end
@@ -1345,76 +1379,52 @@ local function _onChatMsgChannel(_, _, msg, sender, _, _, _, _, _, _, channelNam
          local zInfo = ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[tonumber(data.z)]
          if zInfo and zInfo.continentID then
              data.c = zInfo.continentID
-             L._debug("Comm-Sanitize", string.format("Repaired c=-1 to c=%d for zone %d from %s (Fallback Path)", data.c, data.z, sender))
          end
     end
     
     local tbl, reason = _lc_validateNormalized(data)
     if not tbl then
         trackInvalidSender(sender, reason, data)
-		L._debug("PARSE", "FAIL: Parsed data failed validation. Dropping message.")
         return
     end
     
     if isSenderSessionIgnored(sender) then
-	L._debug("CHAT", string.format("SUPPRESS: Suppressing valid message from session-ignored sender: %s", sender))
         return
     end
     
-	L._debug("Comm-Filter", "Calling Comm:RouteIncoming")
     Comm:RouteIncoming(tbl, "CHANNEL", sender or "Unknown")
 end
 
-function Comm:OnCommReceived(prefix, message, distribution, sender)
-    if prefix ~= (self.addonPrefix or "BBLC25AMTEST") then return end
-    if type(message) ~= "string" then return end
+function Comm:_ProcessAceMsg(message, distribution, sender)
     
-    L._debug("Comm-Ace", string.format("OnCommReceived from: %s via %s | Msg Length: %d", tostring(sender), tostring(distribution), #message))
-
+    if isSenderPermanentlyBlacklisted(sender) then return end
     
-    if not isSharingEnabled() then return end
-    
-    if isSenderPermanentlyBlacklisted(sender) then
-        L._debug("Comm-Filter", "REJECT: Permanently blacklisted sender: " .. sender)
-        return
-    end
-    
-    L._debug("Comm-Parse", "Attempting to deserialize AceComm payload...")
     local ok, data = AceSerializer:Deserialize(message)
-    if not ok or type(data) ~= "table" then
-        L._debug("Comm-Parse", "FAIL: AceSerializer failed to deserialize payload. Dropping.")
-        return
-    end
-    L._debug("Comm-Parse", "SUCCESS: Deserialized AceComm payload.")
+    if not ok or type(data) ~= "table" then return end
 
     local Constants = L:GetModule("Constants", true)
     if Constants and Constants.GetMinCompatibleVersion then
         local minVersion = Constants:GetMinCompatibleVersion()
         if not data.av or compareVersions(data.av, minVersion) < 0 then
-            L._debug("Comm-Filter", "REJECT: Incompatible version from " .. sender .. ". Received " .. tostring(data.av) .. ", requires " .. minVersion)
             return 
         end
     end
-    
     
     if (tonumber(data.c) or 0) == -1 and data.z then
          local ZoneList = L:GetModule("ZoneList", true)
          local zInfo = ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[tonumber(data.z)]
          if zInfo and zInfo.continentID then
              data.c = zInfo.continentID
-             L._debug("Comm-Sanitize", string.format("Repaired c=-1 to c=%d for zone %d from %s (AceComm)", data.c, data.z, sender))
          end
     end
     
     local tbl, reason = _lc_validateNormalized(data)
     if not tbl then
-        L._debug("Comm-Filter", "FAIL: Deserialized data failed validation. Reason: " .. reason)
         trackInvalidSender(sender, reason, data)
         return
     end
     
     if isSenderSessionIgnored(sender) then
-        L._debug("Comm-Filter", "SUPPRESS: Suppressing valid message from session-ignored sender: " .. sender)
         return
     end
     
@@ -1452,6 +1462,15 @@ function Comm:RouteIncoming(tbl, via, sender)
     
     if (tbl.op == "DISC" or tbl.op == "CONF") then
         if _isSenderRestricted(sender) or (tbl.fp and tbl.fp ~= "" and _isSenderRestricted(tbl.fp)) then
+            return
+        end
+    end
+    
+      
+    local Constants = L:GetModule("Constants", true)
+    if Constants and Constants.ALLOWED_DISCOVERY_TYPES and tbl.dt then
+        if Constants.ALLOWED_DISCOVERY_TYPES[tbl.dt] == false then
+            L._debug("Comm-Route", "Dropped incoming packet due to disabled discovery type: " .. tostring(tbl.dt))
             return
         end
     end

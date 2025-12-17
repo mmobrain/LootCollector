@@ -1,3 +1,10 @@
+## LootCollector 0.7.40 - Fixes + Small Optimizations**
+
+- Fixed few bugs.
+- Testing some alternative solutions and optimizations.
+- Added feature to disable Mystic Scrolls processing.
+- Removed HistoryTab feature.
+
 ## LootCollector 0.6.90 - Fixes**
 
 - Fixed a bug where HideDiscoveryTooltip was hiding other map tooltips.  

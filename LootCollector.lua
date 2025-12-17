@@ -1017,7 +1017,7 @@ function LootCollector:OnInitialize()
 
     self.channelReady = false
     self.name         = "LootCollector"
-    self.Version      = "alpha-0.6.90"
+    self.Version      = "alpha-0.7.40"
 
     local Constants = self:GetModule("Constants", true)
     if Constants and Constants.GetDefaultChannel then
@@ -1188,16 +1188,6 @@ end
 
 function LootCollector:OnDisable()
     self:UnregisterAllEvents()
-end
-
-SLASH_LCHISTORY1 = "/lchistory"
-SlashCmdList["LCHISTORY"] = function()
-    local HT = LootCollector:GetModule("HistoryTab", true)
-    if HT and HT.Toggle then
-        HT:Toggle()
-    else
-        print("|cffff7f00LootCollector:|r HistoryTab module not available.")
-    end
 end
 
 SLASH_LCCLEANUP1 = "/lccdb"

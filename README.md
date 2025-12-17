@@ -107,7 +107,7 @@ This project is open to contributions from the community. If you are interested 
 
 ## Credits
 *   **Author:** Skulltrail
-*   **Contributors:** Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan, Stilnight
+*   **Contributors:** Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan, Stilnight and Xurkon
 *   **Early alpha Top Collectors:** Morty, Laya, Brokenheart, Mie, Rhen, Aaltrix, Insanestar, Harrydn, Blutact
 
 ## License

@@ -1096,7 +1096,8 @@ local function CreateContextMenu(anchor, title, buttons, options)
         contextMenu:SetPoint("LEFT", anchor, "RIGHT", 5, 0)
     end
 
-    contextMenu:SetFrameStrata("TOOLTIP")
+    -- Xurkon: Changed from TOOLTIP to DIALOG strata to fix tooltips displaying behind context menu
+    contextMenu:SetFrameStrata("DIALOG")
     contextMenu:EnableMouse(true)
 
     
@@ -2602,7 +2603,8 @@ function Viewer:CreateWindow()
         
         autocompleteDropdown = CreateFrame("Frame", "LootCollectorSearchAutocomplete", Viewer.window)
         autocompleteDropdown:SetSize(200, 20)
-        autocompleteDropdown:SetFrameStrata("TOOLTIP")
+        -- Xurkon: Changed from TOOLTIP to DIALOG strata to fix tooltips displaying behind autocomplete
+        autocompleteDropdown:SetFrameStrata("DIALOG")
         autocompleteDropdown:SetFrameLevel(FRAME_LEVEL)
         autocompleteDropdown:Hide()
 

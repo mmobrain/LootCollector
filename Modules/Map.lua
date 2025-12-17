@@ -61,7 +61,8 @@ local function CreateOrShowPersistentOverlayPin(px, py, discovery)
     if not pin then
         pin = CreateFrame("Frame", "LootCollectorViewerOverlayPin", parent)
         pin:SetSize(32, 32)
-        pin:SetFrameStrata("TOOLTIP")
+        -- Xurkon: Changed from TOOLTIP to HIGH strata to fix tooltips displaying behind pins
+        pin:SetFrameStrata("HIGH")
 
         pin.glowTexture = pin:CreateTexture(nil, "OVERLAY")
         pin.glowTexture:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
@@ -116,7 +117,8 @@ local function EnsureMapOverlay()
 	mapOverlay = CreateFrame("Frame", "LootCollectorMapOverlay", parent)
 	mapOverlay.baseSize = 34
 	mapOverlay:SetSize(mapOverlay.baseSize, mapOverlay.baseSize)
-	mapOverlay:SetFrameStrata("TOOLTIP")
+	-- Xurkon: Changed from TOOLTIP to HIGH strata to fix tooltips displaying behind overlay
+	mapOverlay:SetFrameStrata("HIGH")
 	mapOverlay:SetFrameLevel(parent:GetFrameLevel() + 1000)
 	
 	mapOverlay.dot = mapOverlay:CreateTexture(nil, "OVERLAY")
@@ -261,7 +263,8 @@ function Map:FocusOnDiscovery(d)
             if not overlayPin then
                 overlayPin = CreateFrame("Frame", "LootCollectorViewerOverlayPin", targetPin) 
                 overlayPin:SetSize(32, 32)
-                overlayPin:SetFrameStrata("TOOLTIP")
+                -- Xurkon: Changed from TOOLTIP to HIGH strata to fix tooltips displaying behind overlay pins
+                overlayPin:SetFrameStrata("HIGH")
                 
                 overlayPin.glowTexture = overlayPin:CreateTexture(nil, "OVERLAY")
                 overlayPin.glowTexture:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
@@ -332,7 +335,8 @@ function Map:HighlightPin(pin)
         local parent = WorldMapDetailFrame or WorldMapFrame
         overlayPin = CreateFrame("Frame", "LootCollectorViewerOverlayPin", parent)
         overlayPin:SetSize(32, 32)
-        overlayPin:SetFrameStrata("TOOLTIP")
+        -- Xurkon: Changed from TOOLTIP to HIGH strata to fix tooltips displaying behind overlay pins
+        overlayPin:SetFrameStrata("HIGH")
         
         overlayPin.glowTexture = overlayPin:CreateTexture(nil, "OVERLAY")
         overlayPin.glowTexture:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
@@ -988,7 +992,8 @@ function Map:EnsureHoverButton()
     
     local btn = CreateFrame("Button", "LootCollectorItemHoverBtn", GameTooltip)
     btn:SetSize(16, 16)
-    btn:SetFrameStrata("TOOLTIP")
+    -- Xurkon: Changed from TOOLTIP to HIGH strata to fix tooltips displaying behind hover button
+    btn:SetFrameStrata("HIGH")
     btn:SetFrameLevel(GameTooltip:GetFrameLevel() + 10)
     btn:EnableMouse(true)
     btn.tex = btn:CreateTexture(nil, "ARTWORK")

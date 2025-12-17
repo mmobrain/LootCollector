@@ -1,3 +1,10 @@
+## LootCollector 0.7.41 - Frame Strata Fix (Xurkon)
+
+- **Fixed Tooltip Visibility:** Tooltips now display above map pins and overlays instead of behind them
+  - Changed map pins, overlays, and hover buttons from `TOOLTIP` strata to `HIGH` strata
+  - Changed context menus and autocomplete dropdowns from `TOOLTIP` strata to `DIALOG` strata
+  - This prevents addon frames from overlapping game tooltips
+
 ## LootCollector 0.7.40 - Fixes + Small Optimizations**
 
 - Fixed few bugs.

@@ -233,6 +233,9 @@ local function processScanChunk()
     if not Reinforce.scanInProgress then return end
     
     
+    if InCombatLockdown() then return end
+    
+    
     local db = L:GetDiscoveriesDB() or {}
     if not next(db) then
         Reinforce.scanInProgress = false

@@ -258,7 +258,6 @@ function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, 
 
     local target_db, guid
     if dt == Constants.DISCOVERY_TYPE.BLACKMARKET then
-        
         target_db = L:GetVendorsDB()
         if not target_db then return end
         
@@ -270,10 +269,8 @@ function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, 
             guid = "BM-" .. c .. "-" .. z .. "-" .. string.format("%.2f", L:Round2(x)) .. "-" .. string.format("%.2f", L:Round2(y))
         end
     else
-        
         target_db = L:GetDiscoveriesDB()
         if not target_db then return end
-        
         guid = L:GenerateGUID(c, z, i, x, y)
     end
 
@@ -306,11 +303,8 @@ function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, 
     if not existing then
         local vendorType
         if dt == Constants.DISCOVERY_TYPE.BLACKMARKET then
-            if i >= -399999 and i <= -300000 then
-                vendorType = "BM"
-            elseif i >= -499999 and i <= -400000 then
-                vendorType = "MS"
-            end
+            if i >= -399999 and i <= -300000 then vendorType = "BM"
+            elseif i >= -499999 and i <= -400000 then vendorType = "MS" end
         end
 
         local newRecord = {
@@ -324,22 +318,27 @@ function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, 
             vendorItems = vendorItems, 
             fp_votes = { [foundBy] = { score = 1, t0 = fp_t0 } },
             mc = 1, adc = 0, onHold = false,
-            at = now,
-            nd = nil,
+            at = now, nd = nil,
         }
         
         local Comm = L:GetModule("Comm", true)
         if Comm and Comm._computeMid then newRecord.mid = Comm._computeMid(newRecord) end
         
         target_db[guid] = newRecord
+        
+        if Core.AddToZoneIndex then
+            Core:AddToZoneIndex(guid, z)
+        end
+        
         if dt ~= Constants.DISCOVERY_TYPE.BLACKMARKET then
             if Core.QueueItemForCaching and (not isCached or not newRecord.il) then
                 Core:QueueItemForCaching(i)
                 if Core.EnsureCachePump then Core:EnsureCachePump() end
             end
         end
-        local Map = L:GetModule("Map", true)
-        if Map and Map.Update then Map:Update() end
+        
+        
+        L.DataHasChanged = true
     else
         if (not existing.il) and il then existing.il = il end
         if (existing.q or 0) == 0 and q and q > 0 then existing.q = q end
@@ -351,8 +350,7 @@ function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, 
         if dt == Constants.DISCOVERY_TYPE.BLACKMARKET then
             if not existing.vendorType then
                 if i >= -399999 and i <= -300000 then existing.vendorType = "BM"
-                elseif i >= -499999 and i <= -400000 then existing.vendorType = "MS"
-                end
+                elseif i >= -499999 and i <= -400000 then existing.vendorType = "MS" end
             end
             if vendorItems and #vendorItems > 0 then
                 existing.vendorItems = vendorItems 
@@ -526,6 +524,8 @@ SlashCmdList["LootCollectorSHARE"] = function(msg)
 end
 
 function DBSync:ProcessBatchForSid(sid)
+
+    if InCombatLockdown() then return end
     local buffer = self.incomingBySid[sid]
     if not buffer or #buffer.pendingProcessing == 0 then return end
 
@@ -771,4 +771,15 @@ function DBSync:OnInitialize()
         summaryTicker = CreateFrame("Frame", "LootCollectorDBSyncSummaryTicker")
         summaryTicker:SetScript("OnUpdate", OnSummaryUpdate)
     end
+    
+    
+    
+    
+    L:RegisterEvent("PLAYER_REGEN_ENABLED", function()
+        for sid, buffer in pairs(DBSync.incomingBySid) do
+            if buffer and buffer.state == "accepted" and #buffer.pendingProcessing > 0 then
+                DBSync:ProcessBatchForSid(sid)
+            end
+        end
+    end)
 end

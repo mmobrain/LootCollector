@@ -30,6 +30,10 @@ local CACHE_MIN_DELAY, CACHE_MAX_DELAY = 3, 6
 Core._pumpJitterLeft = 3  
 Core._isSBCached = nil
 
+Core.ZoneIndex = {}
+Core.ZoneIndexBuilt = false
+Core.IndexQueue = {}
+
 local SCAN_BUDGET_MS   = 4       
 local SCAN_MAX_PER_TICK = 300    
 local PAUSE_IN_COMBAT   = true
@@ -200,6 +204,22 @@ end
 
 local function FindWorldforgedInZone(continent, zoneID, itemID, db)
     if not db then return nil end
+    
+    if Core.ZoneIndex and Core.ZoneIndex[zoneID] then
+        local zoneGUIDs = Core.ZoneIndex[zoneID]
+        for _, guid in ipairs(zoneGUIDs) do
+            local d = db[guid]
+            if d and d.i == itemID and d.c == continent then
+                local Constants = L:GetModule("Constants", true)
+                if Constants and d.dt == Constants.DISCOVERY_TYPE.WORLDFORGED then
+                    return d
+                end
+            end
+        end
+        return nil
+    end
+
+    
     for _, d in pairs(db) do
         if d and d.c == continent and d.z == zoneID and d.i == itemID then
             local Constants = L:GetModule("Constants", true)
@@ -213,6 +233,26 @@ end
 
 local function FindNearbyDiscovery(continent, zoneID, itemID, x, y, db)
     if not db then return nil end
+    
+    
+    if Core.ZoneIndex and Core.ZoneIndex[zoneID] then
+        local zoneGUIDs = Core.ZoneIndex[zoneID]
+        for _, guid in ipairs(zoneGUIDs) do
+            local d = db[guid]
+            if d and d.i == itemID and d.c == continent then
+                if d.xy then
+                    local dx = (d.xy.x or 0) - x
+                    local dy = (d.xy.y or 0) - y
+                    if (dx * dx + dy * dy) < DISCOVERY_MERGE_DISTANCE_SQ then
+                        return d
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    
     for _, d in pairs(db) do
         if d and d.c == continent and d.z == zoneID and d.i == itemID then
             if d.xy then
@@ -1327,7 +1367,9 @@ function Core:UpdateItemRecordFromCache(itemID)
     if updated then        
 	   local Map = L:GetModule("Map", true)
 		if Map then Map.cacheIsDirty = true end
-        if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
+        
+        
+        L.DataHasChanged = true
         
     end
     return updated
@@ -1383,6 +1425,9 @@ function Core:_ScanStep_OnUpdate(frame, elapsed)
     if self:_ScanShouldPause() then
         return
     end
+    
+    
+    if InCombatLockdown() then return end
 
     local start = GetTime()
     local processed = 0
@@ -1544,7 +1589,6 @@ function Core:OnInitialize()
     if not (L.db and L.db.profile and L.db.global and L.db.char) then return end
 
     self.onLoginCleanupPerformed = false
-
     self:EnsureDatabaseStructure()
 
     itemCacheTooltip = CreateFrame("GameTooltip", "LootCollectorCacheTooltip", UIParent, "GameTooltipTemplate")
@@ -1554,16 +1598,31 @@ function Core:OnInitialize()
         Core:OnGetItemInfoReceived(...)
     end)
     
+    
+    local INDEX_BATCH_SIZE = 50
+    local indexTicker = CreateFrame("Frame")
+    indexTicker:SetScript("OnUpdate", function()
+        if #Core.IndexQueue > 0 then
+            local processed = 0
+            while processed < INDEX_BATCH_SIZE and #Core.IndexQueue > 0 do
+                local entry = table.remove(Core.IndexQueue, 1)
+                local guid, zoneID = entry.g, tonumber(entry.z) or 0
+                
+                if Core.ZoneIndexBuilt then
+                     if not Core.ZoneIndex[zoneID] then Core.ZoneIndex[zoneID] = {} end
+                     table.insert(Core.ZoneIndex[zoneID], guid)
+                end
+                processed = processed + 1
+            end
+        end
+    end)
+    
     SLASH_LOOTCOLLECTORCCQ1 = "/lcccq"
     SlashCmdList["LOOTCOLLECTORCCQ"] = function()
         if L.db and L.db.global then
             local queueSize = (L.db.global.cacheQueue and #L.db.global.cacheQueue) or 0
             L.db.global.cacheQueue = {}
-            
-            if Core._queueSet then
-                 wipe(Core._queueSet)
-            end
-            
+            if Core._queueSet then wipe(Core._queueSet) end
             print(string.format("|cff00ff00LootCollector:|r Cleared %d items from the background cache queue.", queueSize))
         else
             print("|cffff7f00LootCollector:|r Database not ready.")
@@ -1585,6 +1644,7 @@ function Core:OnInitialize()
         Core:ConvertLegacyInstanceData() 
         Core:PurgeEmbossedScrolls()
         Core:PerformOnLoginMaintenance()
+        Core:RebuildZoneIndex()
         Core:ScanDatabaseForUncachedItems()
         Core:EnsureCachePump()
     end)
@@ -1642,6 +1702,13 @@ function Core:HandleLocalLoot(discovery)
     local dt = discovery.dt
 
     local isVendorDiscovery = (dt == Constants.DISCOVERY_TYPE.BLACKMARKET) or (discovery.vendorType and (discovery.vendorType == "MS" or discovery.vendorType == "BM"))
+    
+      
+    if dt and Constants.ALLOWED_DISCOVERY_TYPES then
+        if Constants.ALLOWED_DISCOVERY_TYPES[dt] == false then
+            return
+        end
+    end
 
     if isVendorDiscovery then
         if not dt then
@@ -1690,6 +1757,9 @@ function Core:HandleLocalLoot(discovery)
             }
             bm_db[guid] = newRecord
             recordToBroadcast = newRecord
+            
+            
+            self:AddToZoneIndex(guid, z)
         else
             existing.ls = discovery.t0
             existing.vendorItems = discovery.vendorItems 
@@ -1707,9 +1777,8 @@ function Core:HandleLocalLoot(discovery)
             end
         end
         
-        local Map = L:GetModule("Map", true)	   
-        if Map then Map.cacheIsDirty = true end
-        if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
+        
+        L.DataHasChanged = true
         
         if recordToBroadcast then
             local shouldBeShared = (not recordToBroadcast.vendorItems) or (#recordToBroadcast.vendorItems <= 5)
@@ -1811,6 +1880,10 @@ function Core:HandleLocalLoot(discovery)
         }
         db[guid] = rec
         L:SendMessage("LootCollector_DiscoveriesUpdated", "add", guid, rec)
+        
+        
+        self:AddToZoneIndex(guid, z)
+        
     else
         rec.ls = max(tonumber(rec.ls) or 0, t0)
         
@@ -1844,10 +1917,8 @@ function Core:HandleLocalLoot(discovery)
         end
     end
     
-    local Map = L:GetModule("Map", true)
-     
-    if Map then Map.cacheIsDirty = true end
-    if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
+    
+    L.DataHasChanged = true
     
     local norm = {
         i = itemID, il = colored or discovery.il, q = quality or 1,
@@ -2018,6 +2089,75 @@ function Core:_ResolveZoneDisplay(cx, zx, izx)
         return (ZoneList and ZoneList.ResolveIz and ZoneList:ResolveIz(iz)) or (GetRealZoneText and GetRealZoneText()) or "Unknown Instance"
     else    
         return (ZoneList and ZoneList.GetZoneName and ZoneList:GetZoneName(c, z)) or "Unknown Zone"
+    end
+end
+
+function Core:RebuildZoneIndex()
+    L._debug("Core-Index", "Rebuilding Zone Index...")
+    wipe(Core.ZoneIndex)
+    wipe(Core.IndexQueue) 
+    
+    local discoveries = L:GetDiscoveriesDB()
+    if discoveries then
+        for guid, d in pairs(discoveries) do
+            if d and d.z then
+                local zoneID = tonumber(d.z) or 0
+                if not Core.ZoneIndex[zoneID] then
+                    Core.ZoneIndex[zoneID] = {}
+                end
+                table.insert(Core.ZoneIndex[zoneID], guid)
+            end
+        end
+    end
+    
+    local vendors = L:GetVendorsDB()
+    if vendors then
+        for guid, d in pairs(vendors) do
+            if d and d.z then
+                local zoneID = tonumber(d.z) or 0
+                if not Core.ZoneIndex[zoneID] then
+                    Core.ZoneIndex[zoneID] = {}
+                end
+                table.insert(Core.ZoneIndex[zoneID], guid)
+            end
+        end
+    end
+    
+    Core.ZoneIndexBuilt = true
+    L._debug("Core-Index", "Zone Index Rebuilt.")
+end
+
+function Core:AddToZoneIndex(guid, zoneID)
+
+    if not Core.ZoneIndexBuilt then return end 
+    if not guid or not zoneID then return end
+    
+    zoneID = tonumber(zoneID) or 0
+    if not Core.ZoneIndex[zoneID] then
+        Core.ZoneIndex[zoneID] = {}
+    end
+    
+    
+    table.insert(Core.ZoneIndex[zoneID], guid)
+end
+
+function Core:RemoveFromZoneIndex(guid, zoneID)
+    if not Core.ZoneIndexBuilt then return end
+    if not guid or not zoneID then return end
+    
+    zoneID = tonumber(zoneID) or 0
+    local list = Core.ZoneIndex[zoneID]
+    if not list then return end
+    
+    for i, g in ipairs(list) do
+        if g == guid then
+            local lastIndex = #list
+            if i ~= lastIndex then
+                list[i] = list[lastIndex]
+            end
+            table.remove(list)
+            return
+        end
     end
 end
 
@@ -2246,6 +2386,9 @@ function Core:AddDiscovery(discoveryData, options)
             L:SendMessage("LootCollector_DiscoveriesUpdated", "add", guid, newRecord)
             
             
+            self:AddToZoneIndex(guid, z)
+            
+            
             if options.isNetwork and not options.suppressToast then
                  local Toast = L:GetModule("Toast", true)
                  if Toast and Toast.Show then
@@ -2264,10 +2407,8 @@ function Core:AddDiscovery(discoveryData, options)
             L:SendMessage("LootCollector_DiscoveriesUpdated", "update", guid, existing)
         end
         
-        local Map = L:GetModule("Map", true)
-	  
-        if Map then Map.cacheIsDirty = true end
-        if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
+        
+        L.DataHasChanged = true
         
         if recordToBroadcast then
             local shouldBeShared = (not recordToBroadcast.vendorItems) or (#recordToBroadcast.vendorItems <= 5)
@@ -2358,6 +2499,9 @@ function Core:AddDiscovery(discoveryData, options)
         L:SendMessage("LootCollector_DiscoveriesUpdated", "add", guid, rec)
         
         
+        self:AddToZoneIndex(guid, z)
+        
+        
         if options.isNetwork and not options.suppressToast then
             local Toast = L:GetModule("Toast", true)
             if Toast and Toast.Show then
@@ -2398,10 +2542,8 @@ function Core:AddDiscovery(discoveryData, options)
         end
     end
     
-    local Map = L:GetModule("Map", true)
-     
-    if Map then Map.cacheIsDirty = true end
-    if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
+    
+    L.DataHasChanged = true
     
     
     if not options.isNetwork then
@@ -2512,6 +2654,12 @@ function Core:RemoveDiscoveryByGuid(guid, reason)
 
     if discoveries[guid] then
         local rec = discoveries[guid]
+        
+        
+        if rec and rec.z then
+            self:RemoveFromZoneIndex(guid, rec.z)
+        end
+        
         discoveries[guid] = nil
         print(string.format("|cff00ff00LootCollector:|r %s", reason or ("Discovery " .. guid .. " removed.")))
         
@@ -2520,14 +2668,8 @@ function Core:RemoveDiscoveryByGuid(guid, reason)
         local Map = L:GetModule("Map", true)
         if Map then
             Map.cacheIsDirty = true
-            
-            if Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
-                Map:Update()
-            end
-
-            if Map.UpdateMinimap then
-                Map:UpdateMinimap()
-            end
+            if Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
+            if Map.UpdateMinimap then Map:UpdateMinimap() end
         end
         
         L:SendMessage("LOOTCOLLECTOR_DISCOVERY_LIST_UPDATED")
@@ -2541,13 +2683,18 @@ function Core:RemoveBlackmarketVendorByGuid(guid)
     if not guid or not vendors then return end
 
     if vendors[guid] then
+        local rec = vendors[guid]
+        
+        
+        if rec and rec.z then
+            self:RemoveFromZoneIndex(guid, rec.z)
+        end
+        
         vendors[guid] = nil
         print("|cff00ff00LootCollector:|r Specialty Vendor pin removed from local database.")
         
         local Map = L:GetModule("Map", true)
-        if Map and Map.Update then
-            Map:Update()
-        end
+        if Map and Map.Update then Map:Update() end
         return true
     end
     return false
@@ -2564,19 +2711,16 @@ function Core:ClearDiscoveries()
 
     print(string.format("[%s] Cleared all discovery and vendor data.", L.name))
     
+    
+    self:RebuildZoneIndex()
+    
     L:SendMessage("LootCollector_DiscoveriesUpdated", "clear", nil, nil)
     
     local Map = L:GetModule("Map", true)
     if Map then
-        
         Map.cacheIsDirty = true
-        
-        if Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
-            Map:Update()
-        end
-        if Map.UpdateMinimap then
-            Map:UpdateMinimap()
-        end
+        if Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then Map:Update() end
+        if Map.UpdateMinimap then Map:UpdateMinimap() end
     end
 end
 
@@ -2921,6 +3065,11 @@ function Core:FixLegacyZoneIDs()
             end
         end
         print(string.format("|cff00ff00LootCollector:|r Fixed %d records with invalid zone combinations.", fixedCount))
+        
+        
+        if self.RebuildZoneIndex then
+            self:RebuildZoneIndex()
+        end
         
         local Map = L:GetModule("Map", true)
         if Map then

@@ -472,8 +472,18 @@ function Constants:GetDefaultChannel()
     return Constants.CHANNEL_NAME_DEFAULT
 end
 
+function Constants:UpdateAllowedTypes()
+    if L.db and L.db.profile then
+        
+        
+        local msEnabled = not L.db.profile.disableMysticScrolls
+        self.ALLOWED_DISCOVERY_TYPES[self.DISCOVERY_TYPE.MYSTIC_SCROLL] = msEnabled
+    end
+end
+
 function Constants:OnInitialize()
     
+    self:UpdateAllowedTypes()
 end
 
 return Constants

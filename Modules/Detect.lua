@@ -214,6 +214,15 @@ function Detect:ScanAndRecordVendor()
     local unit = "npc"
     if not UnitExists(unit) then return end
 
+    
+    
+    local npcName = UnitName(unit)
+    if not npcName or npcName == "" or npcName == "Unknown" then
+        
+        C_Timer.After(0.5, function() Detect:ScanAndRecordVendor() end)
+        return
+    end
+
     local npcGUID = UnitGUID(unit)
     if not npcGUID then return end
 
@@ -250,6 +259,10 @@ function Detect:ScanAndRecordVendor()
         
         SetMapToCurrentZone()
         local mapID = GetCurrentMapAreaID()
+        
+        
+        if not mapID or mapID == 0 then return end
+
         local ZoneList = L:GetModule("ZoneList", true)
         local zoneInfo = ZoneList and ZoneList.MapDataByID[mapID]
         
@@ -281,13 +294,41 @@ function Detect:ScanAndRecordVendor()
             dt = Constants and Constants.DISCOVERY_TYPE.BLACKMARKET, 
             vendorType = sellsMysticScroll and "MS" or "BM",
             vendorItems = merchantItems,
-            vendorName = UnitName(unit),
+            vendorName = npcName, 
         }
 
         local Core = L:GetModule("Core", true)
         if Core and Core.HandleLocalLoot then
             Core:HandleLocalLoot(discovery)
         end
+    end
+end
+
+function Detect:OnRecoveryEvent(event, arg1, arg2)
+    local isRecoverySuccess = false
+
+    if event == "UI_INFO_MESSAGE" and arg1 == "|cFF2EF50EItem recovery completed|r" then
+        isRecoverySuccess = true
+    elseif event == "RECOVERY_RESULT" and arg2 and string.find(arg2, "_OK$") then
+        isRecoverySuccess = true
+    end
+
+    if isRecoverySuccess then
+        L._debug("Detect", "Item recovery event detected.")
+        local now = GetTime()
+        
+        
+        if self._lastDiscoveryGUID and (now - self._lastDiscoveryTime < 2.5) then
+            local Core = L:GetModule("Core", true)
+            if Core and Core.RemoveDiscoveryByGuid then
+                L._debug("Detect", "Retroactively removing last discovery due to recovery: " .. self._lastDiscoveryGUID)
+                Core:RemoveDiscoveryByGuid(self._lastDiscoveryGUID, "Discovery suppressed due to item recovery.")
+            end
+        end
+
+        
+        self._lastDiscoveryGUID = nil
+        self._lastDiscoveryTime = 0
     end
 end
 
@@ -510,7 +551,7 @@ function Detect:OnInitialize()
 end
 
 local function classifySource(ctx, now)
-  local QUEST_WINDOW = 9.0 
+  local QUEST_WINDOW = 30.0
 
   if ctx.mailOpen or (ctx.lastMailTakeAt and (now - ctx.lastMailTakeAt <= 3)) then return "mail" end
   if ctx.tradeOpen or (ctx.lastTradeAcceptedAt and (now - ctx.lastTradeAcceptedAt <= 3)) then return "trade" end

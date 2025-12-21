@@ -510,6 +510,7 @@ function Toast:acquireToast()
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetHyperlink(self.discoveryData.il)
             GameTooltip:Show()
+            GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
         end
     end)
     f.text:SetScript("OnLeave", function()

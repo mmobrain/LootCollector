@@ -56,6 +56,7 @@ local function CreateMinimapButton()
         GameTooltip:AddLine("Right-click to open Options", 0.7, 0.7, 1)
         GameTooltip:AddLine("Drag to move", 0.5, 0.5, 0.5)
         GameTooltip:Show()
+        GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
     end)
     
     button:SetScript("OnLeave", function()

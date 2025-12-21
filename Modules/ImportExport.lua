@@ -970,6 +970,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 			GameTooltip:SetOwner(r.btnDel, "ANCHOR_TOP")
 			GameTooltip:SetText("Delete")
 			GameTooltip:Show()
+			GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
 		end)
 		r.btnDel:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		
@@ -981,6 +982,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 			GameTooltip:SetOwner(r.btnNav, "ANCHOR_TOP")
 			GameTooltip:SetText("Navigate")
 			GameTooltip:Show()
+			GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
 		end)
 		r.btnNav:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		
@@ -992,6 +994,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 			GameTooltip:SetOwner(r.btnNav, "ANCHOR_TOP")
 			GameTooltip:SetText("Navigate")
 			GameTooltip:Show()
+			GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
 		end)
 		r.btnUnl:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		
@@ -1003,6 +1006,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 			GameTooltip:SetOwner(r.btnLoot, "ANCHOR_TOP")
 			GameTooltip:SetText("Mark as Looted")
 			GameTooltip:Show()
+			GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
 		end)
 		r.btnLoot:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		
@@ -1154,6 +1158,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 						GameTooltip:SetOwner(s, "ANCHOR_CURSOR")
 						GameTooltip:SetHyperlink(itemLink)
 						GameTooltip:Show()
+						GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
 					end
 				end)
 				
@@ -1187,6 +1192,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 						GameTooltip:SetOwner(s, "ANCHOR_CURSOR")
 						GameTooltip:SetHyperlink(itemLink)
 						GameTooltip:Show()
+						GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
 					end
 				end)
 				
@@ -1201,6 +1207,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 						GameTooltip:SetOwner(s, "ANCHOR_CURSOR")
 						GameTooltip:AddLine(zNameFull, 1, 1, 1, true)
 						GameTooltip:Show()
+						GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
 					end)
 					r.zoneBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 				else
@@ -1346,6 +1353,7 @@ local function BuildBlackmarketPage(parent)
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                 GameTooltip:SetHyperlink(self.itemLink)
                 GameTooltip:Show()
+                GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
             end
         end)
         line:SetScript("OnLeave", GameTooltip_Hide)

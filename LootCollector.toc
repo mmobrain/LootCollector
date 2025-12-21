@@ -4,7 +4,7 @@
 ## Author: Skulltrail
 ## Contributors: Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan, Stilnight, Xurkon
 ## AlphaTopCollectors: Morty, Laya, Brokenheart, Mie, Rhen, Aaltrix, Insanestar, Harrydn, Blutact
-## Version: alpha 0.7.41
+## Version: alpha 0.7.42
 ## SavedVariables: LootCollectorDB_Asc
 ## OptionalDeps: Ace3, TomTom, AtlasLoot_Cache
 

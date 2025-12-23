@@ -1,3 +1,9 @@
+## LootCollector 0.7.42 - Tooltip Strata Fix (Xurkon)
+
+- **Fixed Tooltip Z-Order:** Tooltips now properly display above ArkInventory, TSM, and Postal UIs
+  - Added `SetFrameStrata("TOOLTIP")` after all `GameTooltip:Show()` calls
+  - Fixed 23 instances across Viewer.lua, Toast.lua, MinimapButton.lua, Map.lua, and ImportExport.lua
+
 ## LootCollector 0.7.41 - Frame Strata Fix (Xurkon)
 
 - **Fixed Tooltip Visibility:** Tooltips now display above map pins and overlays instead of behind them

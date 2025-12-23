@@ -482,6 +482,7 @@ function Viewer:EnsureVendorInventoryPanel()
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                 GameTooltip:SetHyperlink(self.itemLink)
                 GameTooltip:Show()
+                GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
             end
         end)
 
@@ -3520,10 +3521,12 @@ function Viewer:CreateRows()
                     GameTooltip:SetOwner(self, "ANCHOR_RIGHT", 20, 10)
                     GameTooltip:SetHyperlink(d.il)
                     GameTooltip:Show()
+                    GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
                 elseif d.i then
                     GameTooltip:SetOwner(self, "ANCHOR_RIGHT", 20, 10)
                     GameTooltip:SetHyperlink("item:" .. d.i)
                     GameTooltip:Show()
+                    GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
                 end
             end
         end)
@@ -3740,6 +3743,7 @@ function Viewer:CreateRows()
                     GameTooltip:AddLine(item.link)
                 end
                 GameTooltip:Show()
+                GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
             end
         end)
 
@@ -3789,6 +3793,7 @@ function Viewer:CreateRows()
             GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
             GameTooltip:SetText("Delete")
             GameTooltip:Show()
+            GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
         end)
         deleteBtn:SetScript("OnLeave", function()
             GameTooltip:Hide()
@@ -3810,6 +3815,7 @@ function Viewer:CreateRows()
             GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
             GameTooltip:SetText("Mark as Unlooted")
             GameTooltip:Show()
+            GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
         end)
         unlootedBtn:SetScript("OnLeave", function()
             GameTooltip:Hide()
@@ -3831,6 +3837,7 @@ function Viewer:CreateRows()
             GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
             GameTooltip:SetText("Mark as Looted")
             GameTooltip:Show()
+            GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
         end)
         lootedBtn:SetScript("OnLeave", function()
             GameTooltip:Hide()
@@ -3855,6 +3862,7 @@ function Viewer:CreateRows()
             GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
             GameTooltip:SetText("Navigate")
             GameTooltip:Show()
+            GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
         end)
         navBtn:SetScript("OnLeave", function()
             GameTooltip:Hide()
@@ -3876,6 +3884,7 @@ function Viewer:CreateRows()
             GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
             GameTooltip:SetText("Show on Map")
             GameTooltip:Show()
+            GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
         end)
         showBtn:SetScript("OnLeave", function()
             GameTooltip:Hide()

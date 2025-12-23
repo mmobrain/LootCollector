@@ -1228,7 +1228,7 @@ function Map:HideDiscoveryTooltip()
           GameTooltip:Hide() 
           
           GameTooltip:SetParent(UIParent)
-          GameTooltip:SetFrameStrata("TOOLTIP")
+          GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
       end
   end
   
@@ -1561,6 +1561,7 @@ function Map:EnsureFilterUI()
         GameTooltip:AddLine("Left-Click to open menu", 1, 1, 1)
         GameTooltip:AddLine("Shift+Drag to move", 0.7, 0.7, 0.7)
         GameTooltip:Show()
+        GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
     end)
     FilterButton:SetScript("OnLeave", function(self) GameTooltip:Hide() end)
 
@@ -1784,6 +1785,7 @@ local function EnsureMmPin(i)
       GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
       GameTooltip:SetHyperlink(self.discovery.il)
       GameTooltip:Show()
+      GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
     end
   end)
   f:SetScript("OnLeave", function(self)
@@ -2758,7 +2760,7 @@ function Map:DrawWorldMapPins()
                     pin:SetScript("OnEnter", function()
                         GameTooltip:SetOwner(pin, "ANCHOR_RIGHT")
                         GameTooltip:AddLine(subzoneData.name, 1,1,0); GameTooltip:AddLine(count .. " discoveries inside.", 1,1,1)
-                        GameTooltip:AddLine("\n|cff00ff00Click to view this zone.|r", .8,.8,.8, true); GameTooltip:Show()
+                        GameTooltip:AddLine("\n|cff00ff00Click to view this zone.|r", .8,.8,.8, true); GameTooltip:Show(); GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
                     end)
                     pin:SetScript("OnClick", function() if SetMapByID then SetMapByID(subzoneData.z - 1) end end)
                     pin:Show()
@@ -2798,7 +2800,7 @@ function Map:DrawWorldMapPins()
                     pin:SetScript("OnEnter", function()
                         GameTooltip:SetOwner(pin, "ANCHOR_RIGHT")
                         GameTooltip:AddLine(zoneData.name, 1,1,0); GameTooltip:AddLine(count .. " discoveries in this zone.", 1,1,1)
-                        GameTooltip:AddLine("\n|cff00ff00Click to view this zone.|r", .8,.8,.8, true); GameTooltip:Show()
+                        GameTooltip:AddLine("\n|cff00ff00Click to view this zone.|r", .8,.8,.8, true); GameTooltip:Show(); GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
                     end)
                     pin:SetScript("OnClick", function() if SetMapByID then SetMapByID(zoneData.z - 1) end end)
                     pin:Show()

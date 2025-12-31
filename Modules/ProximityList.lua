@@ -139,7 +139,6 @@ function ProximityList:CreateFrame()
                 else
                     tooltip:SetParent(UIParent)
                 end
-                tooltip:SetFrameStrata("TOOLTIP")
                 
                 tooltip:SetOwner(self, "ANCHOR_RIGHT")
                 
@@ -150,6 +149,7 @@ function ProximityList:CreateFrame()
                 end
                 
                 tooltip:Show()
+                tooltip:SetFrameStrata("TOOLTIP") -- Must be called AFTER Show() to properly force above other frames
             end
 
             

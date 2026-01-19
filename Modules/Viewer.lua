@@ -93,6 +93,7 @@ Viewer.totalItems     = 0
 Viewer.columnFilters  = {
     eq       = { slot = {}, type = {}, class = {} },
     ms       = { class = {} },
+    msv      = { slot = {}, type = {}, class = {} },
     zone     = {},
     source   = {},
     quality  = {},

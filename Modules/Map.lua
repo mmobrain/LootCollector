@@ -1408,6 +1408,7 @@ local function BuildFilterEasyMenu()
   addToggle("Hide Uncached", "hideUncached", hideSub)
   addToggle("Hide Faded", "hideFaded", hideSub)
   addToggle("Hide Stale", "hideStale", hideSub)
+  addToggle("Hide Collected Appearances", "hideLearnedTransmog", hideSub)
   table.insert(menu, { text = "Hide", hasArrow = true, notCheckable = true, menuList = hideSub })
   
   local showSub = { { text = "Show Item Types", isTitle = true, notCheckable = true } }

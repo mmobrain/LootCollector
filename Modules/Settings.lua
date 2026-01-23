@@ -218,6 +218,17 @@ local function buildOptions()
 							refreshUI()
 						end,
 					},
+					hideLearnedTransmog = {
+						type = "toggle",
+						name = "Hide Collected Appearances",
+						order = 4.1,
+						desc = "Hide discoveries for items with appearances you have already collected.",
+						get = function() return L.db.profile.mapFilters.hideLearnedTransmog end,
+						set = function(_, v)
+							L.db.profile.mapFilters.hideLearnedTransmog = v
+							refreshUI()
+						end,
+					},
 					hidePlayerNames = {
 						type = "toggle",
 						name = "Hide Player Names",

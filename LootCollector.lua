@@ -123,6 +123,7 @@ local dbDefaults = {
             hideLooted = false,
             hideUncached = false,
             hideUnconfirmed = false,
+            hideLearnedTransmog = false,
 		    hidePlayerNames = false,
             pinSize = 17, 
             minimapPinSize = 14, 
@@ -430,6 +431,7 @@ function LootCollector:GetFilters()
     if f.hideLooted == nil then f.hideLooted = false end
     if f.hideUnconfirmed == nil then f.hideUnconfirmed = false end
     if f.hideUncached == nil then f.hideUncached = false end
+    if f.hideLearnedTransmog == nil then f.hideLearnedTransmog = false end
     if f.minRarity == nil then f.minRarity = 0 end
     if f.allowedEquipLoc == nil then f.allowedEquipLoc = {} end
     if f.usableByClasses == nil then f.usableByClasses = {} end
@@ -454,6 +456,31 @@ function LootCollector:IsLootedByChar(guid)
     return self.db.char.looted[guid] and true or false
 end
 
+local appearanceCache = {}
+local appearanceCacheTime = {}
+local APPEARANCE_CACHE_DURATION = 300
+
+function LootCollector:IsAppearanceCollected(itemID)
+    if not itemID or itemID == 0 then return false end
+    if not C_Appearance or not C_AppearanceCollection then return false end
+    
+    local now = GetTime()
+    if appearanceCacheTime[itemID] and (now - appearanceCacheTime[itemID]) < APPEARANCE_CACHE_DURATION then
+        return appearanceCache[itemID]
+    end
+    
+    local isCollected = false
+    local appearanceID = C_Appearance.GetItemAppearanceID(itemID)
+    if appearanceID then
+        isCollected = C_AppearanceCollection.IsAppearanceCollected(appearanceID) or false
+    end
+    
+    appearanceCache[itemID] = isCollected
+    appearanceCacheTime[itemID] = now
+    
+    return isCollected
+end
+
 function LootCollector:DiscoveryPassesFilters(d)
     local Constants = self:GetModule("Constants", true)
     local f = self:GetFilters()
@@ -464,6 +491,10 @@ function LootCollector:DiscoveryPassesFilters(d)
        (s == STATUS_FADING and f.hideFaded) or
        (s == STATUS_STALE and f.hideStale) or
        (f.hideLooted and d.g and self:IsLootedByChar(d.g)) then
+        return false
+    end
+
+    if f.hideLearnedTransmog and d.i and d.i > 0 and self:IsAppearanceCollected(d.i) then
         return false
     end
 

@@ -1,3 +1,8 @@
+## LootCollector 0.7.45 - Critical Fix
+
+- **Version Validation Fix:** Fixed a critical bug where optimized encoded messages were bypassing version validation.
+- **Network Protocol "Reset":** Bumped minimum compatible version to 0.7.45. This ensures all participants on the sync network are utilizing the 0.7.44 lag-recovery, AFK-protection logic and new 0.7.45 Version Validation Fix.
+
 ## LootCollector 0.7.44 - Stability & Lag Recovery
 
 - **Anti-Freeze Protection:** Implemented delta-time clamping (`math.min(elapsed, 0.1)`) across all animation and tracking modules (Arrow, Map, Minimap, Toast Ticker). This prevents UI "teleportation" and logic spikes after loading screens, lag, or Alt-Tabs.
@@ -5,6 +10,7 @@
 - **Message Buffer Optimization:** Added a hard cap to the incoming message buffer. If the buffer is full upon resuming, the oldest 20% of messages are automatically purged to prioritize fresh data and minimize the duration of "resume stutters."
 - **AFK Spam Fix:** Added AFK detection to pause outgoing network sync. This fixes the infinite "Away / No longer Away" chat loop caused by addon traffic clearing the AFK status on 3.3.5a clients.
 - **Minimap Power Save:** The minimap update ticker now completely stops all coordinate processing and pin math when the minimap is hidden or "Hide All" is toggled, saving CPU cycles.
+
 
 ## LootCollector 0.7.42 - Tooltip Strata Fix (Xurkon)
 

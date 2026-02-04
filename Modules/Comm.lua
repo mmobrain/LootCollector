@@ -10,6 +10,7 @@ local XXH_Lua_Lib = _G.XXH_Lua_Lib
 
 local RAW_BUFFER_CAP = 120
 Comm._lagRecoveryTimer = 0
+Comm._minCompatibleVersion = nil
 
 local function ChatFilter(_, _, msg, _, _, _, _, _, _, _, channelName)
     if not channelName then return false end
@@ -1027,43 +1028,6 @@ local function _lc_tryDecodeEncodedPayload(msg)
     return nil
 end
 
-local function _lc_parsePlainV1(msg)
-    local header, payload = string.match(msg, "^(LC1:%d+:[^:]+:[^:]+:[^:]+:[^:]+:[^:]+:[^:]+:%d+):(.*)$")
-    if not header then return nil end
-    
-    local v, op, z, i, x, y, t, q = string.match(header, "^LC1:(%d+):([^:]+):(%d+):(%d+):([%-%d%.]+):([%-%d%.]+):(%d+):(%d+)$")
-    if not v then return nil end
-    
-    local parts = {}
-    for part in string.gmatch(payload or "", "[^\t]+") do
-        table.insert(parts, part)
-    end
-    
-    local sSender = parts[1]
-    local itemName = parts[2]
-    local zoneName = parts[3]
-    local av = parts[4]
-    
-    local tbl = {
-        v = tonumber(v) or 1,
-        op = op or "DISC",
-        c = 0,
-        z = tonumber(z) or 0,
-        iz = 0,
-        i = tonumber(i) or 0,
-        x = tonumber(x) or 0,
-        y = tonumber(y) or 0,
-        t = tonumber(t) or now(),
-        q = tonumber(q) or 1,
-        s = 0,
-        av = av,
-        l = itemName,
-        sn = sSender,
-        zn = zoneName,
-    }
-    
-    return tbl
-end
 
 local function _lc_parsePlainV5(msg)
     local segments = {}
@@ -1323,82 +1287,69 @@ function Comm:_ProcessRawBuffer()
     end
 end
 
+local function isVersionCompatible(av)
+    if not Comm._minCompatibleVersion then
+        local Constants = L:GetModule("Constants", true)
+        Comm._minCompatibleVersion = Constants and Constants.GetMinCompatibleVersion and Constants:GetMinCompatibleVersion() or "0.0.0"
+    end
+    
+    if not av or av == "" then return false end
+    
+    return compareVersions(av, Comm._minCompatibleVersion) >= 0
+end
+
 function Comm:_ProcessChatMsg(msg, sender, channelName)
-    
     if isSenderPermanentlyBlacklisted(sender) then return end
-    
     if not _lc_isPlausiblePayload(msg) then return end
     
     
     local optOp, optMid, optEncoded = msg:match("^LC1:(%u+):([^:]+):(.+)$")
-    
     if optOp and optMid then
-        
         if optOp == "CONF" then
-            if Core and Core.IsDiscoveryFresh and Core:IsDiscoveryFresh(optMid) then
-                return 
-            end
+            if Core and Core.IsDiscoveryFresh and Core:IsDiscoveryFresh(optMid) then return end
         end
         
-        
         if L.db and L.db.global and L.db.global.deletedCache and L.db.global.deletedCache[optMid] then
-             if optOp ~= "DISC" then
-                 return
-             end
+             if optOp ~= "DISC" then return end
         end
         
         local data = _lc_tryDecodeEncodedPayload("LC1:" .. optEncoded)
         if data then
+             
+             if not isVersionCompatible(data.av) then return end
+
              if not data.op then data.op = optOp end
              if not data.mid then data.mid = optMid end
 
-             
              if (tonumber(data.c) or 0) == -1 and data.z then
                  local ZoneList = L:GetModule("ZoneList", true)
                  local zInfo = ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[tonumber(data.z)]
-                 if zInfo and zInfo.continentID then
-                     data.c = zInfo.continentID
-                 end
+                 if zInfo and zInfo.continentID then data.c = zInfo.continentID end
              end
 
              local tbl, reason = _lc_validateNormalized(data)
-            if not tbl then
+             if not tbl then
                 trackInvalidSender(sender, reason, data)
                 return
-            end
+             end
              if isSenderSessionIgnored(sender) then return end
              Comm:RouteIncoming(tbl, "CHANNEL", sender or "Unknown")
              return
         end
     end
     
-    
-    local data = _lc_tryDecodeEncodedPayload(msg)
-    if not data then
-        data = _lc_parsePlainV5(msg)
-        if not data then
-            data = _lc_parsePlainV1(msg)
-            if not data then
-                return
-            end
-        end
-    end
-
-    local Constants = L:GetModule("Constants", true)
-    if Constants and Constants.GetMinCompatibleVersion then	
-        local minVersion = Constants:GetMinCompatibleVersion()
-        if not data.av or compareVersions(data.av, minVersion) < 0 then
-            return 
-        end
+     local data = _lc_tryDecodeEncodedPayload(msg)
+    if not data then       
+        data = _lc_parsePlainV5(msg)               
+        if not data then return end
     end
     
+    if not isVersionCompatible(data.av) then return end
     
     if (tonumber(data.c) or 0) == -1 and data.z then
          local ZoneList = L:GetModule("ZoneList", true)
          local zInfo = ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[tonumber(data.z)]
-         if zInfo and zInfo.continentID then
-             data.c = zInfo.continentID
-         end
+         if zInfo and zInfo.continentID then data.c = zInfo.continentID end
     end
     
     local tbl, reason = _lc_validateNormalized(data)
@@ -1407,34 +1358,23 @@ function Comm:_ProcessChatMsg(msg, sender, channelName)
         return
     end
     
-    if isSenderSessionIgnored(sender) then
-        return
-    end
-    
+    if isSenderSessionIgnored(sender) then return end
     Comm:RouteIncoming(tbl, "CHANNEL", sender or "Unknown")
 end
 
 function Comm:_ProcessAceMsg(message, distribution, sender)
-    
     if isSenderPermanentlyBlacklisted(sender) then return end
     
     local ok, data = AceSerializer:Deserialize(message)
     if not ok or type(data) ~= "table" then return end
 
-    local Constants = L:GetModule("Constants", true)
-    if Constants and Constants.GetMinCompatibleVersion then
-        local minVersion = Constants:GetMinCompatibleVersion()
-        if not data.av or compareVersions(data.av, minVersion) < 0 then
-            return 
-        end
-    end
+    
+    if not isVersionCompatible(data.av) then return end
     
     if (tonumber(data.c) or 0) == -1 and data.z then
          local ZoneList = L:GetModule("ZoneList", true)
          local zInfo = ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[tonumber(data.z)]
-         if zInfo and zInfo.continentID then
-             data.c = zInfo.continentID
-         end
+         if zInfo and zInfo.continentID then data.c = zInfo.continentID end
     end
     
     local tbl, reason = _lc_validateNormalized(data)
@@ -1443,10 +1383,7 @@ function Comm:_ProcessAceMsg(message, distribution, sender)
         return
     end
     
-    if isSenderSessionIgnored(sender) then
-        return
-    end
-    
+    if isSenderSessionIgnored(sender) then return end
     Comm:RouteIncoming(tbl, distribution or "ACE", sender or "Unknown")
 end
 

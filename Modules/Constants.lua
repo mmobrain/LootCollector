@@ -5,7 +5,7 @@ local Constants = L:NewModule("Constants")
 
 Constants.PROTO_V = 5
 
-Constants.MIN_COMPATIBLE_VERSION = "0.6.10"
+Constants.MIN_COMPATIBLE_VERSION = "0.7.45"
 
 Constants.OP = {
     DISC = "DISC",

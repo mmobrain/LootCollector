@@ -8,6 +8,9 @@ local AceSerializer = LibStub("AceSerializer-3.0")
 local LibDeflate = LibStub("LibDeflate", true)
 local XXH_Lua_Lib = _G.XXH_Lua_Lib
 
+local RAW_BUFFER_CAP = 120
+Comm._lagRecoveryTimer = 0
+
 local function ChatFilter(_, _, msg, _, _, _, _, _, _, _, channelName)
     if not channelName then return false end
     
@@ -943,10 +946,25 @@ function Comm:_processIncomingQueue()
     end
 end
 
-  
-
-function Comm:OnUpdate(elapsed)
+function Comm:OnUpdate(elapsed)   
+    if elapsed > 0.5 then
+       
+        local bufferSize = #Comm.rawBuffer
+        local dynamicDuration = 1.0 + (bufferSize / 6 * 0.5)
+        Comm._lagRecoveryTimer = math.min(7.0, dynamicDuration)
+        
+       
+        if bufferSize >= RAW_BUFFER_CAP then
+            for i = 1, math.floor(RAW_BUFFER_CAP * 0.2) do
+                table.remove(Comm.rawBuffer, 1)
+            end
+        end
+    elseif Comm._lagRecoveryTimer > 0 then
+        Comm._lagRecoveryTimer = Comm._lagRecoveryTimer - elapsed
+    end
     
+    elapsed = math.min(elapsed, 0.1)
+
     if self._delayQueue and #self._delayQueue > 0 then
         local tnow = now()
         local i = 1
@@ -962,7 +980,9 @@ function Comm:OnUpdate(elapsed)
     end
     
     
-    if self._rateLimitQueue and #self._rateLimitQueue > 0 then
+    local isAFK = UnitIsAFK("player")
+    
+    if not isAFK and self._rateLimitQueue and #self._rateLimitQueue > 0 then
         if _bucketTake() then
             local entry = table.remove(self._rateLimitQueue, 1)
             if entry and entry.wire then
@@ -974,11 +994,9 @@ function Comm:OnUpdate(elapsed)
         end
     end
     
-    
     if #Comm.rawBuffer > 0 then
         self:_ProcessRawBuffer()
     end
-    
     
     self._processTimer = (self._processTimer or 0) + elapsed
     if self._processTimer >= PROCESS_INTERVAL then
@@ -1269,23 +1287,25 @@ function Comm:OnCommReceived(prefix, message, distribution, sender)
     if prefix ~= (self.addonPrefix or "BBLC25AMTEST") then return end
     if type(message) ~= "string" then return end
     if not isSharingEnabled() then return end
-    if isSenderPermanentlyBlacklisted(sender) then return end
-    
+    if isSenderPermanentlyBlacklisted(sender) then return end        
+    if #Comm.rawBuffer >= RAW_BUFFER_CAP then
+        table.remove(Comm.rawBuffer, 1)
+    end
     
     table.insert(Comm.rawBuffer, { type="ACE", msg=message, dist=distribution, sender=sender })
 end
 
+
+
 function Comm:_ProcessRawBuffer()
-    
     local startTime = debugprofilestop()
-    
-    local processed = 0
-    
-    local safetyLimit = 50 
+        
+    local safetyLimit = (Comm._lagRecoveryTimer > 0) and 6 or 50
     
     
     local budget = InCombatLockdown() and 1.0 or RAW_PROCESS_BUDGET_MS
 
+    local processed = 0
     while #Comm.rawBuffer > 0 and processed < safetyLimit do
         local entry = table.remove(Comm.rawBuffer, 1)
         
@@ -1296,7 +1316,6 @@ function Comm:_ProcessRawBuffer()
         end
         
         processed = processed + 1
-        
         
         if (debugprofilestop() - startTime) >= budget then
             break

@@ -23,8 +23,7 @@ LootCollector.ignoreList = {
     ["Enigmatic Mystic Scroll"] = true,
     ["Friendly Sludgemonster"] = true,
     ["Worldforged Key Fragment"] = true,
-    ["Worldforged Key"] = true,
-	["The \"Kodo Egg\""] = true,	
+    ["Worldforged Key"] = true,	
 }
 
 LootCollector.sourceSpecificIgnoreList = {
@@ -1048,7 +1047,7 @@ function LootCollector:OnInitialize()
 
     self.channelReady = false
     self.name         = "LootCollector"
-    self.Version      = "alpha-0.7.42"
+    self.Version      = "alpha-0.7.44"
 
     local Constants = self:GetModule("Constants", true)
     if Constants and Constants.GetDefaultChannel then

@@ -79,6 +79,7 @@ local function CreateOrShowPersistentOverlayPin(px, py, discovery)
         
         
         pin:SetScript("OnUpdate", function(self, delta)
+            delta = math.min(delta, 0.1)
             self.glowTime = self.glowTime + delta
             if self.glowTime > 1.0 then
                 self.glowTime = 0
@@ -186,6 +187,7 @@ local function PulseOverlayAt(px, py)
 	overlay.duration = overlay.period * overlay.cycles
 	
 	overlay:SetScript("OnUpdate", function(self, dt)
+        dt = math.min(dt, 0.1)
 		self.elapsed = self.elapsed + (dt or 0)
 		local t = self.elapsed
 		if t >= self.duration then
@@ -279,6 +281,7 @@ function Map:FocusOnDiscovery(d)
                 
                 overlayPin.glowTime = 0
                 overlayPin:SetScript("OnUpdate", function(self, delta)
+                    delta = math.min(delta, 0.1)
                     self.glowTime = self.glowTime + delta
                     if self.glowTime > 1.0 then self.glowTime = 0 end
                     local progress = self.glowTime / 1.0
@@ -324,8 +327,6 @@ function Map:FocusOnDiscovery(d)
     C_Timer.After(0.2, TryFocus)
 end
 
-  
-
 function Map:HighlightPin(pin)
     if not pin then return end
 
@@ -351,6 +352,7 @@ function Map:HighlightPin(pin)
         
         overlayPin.glowTime = 0
         overlayPin:SetScript("OnUpdate", function(self, delta)
+            delta = math.min(delta, 0.1)
             self.glowTime = self.glowTime + delta
             if self.glowTime > 1.0 then self.glowTime = 0 end
             local progress = self.glowTime / 1.0
@@ -1797,119 +1799,114 @@ local function EnsureMmPin(i)
   return f
 end
 
+function Map:StopMinimapTicker()
+    if self._mmTicker then
+        self._mmTicker:Hide()
+    end
+end
+
 function Map:HideAllMmPins()
-  for _, pin in ipairs(self._mmPins) do
-    pin:Hide()
-    pin.discovery = nil
-    pin:SetScript("OnUpdate", nil)
-  end
+    for _, pin in ipairs(self._mmPins) do
+        pin:Hide()
+        pin.discovery = nil        
+    end
 end
 
 function Map:UpdateMinimap()
-  local f = L:GetFilters()
-  if not f or not f.showMinimap or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then
-    self:HideAllMmPins()
-    return
-  end
+    local f = L:GetFilters()    
+    if not f or not f.showMinimap or f.hideAll or not Minimap or (L.IsZoneIgnored and L:IsZoneIgnored()) then
+        self:HideAllMmPins()
+        self:StopMinimapTicker()
+        return
+    end
   
+    self:EnsureMinimapTicker()
   
-  if self.cachingEnabled then
-      if self.cacheIsDirty or #self.cachedVisibleDiscoveries == 0 then
-           self.cacheIsDirty = true
-           self:RebuildFilteredCache()
-      end
-  end
-
-  local currentContinent, currentMapID = self:GetPlayerLocation()
-
-  if not currentContinent or not currentMapID then
-    self:HideAllMmPins()
-    return
-  end
-  
-  currentContinent = tonumber(currentContinent)
-  currentMapID = tonumber(currentMapID)
-  
-  local visibleDiscoveries = {}
-  local sourceList = self.cachingEnabled and self.cachedVisibleDiscoveries or {}
-  
-  if not self.cachingEnabled then
-      local discoveries = L:GetDiscoveriesDB()
-      if discoveries then
-          for guid, d in pairs(discoveries) do table.insert(sourceList, d) end
-      end
-      local vendors = L:GetVendorsDB()
-      if vendors then
-          for guid, d in pairs(vendors) do table.insert(sourceList, d) end
-      end
-  end
-
-  for _, d in ipairs(sourceList) do
-    
-    local shouldShow = false
-    
     if self.cachingEnabled then
-        
-        if tonumber(d.c) == currentContinent and tonumber(d.z) == currentMapID then
-            shouldShow = true
-        end
-    else
-        
-        if passesFilters(d) and tonumber(d.c) == currentContinent and tonumber(d.z) == currentMapID then
-            shouldShow = true
+        if self.cacheIsDirty or #self.cachedVisibleDiscoveries == 0 then
+             self.cacheIsDirty = true
+             self:RebuildFilteredCache()
         end
     end
 
-    if shouldShow then
-        table.insert(visibleDiscoveries, d)
+    local currentContinent, currentMapID = self:GetPlayerLocation()
+
+    if not currentContinent or not currentMapID then
+        self:HideAllMmPins()
+        return
     end
-  end
-
-  for i = 1, math.max(#self._mmPins, #visibleDiscoveries) do
-    local pin = EnsureMmPin(i)
-    local discovery = visibleDiscoveries[i]
-    if discovery then
-      pin.discovery = discovery
-      local icon = self:GetDiscoveryIcon(discovery)
-      pin.tex:SetTexture(icon or PIN_FALLBACK_TEXTURE)
-      
-      local r, g, b = GetQualityColor(discovery.q or select(3,GetItemInfo(discovery.il or discovery.i)))
-      local isLooted = L:IsLootedByChar(discovery.g)
-
-      pin.bg_border:Show()
-
-      if isLooted then
-          local gray = 0.5
-          pin.color_frame:Hide()
-          pin.tex:SetVertexColor(gray, gray, gray)
-      else
-          if icon == PIN_FALLBACK_TEXTURE then
-              pin.tex:SetVertexColor(r, g, b)
-              pin.color_frame:Hide()
-          else
-              pin.tex:SetVertexColor(1, 1, 1)
-              pin.color_frame:SetVertexColor(r, g, b)
-              pin.color_frame:Show()
-          end
-      end
-      
-      pin:Show()
-      
-    else
-      pin:Hide()
-      pin.discovery = nil
-    end
-  end
   
-  self._minimapPinsDirty = true
-  if self._mmTicker then
-      self._mmInterval = 0 
-      if not self._mmTicker:GetScript("OnUpdate") then
-           self:EnsureMinimapTicker()
-      end
-  else
-      self:EnsureMinimapTicker()
-  end
+    currentContinent = tonumber(currentContinent)
+    currentMapID = tonumber(currentMapID)
+  
+    local visibleDiscoveries = {}
+    local sourceList = self.cachingEnabled and self.cachedVisibleDiscoveries or {}
+  
+    if not self.cachingEnabled then
+        local discoveries = L:GetDiscoveriesDB()
+        if discoveries then
+            for guid, d in pairs(discoveries) do table.insert(sourceList, d) end
+        end
+        local vendors = L:GetVendorsDB()
+        if vendors then
+            for guid, d in pairs(vendors) do table.insert(sourceList, d) end
+        end
+    end
+
+    for _, d in ipairs(sourceList) do
+        local shouldShow = false
+        if self.cachingEnabled then
+            if tonumber(d.c) == currentContinent and tonumber(d.z) == currentMapID then
+                shouldShow = true
+            end
+        else
+            if passesFilters(d) and tonumber(d.c) == currentContinent and tonumber(d.z) == currentMapID then
+                shouldShow = true
+            end
+        end
+
+        if shouldShow then
+            table.insert(visibleDiscoveries, d)
+        end
+    end
+
+    for i = 1, math.max(#self._mmPins, #visibleDiscoveries) do
+        local pin = EnsureMmPin(i)
+        local discovery = visibleDiscoveries[i]
+        if discovery then
+            pin.discovery = discovery
+            local icon = self:GetDiscoveryIcon(discovery)
+            pin.tex:SetTexture(icon or PIN_FALLBACK_TEXTURE)
+          
+            local r, g, b = GetQualityColor(discovery.q or select(3,GetItemInfo(discovery.il or discovery.i)))
+            local isLooted = L:IsLootedByChar(discovery.g)
+
+            pin.bg_border:Show()
+
+            if isLooted then
+                local gray = 0.5
+                pin.color_frame:Hide()
+                pin.tex:SetVertexColor(gray, gray, gray)
+            else
+                if icon == PIN_FALLBACK_TEXTURE then
+                    pin.tex:SetVertexColor(r, g, b)
+                    pin.color_frame:Hide()
+                else
+                    pin.tex:SetVertexColor(1, 1, 1)
+                    pin.color_frame:SetVertexColor(r, g, b)
+                    pin.color_frame:Show()
+                end
+            end
+          
+            pin:Show()
+        else
+            pin:Hide()
+            pin.discovery = nil
+        end
+    end
+  
+    self._minimapPinsDirty = true    
+    self._mmInterval = 0 
 end
 
 function Map:BuildClusterPin(index)
@@ -1945,17 +1942,19 @@ function Map:BuildClusterPin(index)
     return pin
 end
 
-    
 function Map:EnsureMinimapTicker()
-    if self._mmTicker then return end
+    if self._mmTicker then 
+        self._mmTicker:Show()
+        return 
+    end
 
-    self._mmTicker = CreateFrame("Frame")
+    self._mmTicker = CreateFrame("Frame", "LootCollectorMinimapTicker")
     self._mmTicker:SetScript("OnUpdate", function(_, elapsed)
+        elapsed = math.min(elapsed, 0.1)
         Map._mmElapsed = (Map._mmElapsed or 0) + elapsed
         if Map._mmElapsed >= Map._mmInterval then
             Map._mmElapsed = 0
 
-            
             local c, mapID, px, py = Map:GetPlayerLocation()
             if not px or not py or not c or not mapID then return end
 
@@ -1965,7 +1964,6 @@ function Map:EnsureMinimapTicker()
             local rotateEnabled = (GetCVar("rotateMinimap") == "1")
             local facing = GetPlayerFacing()
 
-            
             local state = Map._lastPlayerState
             local playerMoved = not (
                 c == state.c and
@@ -1975,31 +1973,17 @@ function Map:EnsureMinimapTicker()
                 math.abs(facing - (state.facing or -1)) < 0.001
             )
 
-            
             if not playerMoved and not Map._minimapPinsDirty then
-                
-                 L._mdebug("Map-Ticker", "Player state unchanged. Skipping position recalculation.")
                 Map._mmInterval = 0.5
                 Map._playerStateChanged = false
                 return
             end
 
-            
             Map._playerStateChanged = true
             Map._minimapPinsDirty = false 
             Map._mmInterval = 0.1
 
             state.c, state.mapID, state.px, state.py, state.facing = c, mapID, px, py, facing
-
-            if playerMoved then
-                 L._mdebug(
-                    "Map-Ticker",
-                    string.format("Ticker Position Update: c=%s, mapID=%s. Player at %.4f, %.4f", tostring(c), tostring(mapID), px, py)
-                )
-            else
-                
-                 L._mdebug("Map-Ticker", "Forced ticker update (pins dirty).")
-            end
 
             local minimapRadius = Minimap:GetViewRadius()
             local mapWidth = Minimap:GetWidth()
@@ -2019,18 +2003,12 @@ function Map:EnsureMinimapTicker()
                 sin_f = math.sin(facing)
             end
 
-            
             local minimapShape = GetCurrentMinimapShape()
 
             for _, pin in ipairs(Map._mmPins) do
                 if pin.discovery then 
                     local d = pin.discovery
 
-                    
-                    
-                    
-                    
-                    
                     if d.c == c and d.z == mapID then
                         local distYards, xDist, yDist = ComputeDistance(
                             c, mapID, px, py,
@@ -2038,18 +2016,15 @@ function Map:EnsureMinimapTicker()
                         )
 
                         if distYards and xDist and yDist then
-                            
                             if maxDistSq and (distYards * distYards) > maxDistSq then
                                 pin:Hide()
                             else
-                                
                                 if rotateEnabled then
                                     local dx, dy = xDist, yDist
                                     xDist = dx * cos_f - dy * sin_f
                                     yDist = dx * sin_f + dy * cos_f
                                 end
 
-                                
                                 local quad = (xDist < 0) and 1 or 3
                                 if yDist >= 0 then
                                     quad = quad + 1
@@ -2085,19 +2060,15 @@ function Map:EnsureMinimapTicker()
                             pin:Hide()
                         end
                     else
-                        
                         pin:Hide()
                     end
                 else
-                    
                     pin:Hide()
                 end
             end
         end
     end)
 end
-
-  
 
 function Map:ToggleSearchUI(show)
     self:EnsureSearchUI()
@@ -2870,6 +2841,7 @@ function Map:EnsureThrottleFrame()
     if self.throttleFrame then return end
     self.throttleFrame = CreateFrame("Frame")
     self.throttleFrame:SetScript("OnUpdate", function(frame, elapsed)
+        elapsed = math.min(elapsed, 0.1)
         if Map.worldMapUpdatePending then
             Map.worldMapUpdateTimer = Map.worldMapUpdateTimer + elapsed
             if Map.worldMapUpdateTimer >= MAP_UPDATE_THROTTLE then

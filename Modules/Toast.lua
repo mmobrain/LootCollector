@@ -893,159 +893,159 @@ function Toast:AddSpecialLine(text)
 end
 
 function Toast:OnInitialize()
-if L.LEGACY_MODE_ACTIVE then return end
-	ensureProfile()
-	self:ApplySettings()
-	
-	toastContainer = CreateFrame("Frame", "LootCollectorToastContainer", UIParent)
-	toastContainer:SetSize(TOASTWIDTH, TOASTHEIGHT + (MAXCONCURRENTTOASTSNORMAL * (VERTICALSPACING + MAXCONCURRENTTOASTSNORMAL - 1)))
-	toastContainer:SetFrameStrata("MEDIUM")
-	toastContainer:SetMovable(true)
-	toastContainer:EnableMouse(true)
-	toastContainer:SetClampedToScreen(true)
-	toastContainer:RegisterForDrag("LeftButton")
-	toastContainer:SetScript("OnDragStart", function(self, button)
-		if button == "LeftButton" and IsShiftKeyDown() then
-			self:StartMoving()
-		end
-	end)
-	toastContainer:SetScript("OnDragStop", function(self)
-		self:StopMovingOrSizing()
-		saveContainerPosition(self)
-		layoutStacks()
-	end)
-	restoreContainerPosition(toastContainer)
-	toastContainer:Hide()
-	
-	ticker.frame = CreateFrame("Frame", "LootCollectorTickerToast", UIParent)
-	ticker.frame:SetFrameStrata("MEDIUM")
-	ticker.frame:SetSize(TOASTWIDTH, TICKERHEIGHT)
-	ticker.frame:SetBackdrop({
-		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-		tile = true, tileSize = 16, edgeSize = 12,
-		insets = { left = 3, right = 3, top = 3, bottom = 3 },
-	})
-	ticker.frame:SetBackdropColor(0, 0, 0, 0.75)
-	do
-		local on = L.db and L.db.profile and L.db.profile.toasts and L.db.profile.toasts.whiteFrame
-		if ticker.frame.SetBackdropBorderColor then
-			ticker.frame:SetBackdropBorderColor(1, 1, 1, on and 1 or 0.15)
-		end
-	end
-	ticker.close = CreateFrame("Button", nil, ticker.frame, "UIPanelCloseButton")
-	ticker.close:SetPoint("TOPRIGHT", 2, 2)
-	ticker.close:SetScale(0.7)
-	ticker.close:SetScript("OnClick", function()
-		for i = #ticker.messages, 1, -1 do
-			table.remove(ticker.messages, i)
-		end
-		ticker.sessionLines = {}
-		ticker.sessionBuilt = false
-		ticker.active = false
-		if ticker.fadeL then ticker.fadeL:Hide() end
-		if ticker.fadeR then ticker.fadeR:Hide() end
-		ticker.frame:Hide()
-		if not anyShown() then
-			toastContainer:Hide()
-		end
-	end)
-	ticker.scrollContainer = CreateFrame("ScrollFrame", nil, ticker.frame)
-	ticker.scrollContainer:SetPoint("TOPLEFT", 8, -4)
-	ticker.scrollContainer:SetPoint("BOTTOMRIGHT", ticker.close, "BOTTOMLEFT", -4, 4)
-	ticker.child = CreateFrame("Frame", nil, ticker.scrollContainer)
-	ticker.child:SetWidth(1)
-	ticker.child:SetHeight(TICKERHEIGHT - 8)
-	ticker.scrollContainer:SetScrollChild(ticker.child)
-	ticker.text = ticker.child:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-	do
-		local fnt, size = ticker.text:GetFont()
-		ticker.baseFontSize = size or 10
-		local flags = (Toast.tickerOutline and TICKERFONTFLAGS or "")
-		ticker.text:SetFont(fnt, ticker.baseFontSize + Toast.tickerFontDelta, flags)
-	end
-	ticker.text:SetJustifyH("LEFT")
-	ticker.text:SetJustifyV("MIDDLE")
-	ticker.text:SetWordWrap(false)
-	ticker.text:SetNonSpaceWrap(false)
-	ticker.text:SetTextColor(0.92, 0.92, 0.92)
-	ticker.text:SetShadowOffset(1, -1)
-	ticker.text:SetShadowColor(0, 0, 0, 0.8)
-	if TICKERFADEMASKS then
-		ticker.fadeL = ticker.scrollContainer:CreateTexture(nil, "OVERLAY")
-		ticker.fadeL:SetTexture("Interface\\Buttons\\WHITE8X8")
-		ticker.fadeL:SetPoint("TOPLEFT", ticker.scrollContainer, "TOPLEFT", 0, 0)
-		ticker.fadeL:SetPoint("BOTTOMLEFT", ticker.scrollContainer, "BOTTOMLEFT", 0, 0)
-		ticker.fadeL:SetWidth(TICKERFADESIZE)
-		ticker.fadeL:SetGradientAlpha("HORIZONTAL", 0, 0, 0, TICKERFADEALPHA, 0, 0, 0, 0)
-		ticker.fadeL:Hide()
-		ticker.fadeR = ticker.scrollContainer:CreateTexture(nil, "OVERLAY")
-		ticker.fadeR:SetTexture("Interface\\Buttons\\WHITE8X8")
-		ticker.fadeR:SetPoint("TOPRIGHT", ticker.scrollContainer, "TOPRIGHT", 0, 0)
-		ticker.fadeR:SetPoint("BOTTOMRIGHT", ticker.scrollContainer, "BOTTOMRIGHT", 0, 0)
-		ticker.fadeR:SetWidth(TICKERFADESIZE)
-		ticker.fadeR:SetGradientAlpha("HORIZONTAL", 0, 0, 0, 0, 0, 0, 0, TICKERFADEALPHA)
-		ticker.fadeR:Hide()
-	end
-	
-	ticker.frame:ClearAllPoints()
-	ticker.frame:SetPoint("TOP", toastContainer, "BOTTOM", 0, -TICKERGAP)
-	ticker.frame:SetScript("OnShow", function()
-		tickerEnsureChildSize()
-		if ticker.fadeL then ticker.fadeL:Show() end
-		if ticker.fadeR then ticker.fadeR:Show() end
-	end)
-	ticker.frame:Hide()
-	
-	dispatcher = CreateFrame("Frame")
-	dispatcher:SetScript("OnUpdate", function(_, elapsed)
-		
-		if anonWindowEnds and GetTime() >= anonWindowEnds then
-			processAnonWindow()
-		end
-		
-		if ticker.active and not ticker.sessionBuilt and GetTime() >= ticker.coalesceUntil then
-			tickerBuildSessionLine()
-		end
-		
-		if ticker.active and ticker.sessionBuilt then
-			if not ticker.dtEMA then ticker.dtEMA = elapsed end
-			ticker.dtEMA = ticker.dtEMA * (1 - TICKERDTEMAALPHA) + elapsed * TICKERDTEMAALPHA
-			local dt = math.max(ticker.dtEMA, TICKERDTCLAMP)
-			ticker.easeT = math.min(ticker.easeT + dt, TICKEREASEIN)
-			local easeFactor = math.min(ticker.easeT / TICKEREASEIN, 1.0)
-			local baseSpeed = Toast.tickerSpeed or TICKERSPEED
-			local speed = baseSpeed * easeFactor
-			ticker.textX = ticker.textX - (speed * dt)
-			tickerReposition()
-			local tw = ticker.text:GetStringWidth() or 0
-			if ticker.textX + tw < 0 then
-				tickerAdvanceSession()
-			end
-		end
-		
-		checkQueueForSpam()
-		
-		local maxConcurrent = (overflowActive and MAXCONCURRENTTOASTSWITHTICKER or MAXCONCURRENTTOASTSNORMAL)
-		if visibleCount() < maxConcurrent and #queue > 0 then
-			table.sort(queue, function(a, b) return a.fireAt < b.fireAt end)
-			if queue[1] and queue[1].fireAt <= GetTime() then
-				local e = table.remove(queue, 1)
-				if e and e.data then
-					renderToast(e.data, e.options)
-				end
-			end
-		end
-		
-		local nBacklog = normalBacklogSize()
-		if nBacklog >= MAXQUEUEBEFORETICKER then
-			overflowActive = true
-		elseif nBacklog <= (MAXQUEUEBEFORETICKER - 2) and not ticker.active and not ticker.sessionBuilt then
-			overflowActive = false
-		end
-	end)
+    if L.LEGACY_MODE_ACTIVE then return end
+    ensureProfile()
+    self:ApplySettings()
+    
+    toastContainer = CreateFrame("Frame", "LootCollectorToastContainer", UIParent)
+    toastContainer:SetSize(TOASTWIDTH, TOASTHEIGHT + (MAXCONCURRENTTOASTSNORMAL * (VERTICALSPACING + MAXCONCURRENTTOASTSNORMAL - 1)))
+    toastContainer:SetFrameStrata("MEDIUM")
+    toastContainer:SetMovable(true)
+    toastContainer:EnableMouse(true)
+    toastContainer:SetClampedToScreen(true)
+    toastContainer:RegisterForDrag("LeftButton")
+    toastContainer:SetScript("OnDragStart", function(self, button)
+        if button == "LeftButton" and IsShiftKeyDown() then
+            self:StartMoving()
+        end
+    end)
+    toastContainer:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        saveContainerPosition(self)
+        layoutStacks()
+    end)
+    restoreContainerPosition(toastContainer)
+    toastContainer:Hide()
+    
+    ticker.frame = CreateFrame("Frame", "LootCollectorTickerToast", UIParent)
+    ticker.frame:SetFrameStrata("MEDIUM")
+    ticker.frame:SetSize(TOASTWIDTH, TICKERHEIGHT)
+    ticker.frame:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    ticker.frame:SetBackdropColor(0, 0, 0, 0.75)
+    do
+        local on = L.db and L.db.profile and L.db.profile.toasts and L.db.profile.toasts.whiteFrame
+        if ticker.frame.SetBackdropBorderColor then
+            ticker.frame:SetBackdropBorderColor(1, 1, 1, on and 1 or 0.15)
+        end
+    end
+    ticker.close = CreateFrame("Button", nil, ticker.frame, "UIPanelCloseButton")
+    ticker.close:SetPoint("TOPRIGHT", 2, 2)
+    ticker.close:SetScale(0.7)
+    ticker.close:SetScript("OnClick", function()
+        for i = #ticker.messages, 1, -1 do
+            table.remove(ticker.messages, i)
+        end
+        ticker.sessionLines = {}
+        ticker.sessionBuilt = false
+        ticker.active = false
+        if ticker.fadeL then ticker.fadeL:Hide() end
+        if ticker.fadeR then ticker.fadeR:Hide() end
+        ticker.frame:Hide()
+        if not anyShown() then
+            toastContainer:Hide()
+        end
+    end)
+    ticker.scrollContainer = CreateFrame("ScrollFrame", nil, ticker.frame)
+    ticker.scrollContainer:SetPoint("TOPLEFT", 8, -4)
+    ticker.scrollContainer:SetPoint("BOTTOMRIGHT", ticker.close, "BOTTOMLEFT", -4, 4)
+    ticker.child = CreateFrame("Frame", nil, ticker.scrollContainer)
+    ticker.child:SetWidth(1)
+    ticker.child:SetHeight(TICKERHEIGHT - 8)
+    ticker.scrollContainer:SetScrollChild(ticker.child)
+    ticker.text = ticker.child:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+    do
+        local fnt, size = ticker.text:GetFont()
+        ticker.baseFontSize = size or 10
+        local flags = (Toast.tickerOutline and TICKERFONTFLAGS or "")
+        ticker.text:SetFont(fnt, ticker.baseFontSize + Toast.tickerFontDelta, flags)
+    end
+    ticker.text:SetJustifyH("LEFT")
+    ticker.text:SetJustifyV("MIDDLE")
+    ticker.text:SetWordWrap(false)
+    ticker.text:SetNonSpaceWrap(false)
+    ticker.text:SetTextColor(0.92, 0.92, 0.92)
+    ticker.text:SetShadowOffset(1, -1)
+    ticker.text:SetShadowColor(0, 0, 0, 0.8)
+    if TICKERFADEMASKS then
+        ticker.fadeL = ticker.scrollContainer:CreateTexture(nil, "OVERLAY")
+        ticker.fadeL:SetTexture("Interface\\Buttons\\WHITE8X8")
+        ticker.fadeL:SetPoint("TOPLEFT", ticker.scrollContainer, "TOPLEFT", 0, 0)
+        ticker.fadeL:SetPoint("BOTTOMLEFT", ticker.scrollContainer, "BOTTOMLEFT", 0, 0)
+        ticker.fadeL:SetWidth(TICKERFADESIZE)
+        ticker.fadeL:SetGradientAlpha("HORIZONTAL", 0, 0, 0, TICKERFADEALPHA, 0, 0, 0, 0)
+        ticker.fadeL:Hide()
+        ticker.fadeR = ticker.scrollContainer:CreateTexture(nil, "OVERLAY")
+        ticker.fadeR:SetTexture("Interface\\Buttons\\WHITE8X8")
+        ticker.fadeR:SetPoint("TOPRIGHT", ticker.scrollContainer, "TOPRIGHT", 0, 0)
+        ticker.fadeR:SetPoint("BOTTOMRIGHT", ticker.scrollContainer, "BOTTOMRIGHT", 0, 0)
+        ticker.fadeR:SetWidth(TICKERFADESIZE)
+        ticker.fadeR:SetGradientAlpha("HORIZONTAL", 0, 0, 0, 0, 0, 0, 0, TICKERFADEALPHA)
+        ticker.fadeR:Hide()
+    end
+    
+    ticker.frame:ClearAllPoints()
+    ticker.frame:SetPoint("TOP", toastContainer, "BOTTOM", 0, -TICKERGAP)
+    ticker.frame:SetScript("OnShow", function()
+        tickerEnsureChildSize()
+        if ticker.fadeL then ticker.fadeL:Show() end
+        if ticker.fadeR then ticker.fadeR:Show() end
+    end)
+    ticker.frame:Hide()
+    
+    dispatcher = CreateFrame("Frame")
+    dispatcher:SetScript("OnUpdate", function(_, elapsed)
+        elapsed = math.min(elapsed, 0.1) -- Anti-freeze cap: prevent animation jumps after lag/alt-tab
+        
+        if anonWindowEnds and GetTime() >= anonWindowEnds then
+            processAnonWindow()
+        end
+        
+        if ticker.active and not ticker.sessionBuilt and GetTime() >= ticker.coalesceUntil then
+            tickerBuildSessionLine()
+        end
+        
+        if ticker.active and ticker.sessionBuilt then
+            if not ticker.dtEMA then ticker.dtEMA = elapsed end
+            ticker.dtEMA = ticker.dtEMA * (1 - TICKERDTEMAALPHA) + elapsed * TICKERDTEMAALPHA
+            local dt = math.max(ticker.dtEMA, TICKERDTCLAMP)
+            ticker.easeT = math.min(ticker.easeT + dt, TICKEREASEIN)
+            local easeFactor = math.min(ticker.easeT / TICKEREASEIN, 1.0)
+            local baseSpeed = Toast.tickerSpeed or TICKERSPEED
+            local speed = baseSpeed * easeFactor
+            ticker.textX = ticker.textX - (speed * dt)
+            tickerReposition()
+            local tw = ticker.text:GetStringWidth() or 0
+            if ticker.textX + tw < 0 then
+                tickerAdvanceSession()
+            end
+        end
+        
+        checkQueueForSpam()
+        
+        local maxConcurrent = (overflowActive and MAXCONCURRENTTOASTSWITHTICKER or MAXCONCURRENTTOASTSNORMAL)
+        if visibleCount() < maxConcurrent and #queue > 0 then
+            table.sort(queue, function(a, b) return a.fireAt < b.fireAt end)
+            if queue[1] and queue[1].fireAt <= GetTime() then
+                local e = table.remove(queue, 1)
+                if e and e.data then
+                    renderToast(e.data, e.options)
+                end
+            end
+        end
+        
+        local nBacklog = normalBacklogSize()
+        if nBacklog >= MAXQUEUEBEFORETICKER then
+            overflowActive = true
+        elseif nBacklog <= (MAXQUEUEBEFORETICKER - 2) and not ticker.active and not ticker.sessionBuilt then
+            overflowActive = false
+        end
+    end)
 end
-
     
 local function resolveZoneName(rec)
 	local c = tonumber(rec.c) or 0

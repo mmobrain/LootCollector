@@ -171,15 +171,16 @@ end
 function Arrow:StartUpdates() 
     L._debug("Arrow", "StartUpdates() called.")
     if not Arrow_updateFrame then 
-        Arrow_updateFrame=CreateFrame("Frame")
-        Arrow_updateFrame:SetScript("OnUpdate",function(_,e) 
-            Arrow.elapsed=Arrow.elapsed+e; 
-            if Arrow.elapsed>=UPDATE_INTERVAL then 
-                Arrow.elapsed=0; 
-                Arrow:UpdateArrow()
-            end 
-        end)
-    end 
+        Arrow_updateFrame = CreateFrame("Frame")
+    end       
+    Arrow_updateFrame:SetScript("OnUpdate", function(_, e) 
+        e = math.min(e, 0.1)
+        Arrow.elapsed = Arrow.elapsed + e 
+        if Arrow.elapsed >= UPDATE_INTERVAL then 
+            Arrow.elapsed = 0
+            Arrow:UpdateArrow()
+        end 
+    end)
 end
 
 function Arrow:StopUpdates() 

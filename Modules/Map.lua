@@ -498,6 +498,7 @@ function Map:OnInitialize()
             
             if timeSinceLastUpdate > MAP_DEBOUNCE_INTERVAL then
                 Map:DrawWorldMapPins()
+                if Map.UpdateMinimap then Map:UpdateMinimap() end
                 L.DataHasChanged = false
                 timeSinceLastUpdate = 0
             end

@@ -1911,6 +1911,9 @@ function Core:HandleLocalLoot(discovery)
     L.db.char.looted = L.db.char.looted or {}
     L.db.char.looted[rec.g] = time()
     
+    local Map = L:GetModule("Map", true)
+    if Map then Map.cacheIsDirty = true end
+
     if not self:IsItemCached(itemID) then
         if self.QueueItemForCaching then
             self:QueueItemForCaching(itemID)

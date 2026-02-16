@@ -1,3 +1,7 @@
+## LootCollector 0.7.46 - Small Fix
+- **Minimap Visibility Fix:** Resolved a bug where discoveries would persist on the minimap after being looted, even with the "Hide Looted" filter active (internal cache handler will trigger UI refreshes as soon as local loot events occur).
+- **Synced Map Tickers:** Synchronized the refresh logic between the World Map and Minimap to ensure consistent data display across both UI elements.
+
 ## LootCollector 0.7.45 - Critical Fix
 
 - **Version Validation Fix:** Fixed a critical bug where optimized encoded messages were bypassing version validation.

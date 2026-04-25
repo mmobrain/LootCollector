@@ -2302,7 +2302,7 @@ function Core:HandleLocalLoot(discovery)
             L._debug("Core-Refine", "Local loot is a coordinate refinement. Updating existing record.")
             rec.xy.x = L:Round4((oldX + x) / 2)
             rec.xy.y = L:Round4((oldY + y) / 2)
-            ec.mk = self:MakeKeyV5(rec)
+            rec.mk = self:MakeKeyV5(rec)
         end
         
         if rec.src == nil and src_numeric ~= nil then

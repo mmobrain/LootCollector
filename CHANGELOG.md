@@ -1,3 +1,25 @@
+## LootCollector 0.7.47 - Network Consensus, Background Maintenance, Optimizations & Fixes
+#### **1. Consensus & Data Integrity**
+*   **Repaired Deletion Consensus:** Fully implemented the "Report as Gone" (ACK) threshold logic. Nodes now transition to **Fading** at 5 votes, **Stale** at 6 votes, and are **Permanently Deleted** at 7 votes.
+*   **Background Identifier Indexer:** Added a throttled background maintenance system (`ProcessIndexerBatch`) that generates missing Message IDs (`mid`) and Location Keys (`mk`) for legacy database records.
+*   **Atomic Local Discoveries:** Updated `Core:HandleLocalLoot` to generate unique identifiers (`mid`/`mk`) the instant a player finds an item, ensuring new nodes are network-ready immediately.
+
+#### **2. Performance & Architecture Improvements**
+*   **O(1) Hash Map Indexing:** Redesigned database lookups to utilize `_midIndex` and `_keyV5Index` hash maps, replacing inefficient O(N) loops with instant constant-time lookups.
+*   **Decoupled Map Rendering:** Separated the World Map pin logic from the Minimap logic. The Minimap now operates on its own independent cycle, preventing data changes on the World Map from causing performance hitches or "blinking" on the Minimap.
+*   **Dynamic Minimap Ticker:** Implemented an anonymous background ticker for the Minimap that intelligently toggles between an "Active" state (0.1s updates while moving) and an "Idle" state (0.5s updates while stationary), significantly reducing CPU overhead.
+*   **Comm Cache Pruning:** Added logic to the `Comm:OnUpdate` cycle to automatically prune the deduplication and ingress caches, preventing memory bloat during long play sessions.
+
+#### **3. Network & Synchronization**
+*   **Scheduled Deletion Reinforcement:** Implemented a persistent broadcast schedule (1h, 8h, 16h, 30h) for deletions to ensure consensus reaches players who were offline during the initial event.
+*   **Reactive Anti-Entropy (Tombstone Defense):** Clients now automatically fire a counter-ACK if they detect someone sharing a discovery that exists in their local `deletedCache` (Tombstone).
+*   **Protocol Security Gate:** Restricted reactive responses to clients running version `0.7.47` or higher and bumped `MIN_COMPATIBLE_VERSION` to ensure network-wide stability.
+
+#### **4. Bug Fixes & Maintenance**
+*   **Zone Transition Persistence:** Corrected the `ZONE_CHANGED_NEW_AREA` handler to force-refresh the Minimap, ensuring pins generate immediately when crossing zone boundaries.
+*   **Mystic Scroll Data Health:** Integrated a routine maintenance cycle to safely clean up and migrate legacy Mystic Scroll source metadata (`world_loot`, `npc_gossip`, etc.).
+*   **Identifier-Aware Data Sync:** Updated manual Import/Export strings to include and preserve `mid` and `mk` identifiers, maintaining network consensus even after a manual database migration.
+
 ## LootCollector 0.7.46 - Small Fix
 - **Minimap Visibility Fix:** Resolved a bug where discoveries would persist on the minimap after being looted, even with the "Hide Looted" filter active (internal cache handler will trigger UI refreshes as soon as local loot events occur).
 - **Synced Map Tickers:** Synchronized the refresh logic between the World Map and Minimap to ensure consistent data display across both UI elements.

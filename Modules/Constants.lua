@@ -1,11 +1,9 @@
-
-
 local L = LootCollector
 local Constants = L:NewModule("Constants")
 
 Constants.PROTO_V = 5
 
-Constants.MIN_COMPATIBLE_VERSION = "0.7.45"
+Constants.MIN_COMPATIBLE_VERSION = "0.7.47"
 
 Constants.OP = {
     DISC = "DISC",
@@ -27,17 +25,22 @@ Constants.STATUS = {
     STALE       = "STALE",
 }
 
-Constants.COORD_PRECISION     = 4       
-Constants.MAX_CHAT_BYTES      = 240     
-Constants.DEFLATE_LEVEL       = 9       
+Constants.COORD_PRECISION     = 4
+Constants.MAX_CHAT_BYTES      = 240
+Constants.DEFLATE_LEVEL       = 9
 
 Constants.REINFORCE_TAKEOVER_GRACE_SECONDS = 10800
-Constants.SEEN_TTL_SECONDS    = 1800
-Constants.COOLDOWN_TTL        = 300     
-Constants.CHAT_MIN_INTERVAL   = 3.50    
+Constants.SEEN_TTL_SECONDS    = 900
+Constants.COOLDOWN_TTL        = 300
+Constants.CHAT_MIN_INTERVAL   = 3.50
 
-Constants.ACK_HOLD_THRESHOLD  = 21      
-Constants.ACK_SENDER_TTL      = 900     
+Constants.ACK_HOLD_THRESHOLD  = 21
+Constants.ACK_SENDER_TTL      = 900
+
+Constants.DELETION_THRESHOLD_FADING = 5
+Constants.DELETION_THRESHOLD_STALE = 6
+Constants.DELETION_THRESHOLD_REMOVE = 7
+Constants.ACK_REINFORCE_OFFSETS = { 3600, 8 * 3600, 16 * 3600, 30 * 3600 }
 
 Constants.ADDON_PREFIX_DEFAULT = "BBLC25AM"
 Constants.CHANNEL_NAME_DEFAULT = "BBLC25C"

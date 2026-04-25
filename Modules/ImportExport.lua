@@ -170,6 +170,7 @@ local function longKeyRecordFromShort(d)
 		discoveryType = d.dt,
 		deletedBy = d.dby,
 		messageID = d.mid,
+		locationKey = d.mk,
 		announceCount = d.ac,
 		nextDueTs = d.nd,
 		lastAnnouncedTs = d.at,
@@ -363,7 +364,7 @@ function ImportExport:ApplyImport(parsed, mode, withOverlays, skipBlacklist, ski
                 dt = d.discoveryType or 0,
                 dby = d.deletedBy,
                 mid = d.messageID,
-                
+                mk = d.locationKey,
                 fp_votes = d.fp_votes,
                 ack_votes = d.ack_votes, 
                 
@@ -405,6 +406,8 @@ function ImportExport:ApplyImport(parsed, mode, withOverlays, skipBlacklist, ski
                 fp = d.foundBy_player,
                 o = d.originator,
                 dt = d.discoveryType or 0,
+				mid = d.messageID,
+                mk = d.locationKey,
                 vendorType = d.vendorType,
                 vendorName = d.vendorName,
                 vendorItems = d.vendorItems,
@@ -749,31 +752,31 @@ local function abbreviateZoneIfNeeded(itemName, zoneName, d)
 	local zname = tostring(zoneName) or ""
 
 	if string.len(iname) + string.len(zname) > 38 then
-        L._debug("AbbrevCheck", string.format("Line too long (%d > 38). Checking for abbreviation.", string.len(iname) + string.len(zname)))
-        L._debug("AbbrevCheck", string.format(" -> Item: '%s', Zone: '%s'", iname, zname))
-        L._debug("AbbrevCheck", string.format(" -> Discovery data: c=%s, z=%s, iz=%s", tostring(d.c), tostring(d.z), tostring(d.iz)))
+        
+        
+        
 		if ZoneList then
             
             if (d.iz or 0) > 0 and ZoneList.IZ_TO_ABBREVIATIONS then
                 local lookupID = (d.z == 0 and d.iz) or d.z
-                L._debug("AbbrevCheck", " -> Is instance (iz > 0). Checking IZ_TO_ABBREVIATIONS with key: " .. tostring(lookupID))
+                
                 if ZoneList.IZ_TO_ABBREVIATIONS[lookupID] then
                     local abbrev = ZoneList.IZ_TO_ABBREVIATIONS[lookupID]
-                    L._debug("AbbrevCheck", " -> SUCCESS: Found instance abbreviation: '" .. abbrev .. "'")
+                    
                     return abbrev
                 else
-                    L._debug("AbbrevCheck", " -> FAILED: No instance abbreviation found for ID " .. tostring(lookupID))
+                    
                 end
             end
             
 			if ZoneList.ZONEABBREVIATIONS then
-                L._debug("AbbrevCheck", " -> Checking ZONEABBREVIATIONS with key (zname): '" .. zname .. "'")
+                
 				if ZoneList.ZONEABBREVIATIONS[zname] then
                     local abbrev = ZoneList.ZONEABBREVIATIONS[zname]
-					L._debug("AbbrevCheck", " -> SUCCESS: Found world zone abbreviation: '" .. abbrev .. "'")
+					
                     return abbrev
 				else
-                    L._debug("AbbrevCheck", " -> FAILED: No world zone abbreviation found for that name.")
+                    
                 end
 			end
 		end
@@ -970,7 +973,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 			GameTooltip:SetOwner(r.btnDel, "ANCHOR_TOP")
 			GameTooltip:SetText("Delete")
 			GameTooltip:Show()
-			GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
+			GameTooltip:SetFrameStrata("TOOLTIP") 
 		end)
 		r.btnDel:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		
@@ -982,7 +985,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 			GameTooltip:SetOwner(r.btnNav, "ANCHOR_TOP")
 			GameTooltip:SetText("Navigate")
 			GameTooltip:Show()
-			GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
+			GameTooltip:SetFrameStrata("TOOLTIP") 
 		end)
 		r.btnNav:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		
@@ -994,7 +997,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 			GameTooltip:SetOwner(r.btnNav, "ANCHOR_TOP")
 			GameTooltip:SetText("Navigate")
 			GameTooltip:Show()
-			GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
+			GameTooltip:SetFrameStrata("TOOLTIP") 
 		end)
 		r.btnUnl:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		
@@ -1006,7 +1009,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 			GameTooltip:SetOwner(r.btnLoot, "ANCHOR_TOP")
 			GameTooltip:SetText("Mark as Looted")
 			GameTooltip:Show()
-			GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
+			GameTooltip:SetFrameStrata("TOOLTIP") 
 		end)
 		r.btnLoot:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		
@@ -1158,7 +1161,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 						GameTooltip:SetOwner(s, "ANCHOR_CURSOR")
 						GameTooltip:SetHyperlink(itemLink)
 						GameTooltip:Show()
-						GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
+						GameTooltip:SetFrameStrata("TOOLTIP") 
 					end
 				end)
 				
@@ -1192,7 +1195,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 						GameTooltip:SetOwner(s, "ANCHOR_CURSOR")
 						GameTooltip:SetHyperlink(itemLink)
 						GameTooltip:Show()
-						GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
+						GameTooltip:SetFrameStrata("TOOLTIP") 
 					end
 				end)
 				
@@ -1207,7 +1210,7 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
 						GameTooltip:SetOwner(s, "ANCHOR_CURSOR")
 						GameTooltip:AddLine(zNameFull, 1, 1, 1, true)
 						GameTooltip:Show()
-						GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
+						GameTooltip:SetFrameStrata("TOOLTIP") 
 					end)
 					r.zoneBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 				else
@@ -1353,7 +1356,7 @@ local function BuildBlackmarketPage(parent)
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                 GameTooltip:SetHyperlink(self.itemLink)
                 GameTooltip:Show()
-                GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
+                GameTooltip:SetFrameStrata("TOOLTIP") 
             end
         end)
         line:SetScript("OnLeave", GameTooltip_Hide)
@@ -1588,6 +1591,7 @@ function ImportExport:BuildExportEntryV5(rec)
 		s = tonumber(rec.s) or 0,
 		av = tostring(rec.av or L.Version or "0.0.0"),
 		mid = tostring(rec.mid or ""),
+		mk = tostring(rec.mk or ""),
 		l = rec.itemLink,
 		n = rec.itemName,
 	}
@@ -1650,6 +1654,7 @@ function ImportExport:ToNormalizedDiscoveryV5(tbl)
 		lastSeen = tonumber(tbl.t) or time(),
 		av = tostring(tbl.av or L.Version or "0.0.0"),
 		mid = tostring(tbl.mid or ""),
+		mk = tostring(tbl.mk or ""),
 		seq = tonumber(tbl.seq) or 0,
 	}
 end

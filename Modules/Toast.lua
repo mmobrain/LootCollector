@@ -510,7 +510,7 @@ function Toast:acquireToast()
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetHyperlink(self.discoveryData.il)
             GameTooltip:Show()
-            GameTooltip:SetFrameStrata("TOOLTIP") -- Xurkon: Force above other addon frames
+            GameTooltip:SetFrameStrata("TOOLTIP") 
         end
     end)
     f.text:SetScript("OnLeave", function()
@@ -999,7 +999,7 @@ function Toast:OnInitialize()
     
     dispatcher = CreateFrame("Frame")
     dispatcher:SetScript("OnUpdate", function(_, elapsed)
-        elapsed = math.min(elapsed, 0.1) -- Anti-freeze cap: prevent animation jumps after lag/alt-tab
+        elapsed = math.min(elapsed, 0.1) 
         
         if anonWindowEnds and GetTime() >= anonWindowEnds then
             processAnonWindow()

@@ -149,7 +149,7 @@ function ProximityList:CreateFrame()
                 end
                 
                 tooltip:Show()
-                tooltip:SetFrameStrata("TOOLTIP") -- Must be called AFTER Show() to properly force above other frames
+                tooltip:SetFrameStrata("TOOLTIP") 
             end
 
             

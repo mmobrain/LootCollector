@@ -1,5 +1,3 @@
-
-
 local L = LootCollector
 local Reinforce = L:NewModule("Reinforce", "AceEvent-3.0")
 
@@ -10,7 +8,11 @@ local CONFIRMATION_THRESHOLD = 7
 local GRACE_SEC, MIN_SPACING, JITTER_MIN, JITTER_MAX = 1200, 3.40, 5, 30
 local now = time
 
-Reinforce.queue, Reinforce.lastSendAt, Reinforce.scanAccum, Reinforce.scanPeriod = {}, 0, 0, 60
+Reinforce.queue = {}
+Reinforce.ackQueue = {}
+Reinforce.lastSendAt = 0
+Reinforce.scanAccum = 0
+Reinforce.scanPeriod = 60
 Reinforce.scanNextKey = nil
 Reinforce.scanInProgress = false
 local SCAN_CHUNK_SIZE = 300       
@@ -22,7 +24,6 @@ local function randint(a,b) return math.random(a,b) end
 
 local function recomputeNextDue(d)
     if not d then return end
-    
     local lastAnnounced = tonumber(d.at) or tonumber(d.t0) or tonumber(d.ls) or now()
     local count = tonumber(d.ac) or 1
     if count >= MAX_STEPS then
@@ -43,20 +44,17 @@ local function ensurePerDiscoveryFields(d)
         d.at = d.at or d.t0 or d.ls or now()
     end
     if not d.nd then
-        
         recomputeNextDue(d) 
     end
 end
 
 function Reinforce:HandleConfirmation(norm)
     if not norm or not norm.xy then return end
-    
     local db = L:GetDiscoveriesDB() or {}
     local guid = buildGuid3(norm.c, norm.z, norm.i, norm.xy.x, norm.xy.y)
     local d = db[guid]
 
     if not d then return end
-
     local t = tonumber(norm.t0) or now()
 
     d.at = now() 
@@ -74,7 +72,6 @@ function Reinforce:HandleConfirmation(norm)
             d.s = "CONFIRMED"
             d.st = t 
         end
-    
     elseif d.s == "FADING" or d.s == "STALE" then
         d.s = "CONFIRMED" 
         d.st = t
@@ -98,21 +95,16 @@ end
 
 local function shouldEnqueue(d)
     ensurePerDiscoveryFields(d)
-    
-    
     local Constants = L:GetModule("Constants", true)
     if Constants and Constants.ALLOWED_DISCOVERY_TYPES and d.dt then
         if Constants.ALLOWED_DISCOVERY_TYPES[d.dt] == false then
-            
             return false
         end
     end
-    
     if (tonumber(d.ac) or 0) >= MAX_STEPS then return false end
     if not d.nd or d.nd <= 0 then return false end
 
     local tnow = now()
-
     if d.pendingAnnounce and (tnow - (tonumber(d.pendingAnnounce) or 0)) < 120 then
         return false
     end
@@ -126,9 +118,7 @@ local function shouldEnqueue(d)
         end
     end
 
-    
     local gracePeriod = (Constants and Constants.REINFORCE_TAKEOVER_GRACE_SECONDS) or GRACE_SEC
-
     if canSend then
         return tnow >= d.nd
     else
@@ -141,8 +131,6 @@ local function discoveryPayloadFrom(d)
     local s_flag = (fpName == "An Unnamed Collector") and 1 or 0
     if s_flag == 1 then fpName = "" end 
     
-    L._debug("Reinforce-Payload", string.format("Building payload for broadcast. Discovery has src: %s, dt: %s", tostring(d.src), tostring(d.dt)))
-
     local payload = {
       g   = d.g,
       il  = d.il,
@@ -156,16 +144,12 @@ local function discoveryPayloadFrom(d)
       q   = d.q or 1,
       fp  = fpName,
       s   = s_flag,
-      
     }
 
-    
     local Constants = L:GetModule("Constants", true)
     if Constants and payload.dt and tonumber(payload.dt) == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
         payload.src = d.src
-        L._debug("Reinforce-Payload", " -> It's a Mystic Scroll. Added 'src' field: " .. tostring(payload.src))
     end
-
     return payload
 end
 
@@ -176,19 +160,37 @@ local function enqueue(d)
     d.pendingAnnounce = fireAt
 end
 
+local function processAckScan()
+    local deletedCache = L.db and L.db.global and L.db.global.deletedCache
+    if not deletedCache then return end
+    local Constants = L:GetModule("Constants", true)
+    local offsets = Constants and Constants.ACK_REINFORCE_OFFSETS
+    if not offsets then return end
+    local tnow = now()
+
+    for k, t in pairs(deletedCache) do
+        if t.isPrimary and t.ac and t.ac < #offsets and t.nd and tnow >= t.nd then
+            if not t.pendingAnnounce or (tnow - t.pendingAnnounce) >= 120 then
+                local jitter = math.random(5, 30)
+                Reinforce.ackQueue[k] = { fireAt = tnow + jitter, key = k }
+                t.pendingAnnounce = tnow + jitter
+            end
+        end
+    end
+end
+
 local function drainQueueOnce()
     local p = L and L.db and L.db.profile
     if not (p and p.sharing and p.sharing.enabled) then
         if next(Reinforce.queue) then wipe(Reinforce.queue) end
+        if next(Reinforce.ackQueue) then wipe(Reinforce.ackQueue) end
         return 
     end
 
     local Comm = L:GetModule("Comm", true)
-    if not Comm or not Comm.BroadcastReinforcement then return end
+    if not Comm then return end
     local tnow = now()
     if (tnow - Reinforce.lastSendAt) < MIN_SPACING then return end
-    
-    if not next(Reinforce.queue) then return end
     
     local bestGuid, bestFireAt = nil, nil
     for guid, q_entry in pairs(Reinforce.queue) do
@@ -197,28 +199,68 @@ local function drainQueueOnce()
             bestGuid = guid
         end
     end
-    
-    if not bestGuid or bestFireAt > tnow then return end
-    
-    local q = Reinforce.queue[bestGuid]
-    Reinforce.queue[bestGuid] = nil
-    
-    
-    local db = L:GetDiscoveriesDB() or {}
-    local d = db[q.guid]
-    if not d or (tonumber(d.ac) or 0) >= MAX_STEPS then return end
-    
-    L._debug("Reinforce", "Broadcasting reinforcement for GUID: " .. tostring(d.g)) 
-    
-    local payload = discoveryPayloadFrom(d)
-    Comm:BroadcastReinforcement(payload)
-    
-    d.at = now() 
-    d.ac = math.min(MAX_STEPS, (tonumber(d.ac) or 1) + 1)
-    recomputeNextDue(d)
-    
-    d.pendingAnnounce = nil
-    Reinforce.lastSendAt = tnow
+
+    local bestAckGuid, bestAckFireAt = nil, nil
+    for guid, q_entry in pairs(Reinforce.ackQueue) do
+        if not bestAckFireAt or q_entry.fireAt < bestAckFireAt then
+            bestAckFireAt = q_entry.fireAt
+            bestAckGuid = guid
+        end
+    end
+
+    local sendDisc = false
+    local sendAck = false
+
+    if bestGuid and bestFireAt <= tnow then
+        if bestAckGuid and bestAckFireAt <= tnow then
+            if bestFireAt < bestAckFireAt then sendDisc = true else sendAck = true end
+        else
+            sendDisc = true
+        end
+    elseif bestAckGuid and bestAckFireAt <= tnow then
+        sendAck = true
+    end
+
+    if sendAck then
+        local q = Reinforce.ackQueue[bestAckGuid]
+        Reinforce.ackQueue[bestAckGuid] = nil
+        local t = L.db.global.deletedCache[q.key]
+        local Constants = L:GetModule("Constants", true)
+        local offsets = Constants and Constants.ACK_REINFORCE_OFFSETS
+
+        if t and offsets and (tonumber(t.ac) or 0) < #offsets then
+            if Comm.BroadcastAckFor and t.payload then
+                local ackMid = q.key
+                if ackMid:sub(1, 2) == "k:" then ackMid = t.payload.mid or ackMid end
+                Comm:BroadcastAckFor(t.payload, ackMid, "DET")
+            end
+            t.ac = (tonumber(t.ac) or 0) + 1
+            t.nd = tnow + offsets[t.ac]
+            t.pendingAnnounce = nil
+        end
+        Reinforce.lastSendAt = tnow
+        return
+    elseif sendDisc then
+        local q = Reinforce.queue[bestGuid]
+        Reinforce.queue[bestGuid] = nil
+        
+        local db = L:GetDiscoveriesDB() or {}
+        local d = db[q.guid]
+        if not d or (tonumber(d.ac) or 0) >= MAX_STEPS then return end
+        
+        if Comm.BroadcastReinforcement then
+            local payload = discoveryPayloadFrom(d)
+            Comm:BroadcastReinforcement(payload)
+        end
+        
+        d.at = tnow 
+        d.ac = math.min(MAX_STEPS, (tonumber(d.ac) or 1) + 1)
+        recomputeNextDue(d)
+        
+        d.pendingAnnounce = nil
+        Reinforce.lastSendAt = tnow
+        return
+    end
 end
 
 local function startScan()
@@ -231,14 +273,12 @@ Reinforce.startScan = startScan
 
 local function processScanChunk()
     if not Reinforce.scanInProgress then return end
-    
-    
     if InCombatLockdown() then return end
-    
     
     local db = L:GetDiscoveriesDB() or {}
     if not next(db) then
         Reinforce.scanInProgress = false
+        processAckScan()
         return
     end
 
@@ -251,6 +291,7 @@ local function processScanChunk()
         if not key then
             Reinforce.scanInProgress = false
             Reinforce.scanNextKey = nil
+            processAckScan() 
             return
         end
 
@@ -274,7 +315,6 @@ local tickerFrame = nil
 local function ensureTicker()
  if tickerFrame then return end
     tickerFrame = CreateFrame("Frame", "LootCollectorReinforceTicker")
-    
 end
 
 function Reinforce:OnInitialize()
@@ -288,11 +328,10 @@ function Reinforce:OnEnable()
     
     if tickerFrame then
         tickerFrame:SetScript("OnUpdate", function(_, e)
-            
             local p = L and L.db and L.db.profile
             if not (p and p.sharing and p.sharing.enabled) then
-                
                 if next(Reinforce.queue) then wipe(Reinforce.queue) end
+                if next(Reinforce.ackQueue) then wipe(Reinforce.ackQueue) end
                 Reinforce.scanInProgress = false
                 return
             end
@@ -317,7 +356,6 @@ function Reinforce:OnEnable()
 end
 
 function Reinforce:OnDisable()
-    
     if tickerFrame then
         tickerFrame:SetScript("OnUpdate", nil)
     end

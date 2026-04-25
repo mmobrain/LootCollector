@@ -7,8 +7,8 @@ It provides both 32-bit and 64-bit hashing functions (64-bit arithmetic via two 
 
 
   ------------------------------------------------------------------------------
-  Version: 1.0.0
-  Date: October 12, 2025
+  Version: 1.0.1
+  Date: March 27, 2026
   Author: Skulltrail
   Algorithm Credit: Based on the original XXHash algorithm by Yann Collet.
   ------------------------------------------------------------------------------
@@ -24,7 +24,8 @@ API:
 
 ]]
 
-local bit    = bit
+local bit = _G.bit
+assert(bit, "XXH_Lua_Lib: 'bit' library is required but not found.")
 local band   = bit.band
 local bor    = bit.bor
 local bxor   = bit.bxor
@@ -146,6 +147,7 @@ local function XXH32(str, seed)
         h32 = band(h32 + imul32(sbyte(str, index), P32_5), U32_MASK)
         h32 = imul32(rol32(h32, 11), P32_1)
     end
+    
 
     h32 = bxor(h32, rshift(h32, 15))
     h32 = imul32(h32, P32_2)
@@ -232,23 +234,6 @@ local function rol64(hi, lo, bits)
     return new_hi, new_lo
 end
 
-local function rshift64(hi, lo, bits)
-    bits = band(bits or 0, 63)
-    hi   = band(hi, U32_MASK)
-    lo   = band(lo, U32_MASK)
-    if bits == 0 then
-        return hi, lo
-    elseif bits < 32 then
-        local new_lo = bor(rshift(lo, bits), lshift(hi, 32 - bits))
-        local new_hi = rshift(hi, bits)
-        return band(new_hi, U32_MASK), band(new_lo, U32_MASK)
-    elseif bits == 32 then
-        return 0, hi
-    else
-        return 0, rshift(hi, bits - 32)
-    end
-end
-
 -- Specialized right shifts used in avalanche (fewer branches)
 local function rshift64_33(hi, lo)
     -- Shift right 64 by 33: new_hi = 0, new_lo = hi >> 1
@@ -284,60 +269,79 @@ end
 local function XXH64_small(str, seed)
     -- Specialized fast path for len <= 16 (avoids extra branching/loops)
     local len = #str
+    local remaining = len
     local h_hi, h_lo = 0, band(seed or 0, U32_MASK)
+
     -- h = seed + P5
     h_hi, h_lo = add64(h_hi, h_lo, P64_5_H, P64_5_L)
-    -- h += len
+
+    -- h += total length
     h_hi, h_lo = add64(h_hi, h_lo, 0, len)
 
     local index = 1
-    if len >= 8 then
+
+    if remaining >= 8 then
         local ll = read_u32_le(str, index)
         local lh = read_u32_le(str, index + 4)
+
         -- h ^= (lane * P2).rotl(31) * P1
         local t_h, t_l = mul64(lh, ll, P64_2_H, P64_2_L)
         t_h, t_l = rol64(t_h, t_l, 31)
         t_h, t_l = mul64(t_h, t_l, P64_1_H, P64_1_L)
-        h_hi = bxor(h_hi, t_h); h_lo = bxor(h_lo, t_l)
+        h_hi = bxor(h_hi, t_h)
+        h_lo = bxor(h_lo, t_l)
+
         h_hi, h_lo = rol64(h_hi, h_lo, 27)
         h_hi, h_lo = mul64(h_hi, h_lo, P64_1_H, P64_1_L)
         h_hi, h_lo = add64(h_hi, h_lo, P64_4_H, P64_4_L)
+
         index = index + 8
-        len = len - 8
+        remaining = remaining - 8
     end
 
-    if len >= 4 then
+    if remaining >= 4 then
         local v32 = read_u32_le(str, index)
         local m_h, m_l = mul_u32_const64(v32, P64_1_H, P64_1_L)
-        h_hi = bxor(h_hi, m_h); h_lo = bxor(h_lo, m_l)
+
+        h_hi = bxor(h_hi, m_h)
+        h_lo = bxor(h_lo, m_l)
+
         h_hi, h_lo = rol64(h_hi, h_lo, 23)
         h_hi, h_lo = mul64(h_hi, h_lo, P64_2_H, P64_2_L)
         h_hi, h_lo = add64(h_hi, h_lo, P64_3_H, P64_3_L)
+
         index = index + 4
-        len = len - 4
+        remaining = remaining - 4
     end
 
-    while len > 0 do
+    while remaining > 0 do
         local b = sbyte(str, index)
         local m_h, m_l = mul_u32_const64(b, P64_5_H, P64_5_L)
-        h_hi = bxor(h_hi, m_h); h_lo = bxor(h_lo, m_l)
+
+        h_hi = bxor(h_hi, m_h)
+        h_lo = bxor(h_lo, m_l)
+
         h_hi, h_lo = rol64(h_hi, h_lo, 11)
         h_hi, h_lo = mul64(h_hi, h_lo, P64_1_H, P64_1_L)
+
         index = index + 1
-        len = len - 1
+        remaining = remaining - 1
     end
 
     -- Avalanche with specialized shifts
     local s1_h, s1_l = rshift64_33(h_hi, h_lo)
-    h_hi = bxor(h_hi, s1_h); h_lo = bxor(h_lo, s1_l)
+    h_hi = bxor(h_hi, s1_h)
+    h_lo = bxor(h_lo, s1_l)
     h_hi, h_lo = mul64(h_hi, h_lo, P64_2_H, P64_2_L)
 
     local s2_h, s2_l = rshift64_29(h_hi, h_lo)
-    h_hi = bxor(h_hi, s2_h); h_lo = bxor(h_lo, s2_l)
+    h_hi = bxor(h_hi, s2_h)
+    h_lo = bxor(h_lo, s2_l)
     h_hi, h_lo = mul64(h_hi, h_lo, P64_3_H, P64_3_L)
 
     local s3_h, s3_l = rshift64_32(h_hi, h_lo)
-    h_hi = bxor(h_hi, s3_h); h_lo = bxor(h_lo, s3_l)
+    h_hi = bxor(h_hi, s3_h)
+    h_lo = bxor(h_lo, s3_l)
 
     return string.format("%08X%08X", h_hi, h_lo)
 end
@@ -420,8 +424,7 @@ local function XXH64(str, seed)
     h_hi, h_lo = add64(h_hi, h_lo, 0, len)
 
     -- 8-byte lanes
-    local limit8 = len - (index - 1) - 7
-    while limit8 >= 0 do
+    while index + 7 <= len do
         local ll = read_u32_le(str, index)
         local lh = read_u32_le(str, index + 4)
         local t_h, t_l = mul64(lh, ll, P64_2_H, P64_2_L)
@@ -432,11 +435,10 @@ local function XXH64(str, seed)
         h_hi, h_lo = mul64(h_hi, h_lo, P64_1_H, P64_1_L)
         h_hi, h_lo = add64(h_hi, h_lo, P64_4_H, P64_4_L)
         index = index + 8
-        limit8 = limit8 - 8
     end
 
-    -- 4-byte tail: h ^= (read32 * P1); h = rotl(h, 23) * P2 + P3
-    if index <= #str - 3 then
+    -- 4-byte tail    
+    if index + 3 <= len then
         local v32 = read_u32_le(str, index)
         local m_h, m_l = mul_u32_const64(v32, P64_1_H, P64_1_L)
         h_hi = bxor(h_hi, m_h); h_lo = bxor(h_lo, m_l)
@@ -446,8 +448,8 @@ local function XXH64(str, seed)
         index = index + 4
     end
 
-    -- 1-byte tails: for each b, h ^= (b * P5); h = rotl(h, 11) * P1
-    while index <= #str do
+    -- 1-byte tails    
+    while index <= len do
         local b = sbyte(str, index)
         local m_h, m_l = mul_u32_const64(b, P64_5_H, P64_5_L)
         h_hi = bxor(h_hi, m_h); h_lo = bxor(h_lo, m_l)
@@ -527,6 +529,18 @@ local function RunSelfTests(opts)
             { str = "\0t\0e\0s\0t\0", seed = 0,          exp32 = false,      exp64 = false,            label = "00 74 00 65 00 73 00 74 00 (info)" },
             { str = "",               seed = 0x9E3779B1, exp32 = 0x36B78AE7, exp64 = "AC75FDA2929B17EF", label = "empty, seed" },
             { str = "Skulltrail",     seed = 2025,       exp32 = 0x4A31242C, exp64 = "A56F88A6999B63F5", label = "string+seed" },
+		{ str = "xx-17-len-test-xx",               seed = 0,          exp32 = 0X62CB6C32, exp64 = "9C7861CF9C70F3AB", label = "17-len-test_seed=0" },
+		{ str = "xxxxx-23-len-test-xxxxx",               seed = 0,          exp32 = 0X0950CB12, exp64 = "A4E79EC4C875DDA4", label = "23-len-test_seed=0" },
+		{ str = "xxxxxxxxx-31-len-test-xxxxxxxxx",               seed = 0,          exp32 = 0XD5A6917E, exp64 = "7C61B7B15B8CE41B", label = "31-len-test_seed=0" },
+		{ str = "xxxxxxxxx-32-len-test-xxxxxxxxxx",               seed = 0,          exp32 = 0X1F5E07F2, exp64 = "5C1081586F7C28FA", label = "32-len-test_seed=0" },
+		{ str = "xxxxxxxxxxxxx-39-len-test-xxxxxxxxxxxxx",               seed = 0,          exp32 = 0X53476380, exp64 = "DE12431717F4947F", label = "39-len-test_seed=0" },
+		{ str = "xxxxxxxxxxxxx-40-len-test-xxxxxxxxxxxxxx",               seed = 0,          exp32 = 0X420DDEEC, exp64 = "3B920B0AE32B3C62", label = "40-len-test_seed=0" },
+		{ str = "xx-17-len-test-xx",               seed = 2026,          exp32 = 0xC94459BB, exp64 = "4404465C6743F286", label = "17-len-test_seed=2026" },
+		{ str = "xxxxx-23-len-test-xxxxx",               seed = 2026,          exp32 = 0x1944510C, exp64 = "3468AD3BBC90399B", label = "23-len-test_seed=2026" },
+		{ str = "xxxxxxxxx-31-len-test-xxxxxxxxx",               seed = 2026,          exp32 = 0x95CBAAE4, exp64 = "8BE5DC9FB0399C3A", label = "31-len-test_seed=2026" },
+		{ str = "xxxxxxxxx-32-len-test-xxxxxxxxxx",               seed = 2026,          exp32 = 0x1641521E, exp64 = "5650FB06B8D19A0B", label = "32-len-test_seed=2026" },
+		{ str = "xxxxxxxxxxxxx-39-len-test-xxxxxxxxxxxxx",               seed = 2026,          exp32 = 0xD79B74E0, exp64 = "3575A4D08178C75F", label = "39-len-test_seed=2026" },
+		{ str = "xxxxxxxxxxxxx-40-len-test-xxxxxxxxxxxxxx",               seed = 2026,          exp32 = 0x7255C07D, exp64 = "462D4A980A9A3BC3", label = "40-len-test_seed=2026" },
         },
         ascii = {
             { str = "\\0",            seed = 0,          exp32 = 0x6257410B, exp64 = "5263B0A7F5A1FD64", label = "ASCII \\0 (5C 30)" },

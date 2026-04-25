@@ -156,6 +156,7 @@ local dbDefaults = {
             rejectPartySync = false,
             rejectGuildSync = false,
             rejectWhisperSync = false,
+            ackOnChannel = true,
             blockList = {},
             whiteList = {},
         },      
@@ -163,8 +164,8 @@ local dbDefaults = {
         ignoreZones = {},
         decay = { fadeAfterDays  = 30, staleAfterDays = 90, },
 	    debugMode = false,
-	    mdebugMode = false,	  
-	    idebugMode = false,
+	    mdebugMode = false,
+	    idebugMode = false,        
         discoveries = {},
     },
     char = { looted = {}, hidden = {} },
@@ -1047,7 +1048,7 @@ function LootCollector:OnInitialize()
 
     self.channelReady = false
     self.name         = "LootCollector"
-    self.Version      = "alpha-0.7.46"
+    self.Version      = "beta-0.7.47"
 
     local Constants = self:GetModule("Constants", true)
     if Constants and Constants.GetDefaultChannel then

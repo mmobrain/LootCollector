@@ -1,5 +1,3 @@
-
-
 local L = LootCollector
 local Core = L:NewModule("Core")
 local ZoneList = L:GetModule("ZoneList", true)
@@ -38,6 +36,12 @@ local SCAN_BUDGET_MS   = 4
 local SCAN_MAX_PER_TICK = 300    
 local PAUSE_IN_COMBAT   = true
 local PAUSE_WHEN_MOVING = false
+
+local MID_GEN_CHUNK_SIZE = 2
+local INDEXER_TICK_RATE = 1
+
+Core._indexerNextKey = nil
+Core._indexerInProgress = false
 
 local function ScheduleAfter(seconds, func)
     if C_Timer and C_Timer.After then
@@ -93,7 +97,6 @@ local guidPrefixesToPurge = {
     ["3-482-"]  = true,
     ["3-505-"]  = true,
 	["1-363-"] = true,
-	
 }
 
 local CLASS_ABBREVIATIONS = {
@@ -186,6 +189,112 @@ end
 
 local function debugPrint(message) return end
 
+local function _lcGetConst(fnName, defaultValue)
+    local fn = rawget(_G, fnName)
+    if type(fn) == "function" then
+        local ok, value = pcall(fn)
+        if ok and value ~= nil then
+            return value
+        end
+    end
+    return defaultValue
+end
+
+local function _lcRoundN(v, n)
+    v = tonumber(v) or 0
+    local mul = 10 ^ (tonumber(n) or 0)
+    return math.floor(v * mul + 0.5) / mul
+end
+
+local function _lcFNV1a32(s)
+    local hash = 2166136261
+    for i = 1, #s do
+        hash = bit.bxor(hash, string.byte(s, i))
+        hash = (hash * 16777619) % 4294967296
+    end
+    return hash
+end
+
+local function _lcHex32(u)
+    local n = tonumber(u) or 0
+    local hi = math.floor(n / 65536)
+    local lo = n % 65536
+    return string.format("%04x%04x", hi, lo)
+end
+
+local function _lcIdentityString(tbl)
+    return table.concat({
+        tostring(tbl.v or 5),
+        tostring(tbl.op or "DISC"),
+        tostring(tbl.c or 0),
+        tostring(tbl.z or 0),
+        tostring(tbl.iz or 0),
+        tostring(tbl.i or 0),
+        string.format("%.6f", tonumber(tbl.x) or 0),
+        string.format("%.6f", tonumber(tbl.y) or 0),
+        tostring(tbl.t or 0),
+    }, "|")
+end
+
+function L:ExtractItemID(linkOrId)
+    if type(linkOrId) == "number" then
+        return tonumber(linkOrId)
+    end
+
+    if type(linkOrId) == "string" then
+        local id = linkOrId:match("item:(%d+)")
+        if id then
+            return tonumber(id)
+        end
+    end
+
+    return nil
+end
+
+function L:GetDiscoveryMidCoordPrecision()
+    return tonumber(_lcGetConst("ConstantsGetCoordPrecision", 4)) or 4
+end
+
+function L:BuildDiscoveryMidPayload(discoveryLike, op)
+    local coordPrec = self:GetDiscoveryMidCoordPrecision()
+
+    local rawX = discoveryLike and (
+        (discoveryLike.xy and discoveryLike.xy.x)
+        or discoveryLike.x
+    ) or 0
+
+    local rawY = discoveryLike and (
+        (discoveryLike.xy and discoveryLike.xy.y)
+        or discoveryLike.y
+    ) or 0
+
+    local rawItem = discoveryLike and (
+        discoveryLike.i
+        or discoveryLike.il
+    ) or 0
+
+    return {
+        v  = 5,
+        op = op or "DISC",
+        c  = tonumber(discoveryLike and discoveryLike.c) or 0,
+        z  = tonumber(discoveryLike and discoveryLike.z) or 0,
+        iz = tonumber(discoveryLike and discoveryLike.iz) or 0,
+        i  = tonumber(self:ExtractItemID(rawItem)) or 0,
+        x  = _lcRoundN(rawX, coordPrec),
+        y  = _lcRoundN(rawY, coordPrec),
+        t  = tonumber(discoveryLike and (discoveryLike.t0 or discoveryLike.t)) or 0,
+    }
+end
+
+function L:ComputeDiscoveryMid(discoveryLike, op)
+    local payload = self:BuildDiscoveryMidPayload(discoveryLike, op or "DISC")
+    return _lcHex32(_lcFNV1a32(_lcIdentityString(payload)))
+end
+
+function L:ComputeCanonicalDiscoveryMid(discoveryLike)
+    return self:ComputeDiscoveryMid(discoveryLike, "DISC")
+end
+
 local function hasHighPrecisionCoords(x, y)
     local sx, sy = tostring(x or 0), tostring(y or 0)
     local decX = sx:match("%.(%d+)") or ""
@@ -218,7 +327,6 @@ local function FindWorldforgedInZone(continent, zoneID, itemID, db)
         end
         return nil
     end
-
     
     for _, d in pairs(db) do
         if d and d.c == continent and d.z == zoneID and d.i == itemID then
@@ -233,7 +341,6 @@ end
 
 local function FindNearbyDiscovery(continent, zoneID, itemID, x, y, db)
     if not db then return nil end
-    
     
     if Core.ZoneIndex and Core.ZoneIndex[zoneID] then
         local zoneGUIDs = Core.ZoneIndex[zoneID]
@@ -252,7 +359,6 @@ local function FindNearbyDiscovery(continent, zoneID, itemID, x, y, db)
         return nil
     end
 
-    
     for _, d in pairs(db) do
         if d and d.c == continent and d.z == zoneID and d.i == itemID then
             if d.xy then
@@ -267,15 +373,9 @@ local function FindNearbyDiscovery(continent, zoneID, itemID, x, y, db)
     return nil
 end
 
-local function extractItemID(itemLink)
-    if type(itemLink) ~= "string" then return nil end
-    local id = itemLink:match("item:(%d+)")
-    return id and tonumber(id) or nil
-end
-
 function Core:EnsureVerificationFields(d)
     if not d then return end
-    if not d.i then d.i = extractItemID(d.il) end
+    if not d.i then d.i = L:ExtractItemID(d.il) end
     d.s = d.s or Constants.STATUS.UNCONFIRMED
     d.st = tonumber(d.st) or tonumber(d.ls) or tonumber(d.t0) or time()
     d.ls = tonumber(d.ls) or tonumber(d.t0) or time()
@@ -346,17 +446,28 @@ function Core:ShouldCacheItem(itemID)
 end
 
 function Core:EnsureDatabaseStructure()
-    if not (L.db and L.db.profile and L.db.global and L.db.char) then return end
+    if not (L.db and L.db.profile and L.db.global and L.db.char) then
+        return
+    end
 
     L.db.global.cacheQueue = L.db.global.cacheQueue or {}
     L.db.global.manualCleanupRunCount = L.db.global.manualCleanupRunCount or 0
     L.db.global.autoCleanupPhase = L.db.global.autoCleanupPhase or 0
-    if L.db.global.purgeEmbossedState == nil then L.db.global.purgeEmbossedState = 0 end
+
+    if L.db.global.purgeEmbossedState == nil then
+        L.db.global.purgeEmbossedState = 0
+    end
+
+    if L.db.global.legacyMysticScrollSrcFixV1 == nil then
+        L.db.global.legacyMysticScrollSrcFixV1 = false
+    end
 
     L.db.char.looted = L.db.char.looted or {}
     L.db.char.hidden = L.db.char.hidden or {}
 
-    if L.db.profile.autoCache == nil then L.db.profile.autoCache = true end
+    if L.db.profile.autoCache == nil then
+        L.db.profile.autoCache = true
+    end
 end
 
 function Core:isSB()    
@@ -513,6 +624,12 @@ function Core:PurgeDiscoveriesFromBlockedPlayers()
     return removedCount
 end
 
+function Core:InvalidateLookupIndices()
+    self._lookupIndicesBuilt = false
+    if self._keyV5Index then wipe(self._keyV5Index) end
+    if self._midIndex then wipe(self._midIndex) end
+end
+
 local PURGE_VERSION = "EmbossedScroll_v1"
 function Core:PurgeEmbossedScrolls()
     if L.db.global.purgeEmbossedState == 2 then
@@ -529,7 +646,7 @@ function Core:PurgeEmbossedScrolls()
     for guid, d in pairs(discoveries) do
         if d then
             local name
-            local itemID = d.i or extractItemID(d.il)
+            local itemID = d.i or L:ExtractItemID(d.il)
             if d.il then
                 name = d.il:match("%[(.+)%]")[1]
             end
@@ -862,52 +979,221 @@ function Core:PurgeByFinderBlacklist(listName)
     return removedCount
 end
 
-function Core:PurgeInvalidMysticScrolls()
+function Core:RunLegacyMysticScrollSourceMigration(force)
+    if not force and L.db and L.db.global and L.db.global.legacyMysticScrollSrcFixV1 then
+        return 0, 0
+    end
+
     local discoveries = L:GetDiscoveriesDB()
-    if not discoveries then return 0 end
-    
-    local Constants = L:GetModule("Constants", true)
-    if not Constants then return 0 end
-    
-    local guidsToRemove = {}
-    
-    for guid, d in pairs(discoveries) do
-        
-        local isMS = (d.dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL)
-        
-        
-        if not isMS and d.il and d.il:find("Mystic Scroll") then
-            isMS = true
+    if not discoveries then
+        if L.db and L.db.global then
+            L.db.global.legacyMysticScrollSrcFixV1 = true
         end
-        
-        if isMS then
-            local validSrc = false
-            if d.src ~= nil then
-                
-                for k, v in pairs(Constants.AcceptedLootSrcMS) do
-                    if d.src == v then validSrc = true; break end
-                end
-                
-                if not validSrc and Constants.AcceptedLootSrcMS[d.src] then
-                    validSrc = true
-                end
+        return 0, 0
+    end
+
+    local Constants = L:GetModule("Constants", true)
+    if not (Constants and Constants.DISCOVERY_TYPE and Constants.AcceptedLootSrcMS) then
+        return 0, 0
+    end
+
+    local MYSTIC_SCROLL_TYPE = Constants.DISCOVERY_TYPE.MYSTIC_SCROLL
+    local SPECIAL_OBJECT_SRC = Constants.AcceptedLootSrcMS.direct or 3
+
+    local TRUSTED_OWNERS = {
+        ["deidre"] = true,
+        ["skulltrail"] = true,
+    }
+
+    local function normalizeName(name)
+        local normalized = L:normalizeSenderName(name)
+        if not normalized then
+            return nil
+        end
+        return string.lower(normalized)
+    end
+
+    local function getTrustedOwner(record)
+        local ownerName = normalizeName(record and record.o)
+        if ownerName and TRUSTED_OWNERS[ownerName] then
+            return ownerName
+        end
+
+        local finderName = normalizeName(record and record.fp)
+        if finderName and TRUSTED_OWNERS[finderName] then
+            return finderName
+        end
+
+        return nil
+    end
+
+    local function getMysticScrollName(record)
+        if not record then
+            return nil
+        end
+
+        if type(record.il) == "string" then
+            local linkName = record.il:match("%[(.+)%]")
+            if linkName and linkName ~= "" then
+                return linkName
             end
-            
-            if not validSrc then
+            return record.il
+        end
+
+        if record.i then
+            local itemName = GetItemInfo(record.i)
+            if itemName and itemName ~= "" then
+                return itemName
+            end
+        end
+
+        return nil
+    end
+
+    local function isMysticScrollRecord(record)
+        if not record then
+            return false
+        end
+
+        if tonumber(record.dt) == MYSTIC_SCROLL_TYPE then
+            return true
+        end
+
+        local itemName = getMysticScrollName(record)
+        if itemName and string.find(itemName, "Mystic Scroll", 1, true) then
+            return true
+        end
+
+        return false
+    end
+
+    local function normalizeSourceValue(src)
+        if src == nil then
+            return nil
+        end
+
+        if type(src) == "number" then
+            return src
+        end
+
+        if type(src) == "string" then
+            if src == "" then
+                return nil
+            end
+
+            local numeric = tonumber(src)
+            if numeric ~= nil then
+                return numeric
+            end
+
+            local mapped = Constants.AcceptedLootSrcMS[src]
+            if mapped ~= nil then
+                return mapped
+            end
+
+            return string.lower(src)
+        end
+
+        return src
+    end
+
+    local function isValidMysticScrollSource(src)
+        local normalized = normalizeSourceValue(src)
+        if normalized == nil then
+            return false
+        end
+
+        for _, acceptedValue in pairs(Constants.AcceptedLootSrcMS) do
+            if normalized == acceptedValue then
+                return true
+            end
+        end
+
+        return false
+    end
+
+    local function isLegacyDirectLikeSource(src)
+        local normalized = normalizeSourceValue(src)
+
+        if normalized == nil then
+            return true
+        end
+
+        if normalized == 3 then
+            return true
+        end
+
+        if normalized == "direct" then
+            return true
+        end
+
+        return false
+    end
+
+    local convertedGuids = {}
+    local guidsToRemove = {}
+
+    for guid, d in pairs(discoveries) do
+        if isMysticScrollRecord(d) then
+            local trustedOwner = getTrustedOwner(d)
+            local srcIsValid = isValidMysticScrollSource(d.src)
+
+            if trustedOwner and isLegacyDirectLikeSource(d.src) then
+                if d.src ~= SPECIAL_OBJECT_SRC then
+                    d.src = SPECIAL_OBJECT_SRC
+                    table.insert(convertedGuids, guid)
+
+                    L._debug(
+                        "Cleanup",
+                        "Converted trusted legacy Mystic Scroll source to specialobject for GUID "
+                            .. tostring(guid)
+                            .. " owner="
+                            .. tostring(trustedOwner)
+                    )
+                end
+            elseif not srcIsValid then
                 table.insert(guidsToRemove, guid)
             end
         end
     end
-    
+
+    local convertedCount = #convertedGuids
+    if convertedCount > 0 then
+        for _, guid in ipairs(convertedGuids) do
+            local record = discoveries[guid]
+            if record then
+                L:SendMessage("LootCollector_DiscoveriesUpdated", "update", guid, record)
+            end
+        end
+    end
+
     local removedCount = #guidsToRemove
     if removedCount > 0 then
         for _, guid in ipairs(guidsToRemove) do
-            L._debug("Cleanup", "Purging Mystic Scroll with invalid src: " .. guid)
+            L._debug("Cleanup", "Purging Mystic Scroll with invalid legacy src: " .. tostring(guid))
             discoveries[guid] = nil
             L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
         end
     end
-    
+
+    if convertedCount > 0 or removedCount > 0 then
+        L.DataHasChanged = true
+
+        local Map = L:GetModule("Map", true)
+        if Map then
+            Map.cacheIsDirty = true
+        end
+    end
+
+    if L.db and L.db.global and not force then
+        L.db.global.legacyMysticScrollSrcFixV1 = true
+    end
+
+    return convertedCount, removedCount
+end
+
+function Core:PurgeInvalidMysticScrolls()
+    local _, removedCount = self:RunLegacyMysticScrollSourceMigration()
     return removedCount
 end
 
@@ -926,7 +1212,15 @@ function Core:RunManualDatabaseCleanup()
 
     local zeroCoordRemoved = self:PurgeZeroCoordDiscoveries()
     if zeroCoordRemoved > 0 then
-        print(string.format("|cff00ff00LootCollector:|r Purged %d entries with (0,0) coordinates.", zeroCoordRemoved))
+        print(string.format("|cff00ff00LootCollector:|r Purged %d entries with 0,0 coordinates.", zeroCoordRemoved))
+    end
+
+    local convertedTrustedScrolls, invalidScrollsRemoved = self:RunLegacyMysticScrollSourceMigration(true)
+    if convertedTrustedScrolls > 0 then
+        print(string.format("|cff00ff00LootCollector:|r Converted %d trusted legacy Mystic Scroll entries to specialobject source.", convertedTrustedScrolls))
+    end
+    if invalidScrollsRemoved > 0 then
+        print(string.format("|cff00ff00LootCollector:|r Purged %d Mystic Scroll entries with invalid legacy sources.", invalidScrollsRemoved))
     end
 
     local cityGuidsToRemove = {}
@@ -936,6 +1230,7 @@ function Core:RunManualDatabaseCleanup()
             table.insert(cityGuidsToRemove, guid)
         end
     end
+
     local cityRemoved = #cityGuidsToRemove
     if cityRemoved > 0 then
         for _, guid in ipairs(cityGuidsToRemove) do
@@ -964,9 +1259,20 @@ function Core:RunManualDatabaseCleanup()
     end
 
     L.db.global.manualCleanupRunCount = (L.db.global.manualCleanupRunCount or 0) + 1
-    print(string.format("|cffffff00LootCollector:|r Manual cleanup has now been run %d time(s).", L.db.global.manualCleanupRunCount))
+    print(string.format("|cffffff00LootCollector:|r Manual cleanup has now been run %d times.", L.db.global.manualCleanupRunCount))
 
-    local totalChanges = vendorsMerged + zeroCoordRemoved + cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved + restrictedRemoved
+    local totalChanges = vendorsMerged
+        + zeroCoordRemoved
+        + convertedTrustedScrolls
+        + invalidScrollsRemoved
+        + cityRemoved
+        + prefixRemoved
+        + ignoredRemoved
+        + wfRemoved
+        + msRemoved
+        + restrictedRemoved
+
+    self:InvalidateLookupIndices()
 
     if totalChanges == 0 then
         print("|cff00ff00LootCollector:|r No items needed purging or deduplication.")
@@ -974,9 +1280,7 @@ function Core:RunManualDatabaseCleanup()
         print("|cff00ff00LootCollector:|r Manual cleanup complete.")
         local Map = L:GetModule("Map", true)
         if Map then
-            
             Map.cacheIsDirty = true
-            
             if Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
                 Map:Update()
             end
@@ -990,18 +1294,16 @@ end
 function Core:RunInitialCleanup()
     local initialPurged = self:PurgeByFinderBlacklist("iHASH_BLACKLIST")
     local zeroCoordRemoved = self:PurgeZeroCoordDiscoveries()
-    
-    
-    local invalidScrollsRemoved = self:PurgeInvalidMysticScrolls()
+    local convertedTrustedScrolls, invalidScrollsRemoved = self:RunLegacyMysticScrollSourceMigration()
 
     local cityGuidsToRemove = {}
     local discoveries = L:GetDiscoveriesDB() or {}
-	
     for guid, d in pairs(discoveries) do
         if d and d.c and d.z and cityZoneIDsToPurge[d.c] and cityZoneIDsToPurge[d.c][d.z] then
             table.insert(cityGuidsToRemove, guid)
         end
     end
+
     local cityRemoved = #cityGuidsToRemove
     if cityRemoved > 0 then
         for _, guid in ipairs(cityGuidsToRemove) do
@@ -1014,8 +1316,31 @@ function Core:RunInitialCleanup()
     local ignoredRemoved = self:PurgeAllIgnoredItems()
     local wfRemoved, msRemoved = self:DeduplicateItems(true)
 
-    if (initialPurged + zeroCoordRemoved + cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved + invalidScrollsRemoved) > 0 then
-        print("|cff00ff00LootCollector:|r Initial cleanup complete. Removed: " .. initialPurged .. " (blacklist), " .. invalidScrollsRemoved .. " (invalid scrolls), " .. zeroCoordRemoved .. " (0,0), " .. cityRemoved .. " city, " .. prefixRemoved .. " prefix, " .. ignoredRemoved .. " ignored, " .. wfRemoved .. " WF dupes, " .. msRemoved .. " MS dupes.")
+    self:InvalidateLookupIndices()
+
+    if initialPurged + zeroCoordRemoved + convertedTrustedScrolls + invalidScrollsRemoved + cityRemoved + prefixRemoved + ignoredRemoved + wfRemoved + msRemoved > 0 then
+        print(
+            "|cff00ff00LootCollector:|r Initial cleanup complete. Removed "
+                .. initialPurged
+                .. " blacklist, "
+                .. invalidScrollsRemoved
+                .. " invalid scrolls, converted "
+                .. convertedTrustedScrolls
+                .. " trusted legacy scrolls, "
+                .. zeroCoordRemoved
+                .. " 0,0, "
+                .. cityRemoved
+                .. " city, "
+                .. prefixRemoved
+                .. " prefix, "
+                .. ignoredRemoved
+                .. " ignored, "
+                .. wfRemoved
+                .. " WF dupes, "
+                .. msRemoved
+                .. " MS dupes."
+        )
+
         local Map = L:GetModule("Map", true)
         if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
             Map:Update()
@@ -1025,6 +1350,7 @@ end
 
 function Core:RunAutomaticOnLoginCleanup()
     local totalRemoved = 0
+    local totalConverted = 0
     local discoveries = L:GetDiscoveriesDB() or {}
 
     local restrictedRemoved = self:PurgeByFinderBlacklist("rHASH_BLACKLIST")
@@ -1033,10 +1359,18 @@ function Core:RunAutomaticOnLoginCleanup()
     end
 
     local vendorsMerged = self:DeduplicateVendorsPerZone()
-   
+
     local zeroCoordRemoved = self:PurgeZeroCoordDiscoveries()
     if zeroCoordRemoved > 0 then
         totalRemoved = totalRemoved + zeroCoordRemoved
+    end
+
+    local convertedTrustedScrolls, invalidScrollsRemoved = self:RunLegacyMysticScrollSourceMigration()
+    if convertedTrustedScrolls > 0 then
+        totalConverted = totalConverted + convertedTrustedScrolls
+    end
+    if invalidScrollsRemoved > 0 then
+        totalRemoved = totalRemoved + invalidScrollsRemoved
     end
 
     local cityGuidsToRemove = {}
@@ -1045,25 +1379,36 @@ function Core:RunAutomaticOnLoginCleanup()
             table.insert(cityGuidsToRemove, guid)
         end
     end
+
     local cityRemoved = #cityGuidsToRemove
     if cityRemoved > 0 then
         for _, guid in ipairs(cityGuidsToRemove) do
-            L._debug("Cleanup", "Purging city record: " .. guid .. " (" .. tostring(discoveries[guid].il) .. ")")
+            L._debug("Cleanup", "Purging city record " .. guid .. " " .. tostring(discoveries[guid] and discoveries[guid].il))
             discoveries[guid] = nil
             L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
         end
         totalRemoved = totalRemoved + cityRemoved
     end
-    
+
     local ignoredRemoved = self:PurgeAllIgnoredItems()
     if ignoredRemoved > 0 then
         totalRemoved = totalRemoved + ignoredRemoved
     end
-    
+
     local wfRemoved, msRemoved = self:DeduplicateItems(true)
-  
-    if (totalRemoved + wfRemoved + msRemoved + vendorsMerged) > 0 then
-        print(string.format("|cff00ff00LootCollector:|r Routine maintenance complete. Purged %d entries. Merged %d vendors. Removed %d WF dupes and %d MS dupes.", totalRemoved, vendorsMerged, wfRemoved, msRemoved))
+
+    self:InvalidateLookupIndices()
+
+    if totalRemoved + wfRemoved + msRemoved + vendorsMerged + totalConverted > 0 then
+        print(string.format(
+            "|cff00ff00LootCollector:|r Routine maintenance complete. Purged %d entries. Converted %d trusted legacy Mystic Scrolls. Merged %d vendors. Removed %d WF dupes and %d MS dupes.",
+            totalRemoved,
+            totalConverted,
+            vendorsMerged,
+            wfRemoved,
+            msRemoved
+        ))
+
         local Map = L:GetModule("Map", true)
         if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
             Map:Update()
@@ -1151,6 +1496,8 @@ function Core:ConvertLegacyInstanceData()
         end
     end
 
+    self:InvalidateLookupIndices()
+
     print(string.format("|cff00ff00LootCollector:|r Legacy instance data conversion complete. Converted: %d, Failed: %d.", convertedCount, failedCount))
     L.db.global.legacyInstanceConversionV5 = true
 end
@@ -1191,8 +1538,6 @@ function Core:FixMissingFpVotes()
 end
 
 function Core:FixInvalidContinentIDs()
-    
-    
     if L.db.global.invalidContinentFix_v1 then return end
 
     print("|cff00ff00LootCollector:|r Scanning database for records with invalid continent IDs (c=-1)...")
@@ -1212,14 +1557,12 @@ function Core:FixInvalidContinentIDs()
     local fixedCount = 0
     local guidsToFix = {}
     
-    
     for guid, d in pairs(discoveries) do
         if d and (tonumber(d.c) or 0) == -1 and d.z then
             table.insert(guidsToFix, guid)
         end
     end
 
-    
     for _, oldGuid in ipairs(guidsToFix) do
         local d = discoveries[oldGuid]
         if d then
@@ -1228,13 +1571,10 @@ function Core:FixInvalidContinentIDs()
                 
                 discoveries[oldGuid] = nil
                 
-                
                 d.c = zInfo.continentID
-                
                 
                 local newGuid = L:GenerateGUID(d.c, d.z, d.i, d.xy.x, d.xy.y)
                 d.g = newGuid
-                
                 
                 discoveries[newGuid] = d
                 fixedCount = fixedCount + 1
@@ -1245,8 +1585,8 @@ function Core:FixInvalidContinentIDs()
     end
 
     if fixedCount > 0 then
+        self:InvalidateLookupIndices()
         print(string.format("|cff00ff00LootCollector:|r Repaired %d records with invalid continent IDs.", fixedCount))
-        
         L:SendMessage("LOOTCOLLECTOR_DISCOVERY_LIST_UPDATED")
     end
     
@@ -1267,7 +1607,6 @@ function Core:PerformOnLoginMaintenance()
         print(string.format("|cff00ff00LootCollector:|r Updated %d older records with the new finder consensus system.", fixedVotesCount))
     end
     
-    
     self:FixInvalidContinentIDs()
 
     local phase = L.db.global.autoCleanupPhase or 0
@@ -1280,10 +1619,6 @@ function Core:PerformOnLoginMaintenance()
         self:RunAutomaticOnLoginCleanup()
     end
 
-    
-    
-    
-    
     local currentVersion = L.Version or "0.0.0"
     if L.db.global.lastPurgedInvalidSendersVersion ~= currentVersion then
         if L.db.profile then
@@ -1291,7 +1626,6 @@ function Core:PerformOnLoginMaintenance()
             if L.db.profile.invalidSenders then
                 wipe(L.db.profile.invalidSenders)
             end
-            
             
             if L.db.profile.sharing and L.db.profile.sharing.blockList then
                 wipe(L.db.profile.sharing.blockList)
@@ -1335,7 +1669,6 @@ function Core:UpdateItemRecordFromCache(itemID)
     local Constants = L:GetModule("Constants", true)
     if not Constants then return false end
     
-    
     local name, link, quality, _, _, itemType, itemSubType = GetItemInfo(itemID)
     if not (name and link) then return false end
 
@@ -1368,9 +1701,7 @@ function Core:UpdateItemRecordFromCache(itemID)
 	   local Map = L:GetModule("Map", true)
 		if Map then Map.cacheIsDirty = true end
         
-        
         L.DataHasChanged = true
-        
     end
     return updated
 end
@@ -1425,7 +1756,6 @@ function Core:_ScanStep_OnUpdate(frame, elapsed)
     if self:_ScanShouldPause() then
         return
     end
-    
     
     if InCombatLockdown() then return end
 
@@ -1585,6 +1915,80 @@ function Core:OnGetItemInfoReceived(_, itemID)
     end
 end
 
+function Core:ProcessIndexerBatch()
+    if not (L.db and L.db.global) then return end
+    local db = L:GetDiscoveriesDB()
+    if not db or not next(db) then 
+        self._indexerInProgress = false
+        return 
+    end
+
+    local processed = 0
+    local k = self._indexerNextKey
+    local changedCount = 0
+
+    while processed < MID_GEN_CHUNK_SIZE do
+        k, v = next(db, k)
+        
+        if not k then
+            
+            self._indexerNextKey = nil
+            self._indexerInProgress = false
+            if changedCount > 0 then
+                L._debug("Core-Indexer", string.format("Index maintenance cycle complete. Generated %d missing identifiers.", changedCount))
+            end
+            return
+        end
+
+        if type(v) == "table" then
+            local needsUpdate = false
+            
+            
+            if not v.mid or v.mid == "" then
+                v.mid = L:ComputeCanonicalDiscoveryMid(v)
+                needsUpdate = true
+            end
+
+            
+            if not v.mk or v.mk == "" then
+                v.mk = self:MakeKeyV5(v)
+                needsUpdate = true
+            end
+
+            if needsUpdate then
+                changedCount = changedCount + 1
+                
+                if self._lookupIndicesBuilt then
+                    if v.mid then self._midIndex[v.mid] = k end
+                    if v.mk then self._keyV5Index[v.mk] = k end
+                end
+            end
+        end
+
+        processed = processed + 1
+    end
+
+    self._indexerNextKey = k
+    
+    
+    ScheduleAfter(INDEXER_TICK_RATE, function()
+        if self._indexerInProgress then
+            self:ProcessIndexerBatch()
+        end
+    end)
+end
+
+function Core:StartIndexMaintenance()
+    if self._indexerInProgress then 
+        print("|cffff7f00LootCollector:|r Index maintenance is already running.")
+        return 
+    end
+    L._debug("Core-Indexer", "Starting background index maintenance...")
+    self._indexerInProgress = true
+    self._indexerNextKey = nil
+    self:ProcessIndexerBatch()
+end
+
 function Core:OnInitialize()
     if not (L.db and L.db.profile and L.db.global and L.db.char) then return end
 
@@ -1597,7 +2001,6 @@ function Core:OnInitialize()
     L:RegisterEvent("GET_ITEM_INFO_RECEIVED", function(_, ...)
         Core:OnGetItemInfoReceived(...)
     end)
-    
     
     local INDEX_BATCH_SIZE = 50
     local indexTicker = CreateFrame("Frame")
@@ -1646,7 +2049,10 @@ function Core:OnInitialize()
         Core:PerformOnLoginMaintenance()
         Core:RebuildZoneIndex()
         Core:ScanDatabaseForUncachedItems()
-        Core:EnsureCachePump()
+        Core:EnsureCachePump()        
+    end)
+    ScheduleAfter(11, function()	    
+        Core:StartIndexMaintenance()
     end)
 end
 
@@ -1681,9 +2087,6 @@ function Core:Qualifies(linkOrQuality)
     local isScroll = string.find(name, "Mystic Scroll", 1, true) ~= nil
     local isWorldforged = tipHas("Worldforged")
     return isWorldforged or isScroll
-end
-
-function Core:OnLootOpened()
 end
 
 function Core:HandleLocalLoot(discovery)
@@ -1755,9 +2158,11 @@ function Core:HandleLocalLoot(discovery)
                 vendorName = discovery.vendorName,
                 vendorItems = discovery.vendorItems,
             }
+
+            newRecord.mid = L:ComputeCanonicalDiscoveryMid(newRecord)
+            newRecord.mk = self:MakeKeyV5(newRecord)
             bm_db[guid] = newRecord
             recordToBroadcast = newRecord
-            
             
             self:AddToZoneIndex(guid, z)
         else
@@ -1766,6 +2171,8 @@ function Core:HandleLocalLoot(discovery)
             existing.dt = dt
             existing.vendorType = discovery.vendorType
             if not existing.il then existing.il = itemLink end 
+            if not existing.mid or existing.mid == "" then existing.mid = L:ComputeCanonicalDiscoveryMid(existing) end
+            if not existing.mk or existing.mk == "" then existing.mk = self:MakeKeyV5(existing) end
             recordToBroadcast = existing
         end
 	  
@@ -1776,7 +2183,6 @@ function Core:HandleLocalLoot(discovery)
                 end
             end
         end
-        
         
         L.DataHasChanged = true
         
@@ -1792,10 +2198,7 @@ function Core:HandleLocalLoot(discovery)
         return 
     end
 
-    
-    
     local infoTarget = discovery.il or itemID
-    
     
     if not infoTarget then
         return
@@ -1803,12 +2206,11 @@ function Core:HandleLocalLoot(discovery)
 
     local name, link, quality, _, _, itemType, itemSubType = GetItemInfo(infoTarget)
     
-    
     if not itemID then
         if link then
-            itemID = extractItemID(link)
+            itemID = L:ExtractItemID(link)
         elseif discovery.il and type(discovery.il) == "string" then
-            itemID = extractItemID(discovery.il)
+            itemID = L:ExtractItemID(discovery.il)
         end
     end
     
@@ -1878,9 +2280,11 @@ function Core:HandleLocalLoot(discovery)
             fp_votes = { [finderName] = { score = 1, t0 = t0 } },
             s_flag = s_flag,
         }
+
+        rec.mid = L:ComputeCanonicalDiscoveryMid(rec)
+        rec.mk = self:MakeKeyV5(rec)
         db[guid] = rec
         L:SendMessage("LootCollector_DiscoveriesUpdated", "add", guid, rec)
-        
         
         self:AddToZoneIndex(guid, z)
         
@@ -1898,11 +2302,15 @@ function Core:HandleLocalLoot(discovery)
             L._debug("Core-Refine", "Local loot is a coordinate refinement. Updating existing record.")
             rec.xy.x = L:Round4((oldX + x) / 2)
             rec.xy.y = L:Round4((oldY + y) / 2)
+            ec.mk = self:MakeKeyV5(rec)
         end
         
         if rec.src == nil and src_numeric ~= nil then
             rec.src = src_numeric
         end
+
+        if not rec.mid or rec.mid == "" then rec.mid = L:ComputeCanonicalDiscoveryMid(rec) end
+        if not rec.mk or rec.mk == "" then rec.mk = self:MakeKeyV5(rec) end
         
         L:SendMessage("LootCollector_DiscoveriesUpdated", "update", rec.g, rec)
     end
@@ -1919,7 +2327,6 @@ function Core:HandleLocalLoot(discovery)
             self:QueueItemForCaching(itemID)
         end
     end
-    
     
     L.DataHasChanged = true
     
@@ -2131,7 +2538,6 @@ function Core:RebuildZoneIndex()
 end
 
 function Core:AddToZoneIndex(guid, zoneID)
-
     if not Core.ZoneIndexBuilt then return end 
     if not guid or not zoneID then return end
     
@@ -2139,7 +2545,6 @@ function Core:AddToZoneIndex(guid, zoneID)
     if not Core.ZoneIndex[zoneID] then
         Core.ZoneIndex[zoneID] = {}
     end
-    
     
     table.insert(Core.ZoneIndex[zoneID], guid)
 end
@@ -2164,75 +2569,89 @@ function Core:RemoveFromZoneIndex(guid, zoneID)
     end
 end
 
-function Core:AddDiscovery(discoveryData, options)
-    options = options or {}
-    local op = options.op or "DISC"
-    
-    
-     if options.isNetwork and discoveryData and discoveryData.mid then
-        L.db.global.deletedCache = L.db.global.deletedCache or {}
-        local tombstone = L.db.global.deletedCache[discoveryData.mid]
+local function TriggerReactiveAck(tKey, t)
+    local tnow = time()
+    if (tnow - (t.lastReactive or 0)) > 300 then
+        t.lastReactive = tnow
+        local Comm = L:GetModule("Comm", true)
+        if Comm and Comm.BroadcastAckFor and t.payload then
+            local ackMid = tKey
+            if tKey:sub(1, 2) == "k:" then ackMid = t.payload.mid or ackMid end
+            Comm:BroadcastAckFor(t.payload, ackMid, "DET")
+        end
+    end
+end
 
-        if tombstone then
-            local isExpired = false
-            local tnow = time()
-            
-            
-            if tombstone.expiresAt then
-                if tnow > tombstone.expiresAt then
-                    isExpired = true
-                end
-            
-            elseif tombstone.deletedAt then
-                 if (tnow - tombstone.deletedAt) > (90 * 86400) then
-                    isExpired = true
-                 end
-            end
+local function isTombstoneValidAndActive(tKey, incomingT0, op, incomingAV)
+    if not L.db or not L.db.global or not L.db.global.deletedCache then return false end
+    local deletedCache = L.db.global.deletedCache
+    local t = deletedCache[tKey]
+    if not t then return false end
 
-            if not isExpired then
-                if op == "CONF" or op == "SHOW" then
-                    L._debug("Core-Block", "Blocked CONF/SHOW for active tombstone: " .. discoveryData.mid)
-                    return
-                elseif op == "DISC" then
-                    
-                    
-                    
-                    
-                    if tombstone.expiresAt then
-                         L._debug("Core-Block", "Blocked DISC for GFIX-suppressed mid: " .. discoveryData.mid)
-                         return
-                    end
-                    
-                    if (discoveryData.t0 or 0) > (tombstone.t0 or 0) then
-                        L.db.global.deletedCache[discoveryData.mid] = nil
-                        L._debug("Core-Block", "Accepted new DISC for expired/older tombstone. Removing: " .. discoveryData.mid)
-                    else
-                        L._debug("Core-Block", "Blocked old DISC for deleted mid: " .. discoveryData.mid)
-                        return
-                    end
-                end
-            else
-                
-                L.db.global.deletedCache[discoveryData.mid] = nil
+    local isExpired = false
+    local tnow = time()
+
+    if t.expiresAt then
+        if tnow > t.expiresAt then isExpired = true end
+    elseif t.deletedAt then
+        if (tnow - t.deletedAt) > (90 * 86400) then isExpired = true end
+    end
+
+    local function CheckAndTriggerReactiveAck()
+        if incomingAV then
+            local major, minor, patch = incomingAV:match("(%d+)%.(%d+)%.(%d+)")
+            major = tonumber(major) or 0
+            minor = tonumber(minor) or 0
+            patch = tonumber(patch) or 0
+            
+            if major > 0 or (major == 0 and minor > 7) or (major == 0 and minor == 7 and patch >= 47) then
+                TriggerReactiveAck(tKey, t)
             end
         end
     end
-    
-      if discoveryData then
+
+    if not isExpired then
+        if op == "CONF" or op == "SHOW" then
+            if op == "CONF" then CheckAndTriggerReactiveAck() end
+            return true
+        end
+        if op == "DISC" then
+            if t.expiresAt then 
+                CheckAndTriggerReactiveAck()
+                return true 
+            end
+            if incomingT0 > (tonumber(t.t0) or 0) then
+                deletedCache[tKey] = nil
+                return false
+            else
+                CheckAndTriggerReactiveAck()
+                return true
+            end
+        end
+    else
+        deletedCache[tKey] = nil
+        return false
+    end
+    return true
+end
+
+function Core:AddDiscovery(discoveryData, options)
+    options = options or {}
+    local op = tostring(options.op or (options.isNetwork and "DISC" or "LOCAL"))
+
+    if discoveryData then
         local c = tonumber(discoveryData.c) or 0
         local z = tonumber(discoveryData.z) or 0
-        if cityZoneIDsToPurge[c] and cityZoneIDsToPurge[c][z] then
+        if cityZoneIDsToPurge and cityZoneIDsToPurge[c] and cityZoneIDsToPurge[c][z] then
             L._debug("Core-Block", "Blocked incoming discovery from a forbidden city zone: " .. tostring(discoveryData.il))
             return 
         end
-      end
-	  
-	if options.isNetwork then
+    end
 
+    if options.isNetwork then
         if not (discoveryData and discoveryData.xy and discoveryData.c and discoveryData.z and (discoveryData.il or discoveryData.i)) then
             return 
         end
-	  
         local z = tonumber(discoveryData.z) or 0
         local ZoneList = L:GetModule("ZoneList", true)
         if not (ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[z]) then           
@@ -2243,106 +2662,113 @@ function Core:AddDiscovery(discoveryData, options)
     if L:IsZoneIgnored() and options.isNetwork then
         return
     end
-    
+
     if not (L.db and L.db.global) then
         return
     end
-    
+
     if type(discoveryData) ~= "table" then
         return
     end
-    
-    
+
     local infoTarget = discoveryData.il or discoveryData.i
     if not infoTarget then
         return
     end
-    
-    local name, link, quality, _, _, itemType, itemSubType = GetItemInfo(infoTarget)
-    
-    
+
+    local name, link, quality, itemType, itemSubType
+
     local itemID = discoveryData.i
     if not itemID then
+        if not link then
+            _, link = GetItemInfo(infoTarget)
+        end
         if link then
-            itemID = extractItemID(link)
-        elseif discoveryData.il and type(discoveryData.il) == "string" then
-            itemID = extractItemID(discoveryData.il)
+            itemID = L:ExtractItemID(link)
+        elseif type(discoveryData.il) == "string" then
+            itemID = L:ExtractItemID(discoveryData.il)
         end
     end
-    
+
     itemID = tonumber(itemID) or 0
-    if itemID == 0 then
-        return
-    end
-    
-    
+    if itemID == 0 then return end
+
     discoveryData.i = itemID
-    
+
     local Constants = L:GetModule("Constants", true)
+    local STATUS_CONFIRMED = (Constants and Constants.STATUS and Constants.STATUS.CONFIRMED) or "CONFIRMED"
+    local STATUS_UNCONFIRMED = (Constants and Constants.STATUS and Constants.STATUS.UNCONFIRMED) or "UNCONFIRMED"
+    local STATUS_FADING = (Constants and Constants.STATUS and Constants.STATUS.FADING) or "FADING"
+    local STATUS_STALE = (Constants and Constants.STATUS and Constants.STATUS.STALE) or "STALE"
+
     local dt = discoveryData.dt
-    if not dt and itemID > 0 then
-        local name = select(1, GetItemInfo(itemID))
-        if name then
-            if string.find(name, "Mystic Scroll", 1, true) then
+    if not dt and itemID > 0 and Constants and Constants.DISCOVERY_TYPE then
+        local cachedName = name
+        if not cachedName then
+            cachedName = select(1, GetItemInfo(itemID))
+        end
+        if cachedName then
+            if string.find(cachedName, "Mystic Scroll", 1, true) then
                 dt = Constants.DISCOVERY_TYPE.MYSTIC_SCROLL
             else
                 dt = Constants.DISCOVERY_TYPE.WORLDFORGED
             end
         end
     end
-    discoveryData.dt = dt 
+    discoveryData.dt = dt
 
-    local isBlackmarket = Constants and dt == Constants.DISCOVERY_TYPE.BLACKMARKET
-    
+    local isBlackmarket = Constants and Constants.DISCOVERY_TYPE and dt == Constants.DISCOVERY_TYPE.BLACKMARKET
+
     if options.isNetwork then
         if isBlackmarket then
-            
         elseif self:IsItemFullyCached(itemID) then
-            
         else
-            
             local firstDelay = math.random(5, 25)
             self:QueueItemForCaching(itemID)
 
-            ScheduleAfter(firstDelay, function()
+            L:ScheduleAfter(firstDelay, function()
                 if self:IsItemFullyCached(itemID) then
                     self:AddDiscovery(discoveryData, options)
                 else
                     SafeCacheItemRequest(itemID)
-                    ScheduleAfter(5, function()
+                    L:ScheduleAfter(5, function()
                         if self:IsItemFullyCached(itemID) then
                             self:AddDiscovery(discoveryData, options)
-                        else
-                            
                         end
                     end)
                 end
             end)
-            return 
+            return
         end
     end
-    
+
     if self:ShouldCacheItem(itemID) and not isBlackmarket then
         self:QueueItemForCaching(itemID)
         self:EnsureCachePump()
     end
-    
-    local x = (discoveryData.xy and discoveryData.xy.x) or 0
-    local y = (discoveryData.xy and discoveryData.xy.y) or 0
-    x = L:Round4(x)
-    y = L:Round4(y)
-    
-    local c = discoveryData.c or 0
-    local z = discoveryData.z or 0
-    local iz = discoveryData.iz or 0
-    
+
+    local x = L:Round4((discoveryData.xy and discoveryData.xy.x) or discoveryData.x or 0)
+    local y = L:Round4((discoveryData.xy and discoveryData.xy.y) or discoveryData.y or 0)
+    local c = tonumber(discoveryData.c) or 0
+    local z = tonumber(discoveryData.z) or 0
+    local iz = tonumber(discoveryData.iz) or 0
+    local t0 = tonumber(discoveryData.t0) or tonumber(discoveryData.t) or time()
+
+    discoveryData.xy = discoveryData.xy or {}
+    discoveryData.xy.x = x
+    discoveryData.xy.y = y
+    discoveryData.c = c
+    discoveryData.z = z
+    discoveryData.iz = iz
+    discoveryData.t0 = t0
+
     if isBlackmarket then
-        local guid, vendorType
-        vendorType = discoveryData.vendorType
+        local guid
+        local vendorType = discoveryData.vendorType
+
         if not vendorType then
             if itemID >= -399999 and itemID <= -300000 then vendorType = "BM"
-            elseif itemID >= -499999 and itemID <= -400000 then vendorType = "MS"
-            end
+            elseif itemID >= -499999 and itemID <= -400000 then vendorType = "MS" end
         end
 
         if vendorType == "MS" then
@@ -2350,16 +2776,15 @@ function Core:AddDiscovery(discoveryData, options)
         else
             guid = "BM-" .. c .. "-" .. z .. "-" .. string.format("%.2f", L:Round2(x)) .. "-" .. string.format("%.2f", L:Round2(y))
         end
-        
-        
+
         discoveryData.g = guid
-        
+
         local vendorItems = {}
         if discoveryData.vendorItemIDs and type(discoveryData.vendorItemIDs) == "table" then
             for _, receivedItemID in ipairs(discoveryData.vendorItemIDs) do
-                local name, link = GetItemInfo(receivedItemID)
-                if name and link then
-                    table.insert(vendorItems, { itemID = receivedItemID, name = name, link = link })
+                local vName, vLink = GetItemInfo(receivedItemID)
+                if vName and vLink then
+                    table.insert(vendorItems, { itemID = receivedItemID, name = vName, link = vLink, })
                 end
             end
         end
@@ -2368,51 +2793,44 @@ function Core:AddDiscovery(discoveryData, options)
         if not bm_db then return end
 
         local existing = bm_db[guid]
-        local recordToBroadcast = nil
+        local recordToBroadcast
 
         if not existing then
             local newRecord = {
-                g = guid, c = c, z = z, iz = discoveryData.iz, i = itemID, 
-                il = discoveryData.il,
-                xy = { x = x, y = y },
-                fp = discoveryData.fp, o = discoveryData.sender,
-                t0 = discoveryData.t0, ls = discoveryData.t0, s = Constants.STATUS.CONFIRMED, st = discoveryData.t0,
-                dt = dt,
-                vendorType = vendorType,
+                g = guid, c = c, z = z, iz = iz, i = itemID,
+                il = discoveryData.il, xy = { x = x, y = y },
+                fp = discoveryData.fp, o = discoveryData.sender or discoveryData.o,
+                t0 = t0, ls = t0, s = STATUS_CONFIRMED, st = t0,
+                dt = dt, vendorType = vendorType,
                 vendorName = discoveryData.vendorName or discoveryData.fp,
                 vendorItems = vendorItems,
             }
+
             bm_db[guid] = newRecord
             recordToBroadcast = newRecord
-            
-            
+
             L:SendMessage("LootCollector_DiscoveriesUpdated", "add", guid, newRecord)
-            
-            
             self:AddToZoneIndex(guid, z)
-            
-            
+
             if options.isNetwork and not options.suppressToast then
-                 local Toast = L:GetModule("Toast", true)
-                 if Toast and Toast.Show then
-                     Toast:Show(newRecord, false, { op = op })
-                 end
+                local Toast = L:GetModule("Toast", true)
+                if Toast and Toast.Show then
+                    Toast:Show(newRecord, false, { op = op })
+                end
             end
         else
-            existing.ls = max(existing.ls or 0, discoveryData.t0 or 0)
+            existing.ls = math.max(tonumber(existing.ls) or 0, t0 or 0)
             existing.vendorName = discoveryData.vendorName or existing.vendorName
             if #vendorItems > 0 then
                 existing.vendorItems = vendorItems
             end
             recordToBroadcast = existing
-             
-            
+
             L:SendMessage("LootCollector_DiscoveriesUpdated", "update", guid, existing)
         end
-        
-        
+
         L.DataHasChanged = true
-        
+
         if recordToBroadcast then
             local shouldBeShared = (not recordToBroadcast.vendorItems) or (#recordToBroadcast.vendorItems <= 5)
             if shouldBeShared then
@@ -2421,89 +2839,154 @@ function Core:AddDiscovery(discoveryData, options)
                 L._debug("Core-Share", "Vendor discovery has too many items (" .. #recordToBroadcast.vendorItems .. ") and will NOT be shared in real-time.")
             end
         end
-
-        return 
+        return
     end
 
-    
-    
-    
-    local c = tonumber(discoveryData.c) or 0
-    local z = tonumber(discoveryData.z) or 0
-    local iz = tonumber(discoveryData.iz) or 0
-    local x = discoveryData.xy and tonumber(discoveryData.xy.x) or 0
-    local y = discoveryData.xy and tonumber(discoveryData.xy.y) or 0
-    local t0 = tonumber(discoveryData.t0) or time()
-    
-    x = L:Round4(x)
-    y = L:Round4(y)
-    
     local db = L:GetDiscoveriesDB()
     if not db then return end
 
-    local guid = L:GenerateGUID(c, z, itemID, x, y)
-    local rec = db[guid] or FindNearbyDiscovery(c, z, itemID, x, y, db)
+    local guid = discoveryData.g or L:GenerateGUID(c, z, itemID, x, y)
+    discoveryData.g = guid
+
+    local incomingMid = nil
+    if type(discoveryData.mid) == "string" and discoveryData.mid ~= "" then
+        incomingMid = discoveryData.mid
+    end
+
+    local keyV5 = self:MakeKeyV5({
+        c = c, z = z, iz = iz, i = itemID, xy = { x = x, y = y },
+    })
+
+    L.db.global.deletedCache = L.db.global.deletedCache or {}
+
+    if incomingMid and isTombstoneValidAndActive(incomingMid, t0, op, discoveryData.av) then return end
+    if isTombstoneValidAndActive("k:" .. keyV5, t0, op, discoveryData.av) then return end
+
+    local canonicalMid = nil
+    local existing, existingGuid = self:FindExistingDiscovery(guid, incomingMid, keyV5)
     
-    if not dt then 
-        if name then
-            if string.find(name, "Mystic Scroll", 1, true) then
-                dt = Constants.DISCOVERY_TYPE.MYSTIC_SCROLL
-            else
-                dt = Constants.DISCOVERY_TYPE.WORLDFORGED
-            end
+    if not existing and not options.isNetwork and FindNearbyDiscovery then
+        local nearby = FindNearbyDiscovery(c, z, itemID, x, y, db)
+        if nearby then
+            existing = nearby
+            existingGuid = nearby.g
+            guid = nearby.g
         end
     end
     
-    
-	local src_numeric = discoveryData.src
-    
-        
-            
-        
-            
-        
-    
-	
-	if type(src_numeric) == "string" then
+    local function ensureCanonicalMid()
+        if canonicalMid == nil then
+            canonicalMid = L:ComputeCanonicalDiscoveryMid({
+                c = c, z = z, iz = iz, i = itemID, xy = { x = x, y = y }, t0 = t0,
+            })
+        end
+        return canonicalMid
+    end
+
+    if not existing and not incomingMid then
+        local probeCanonicalMid = ensureCanonicalMid()
+        if isTombstoneValidAndActive(probeCanonicalMid, t0, op, discoveryData.av) then return end
+        existing, existingGuid = self:FindByMid(probeCanonicalMid)
+    end
+
+    name, link, quality, _, _, itemType, itemSubType = GetItemInfo(infoTarget)
+
+    local finalLink = discoveryData.il or link
+    if link and quality and EnsureColoredLink then
+        finalLink = EnsureColoredLink(link, quality)
+    end
+
+    local src_numeric = discoveryData.src
+    if type(src_numeric) == "string" then
         local mapped = nil
-        if dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL then
+        if dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL and Constants.AcceptedLootSrcMS then
             mapped = Constants.AcceptedLootSrcMS[src_numeric]
-        elseif dt == Constants.DISCOVERY_TYPE.WORLDFORGED then
+        elseif dt == Constants.DISCOVERY_TYPE.WORLDFORGED and Constants.AcceptedLootSrcWF then
             mapped = Constants.AcceptedLootSrcWF[src_numeric]
         end
         if mapped ~= nil then
             src_numeric = mapped
         end
     end
-    
-    local it = (itemType and Constants.ITEM_TYPE_TO_ID[itemType]) or 0
-    local ist = (itemSubType and Constants.ITEM_SUBTYPE_TO_ID[itemSubType]) or 0
-    local colored = EnsureColoredLink(link, quality)
-    local cl = GetItemClassAbbr(colored)
-    
-    local finderName = discoveryData.fp or UnitName("player")
+
+    local itemTypeID = discoveryData.it
+    if not itemTypeID and Constants and Constants.ITEM_TYPE_TO_ID then
+        itemTypeID = Constants.ITEM_TYPE_TO_ID[itemType] or 0
+    end
+
+    local itemSubTypeID = discoveryData.ist
+    if not itemSubTypeID and Constants and Constants.ITEM_SUBTYPE_TO_ID then
+        itemSubTypeID = Constants.ITEM_SUBTYPE_TO_ID[itemSubType] or 0
+    end
+
+    local classAbbr = discoveryData.cl
+    if (not classAbbr or classAbbr == "") and GetItemClassAbbr then
+        classAbbr = GetItemClassAbbr(finalLink or itemID) or "cl"
+    end
+    if not classAbbr or classAbbr == "" then
+        classAbbr = "cl"
+    end
+
+    local normalizedStatus = discoveryData.s
+    if normalizedStatus ~= STATUS_CONFIRMED
+        and normalizedStatus ~= STATUS_UNCONFIRMED
+        and normalizedStatus ~= STATUS_FADING
+        and normalizedStatus ~= STATUS_STALE then
+        if options.isNetwork then
+            normalizedStatus = (op == "CONF") and STATUS_CONFIRMED or STATUS_UNCONFIRMED
+        else
+            normalizedStatus = STATUS_CONFIRMED
+        end
+    end
+
+    local finderName = discoveryData.fp or UnitName("player") or "Unknown"
     local s_flag = (finderName == "An Unnamed Collector") and 1 or 0
-    local payload_fp = (s_flag == 1 and "" or finderName)
+
+    local changed = false
+    local isNew = false
+    local rec
+
+    if not existing then
+        local storedMid = incomingMid
+        if not storedMid or storedMid == "" then
+            storedMid = ensureCanonicalMid()
+        end
     
-    if not rec then
-        
         rec = {
-            g = guid, c = c, z = z, iz = iz, i = itemID, il = colored or discoveryData.il,
+            g = guid,
+            c = c, z = z, iz = iz, i = itemID, il = finalLink,
+            q = tonumber(discoveryData.q) or tonumber(quality) or 0,
             xy = { x = x, y = y },
-            fp = finderName, o = finderName,
-            t0 = t0, ls = t0, s = Constants.STATUS.UNCONFIRMED, st = t0, cl = cl,
-            q = quality or 0, dt = dt, it = it, ist = ist,
+            fp = finderName,
+            o = discoveryData.sender or discoveryData.o or finderName,
+            t0 = t0, ls = t0,
+            st = tonumber(discoveryData.st) or t0,
+            s = normalizedStatus,
+            mc = tonumber(discoveryData.mc) or 1,
+            dt = dt,
             src = src_numeric,
+            cl = classAbbr,
+            it = tonumber(itemTypeID) or 0,
+            ist = tonumber(itemSubTypeID) or 0,
+            mid = storedMid,
+            mk = keyV5,
+            adc = tonumber(discoveryData.adc) or 0,
             fp_votes = { [finderName] = { score = 1, t0 = t0 } },
             s_flag = s_flag,
         }
+
         db[guid] = rec
-        
-        L:SendMessage("LootCollector_DiscoveriesUpdated", "add", guid, rec)
-        
-        
         self:AddToZoneIndex(guid, z)
         
+        if self._lookupIndicesBuilt then
+            if rec.mid then self._midIndex[rec.mid] = guid end
+            if rec.mk then self._keyV5Index[rec.mk] = guid end
+        end
+
+        isNew = true
+        changed = true
+
+        L:SendMessage("LootCollector_DiscoveriesUpdated", "add", guid, rec)
         
         if options.isNetwork and not options.suppressToast then
             local Toast = L:GetModule("Toast", true)
@@ -2511,89 +2994,90 @@ function Core:AddDiscovery(discoveryData, options)
                 Toast:Show(rec, false, { op = op })
             end
         end
+
     else
-        
-        rec.ls = max(tonumber(rec.ls) or 0, t0)
-        
-        
-        local oldX = rec.xy.x or 0
-        local oldY = rec.xy.y or 0
+        rec = existing
+        guid = existingGuid
+
+        local oldX = rec.xy and rec.xy.x or 0
+        local oldY = rec.xy and rec.xy.y or 0
         local threshold = 0.03 
-        
         local dx = math.abs(x - oldX)
         local dy = math.abs(y - oldY)
         
         if dx <= threshold and dy <= threshold and (dx > 0 or dy > 0) then
             L._debug("Core-Refine", "Local loot is a coordinate refinement. Updating existing record.")
-            
-            
             rec.xy.x = L:Round4((oldX + x) / 2)
             rec.xy.y = L:Round4((oldY + y) / 2)
+            changed = true
+        end
+
+        if not rec.st or t0 > (rec.st or 0) then
+            if op == "CONF" and normalizedStatus == STATUS_CONFIRMED and rec.s ~= STATUS_CONFIRMED then
+                rec.s = STATUS_CONFIRMED
+                rec.st = t0
+                changed = true
+            elseif normalizedStatus == STATUS_FADING or normalizedStatus == STATUS_STALE then
+                rec.s = normalizedStatus
+                rec.st = t0
+                changed = true
+            end
+        end
+
+        local newLs = tonumber(discoveryData.ls) or t0
+        if newLs > (rec.ls or 0) then
+            rec.ls = newLs
+            changed = true
+        end
+
+        local incMc = tonumber(discoveryData.mc) or 1
+        if incMc > 1 then
+            rec.mc = math.max(rec.mc or 1, incMc)
+            changed = true
         end
         
+        if discoveryData.adc and discoveryData.adc > (rec.adc or 0) then
+            rec.adc = discoveryData.adc
+            changed = true
+        end
+
+        if not rec.il and finalLink then
+            rec.il = finalLink
+            changed = true
+        end
+        
+        if not rec.dt and dt then
+            rec.dt = dt
+            changed = true
+        end
         if rec.src == nil and src_numeric ~= nil then
             rec.src = src_numeric
+            changed = true
         end
-        
-        L:SendMessage("LootCollector_DiscoveriesUpdated", "update", rec.g, rec)
-    end
-    
-    
-    if not self:IsItemCached(itemID) then
-        if self.QueueItemForCaching then
-            self:QueueItemForCaching(itemID)
+
+        if changed then
+            L:SendMessage("LootCollector_DiscoveriesUpdated", "update", guid, rec)
         end
     end
-    
-    
-    L.DataHasChanged = true
-    
-    
-    if not options.isNetwork then
-        local norm = {
-            i = itemID, il = colored or discoveryData.il, q = quality or 1,
-            c = c, z = z, iz = iz, xy = { x = x, y = y }, t0 = t0,
-            dt = dt, it = it, ist = ist, cl = cl,
-            src = src_numeric,
-            s = s_flag, fp = payload_fp,
-        }
-        
-        local bufferKey = string.format("%d-%d-%d", c, z, itemID)
-        
-        if Core.pendingBroadcasts[bufferKey] then
-            if Core.pendingBroadcasts[bufferKey].timerHandle then
-                Core.pendingBroadcasts[bufferKey].timerHandle.Cancel()
-            end
-            
-        end
-        
-        local timerHandle
-        timerHandle = ScheduleAfter(1, function()
-            local cached = Core:IsItemFullyCached(itemID)
-            local remainingDelay = BROADCAST_DELAY - 1
-            
-            if not cached then
-                
-                SafeCacheItemRequest(itemID)
-                remainingDelay = remainingDelay - 1
-                ScheduleAfter(1, function()
-                    ScheduleAfter(remainingDelay, function()
-                        Core:ExecutePendingBroadcast(bufferKey)
+
+    if changed then
+        L.DataHasChanged = true
+        local Map = L:GetModule("Map", true)
+        if Map then
+            Map.cacheIsDirty = true
+            if options.isNetwork then
+                if Core.IsBatchProcessing then
+                    if not Core.pendingBroadcasts then Core.pendingBroadcasts = {} end
+                    Core.pendingBroadcasts[guid] = true
+                else
+                    L:ScheduleAfter(BROADCAST_DELAY, function()
+                        L:SendMessage("LOOTCOLLECTOR_DISCOVERY_LIST_UPDATED")
                     end)
-                end)
+                end
             else
-                ScheduleAfter(remainingDelay, function()
-                    Core:ExecutePendingBroadcast(bufferKey)
-                end)
+                L:SendMessage("LOOTCOLLECTOR_DISCOVERY_LIST_UPDATED")
             end
-        end)
-        
-        Core.pendingBroadcasts[bufferKey] = {
-            discovery = norm,
-            timerHandle = timerHandle,
-            fireAt = time() + BROADCAST_DELAY,
-            cacheChecked = false
-        }
+        end
     end
 end
 
@@ -2621,6 +3105,51 @@ function Core:PurgeZeroCoordDiscoveries()
     return removedCount
 end
 
+local function StoreDiscoveryTombstone(deletedCache, discoveryLike, expiryTime)
+    if not deletedCache or not discoveryLike then return end
+    local t0 = tonumber(discoveryLike.t0 or discoveryLike.t or 0)
+    if t0 <= 0 then return end
+
+    local incomingMid = type(discoveryLike.mid) == "string" and discoveryLike.mid or nil
+    local canonicalMid = L:ComputeCanonicalDiscoveryMid({
+        c = discoveryLike.c,
+        z = discoveryLike.z,
+        iz = discoveryLike.iz or 0,
+        i = discoveryLike.i or discoveryLike.il,
+        xy = discoveryLike.xy or { x = discoveryLike.x or 0, y = discoveryLike.y or 0 },
+        t0 = t0,
+    })
+
+    local payload = {
+        i = discoveryLike.i or discoveryLike.il,
+        il = discoveryLike.il,
+        c = discoveryLike.c,
+        z = discoveryLike.z,
+        iz = discoveryLike.iz or 0,
+        xy = discoveryLike.xy or { x = discoveryLike.x or 0, y = discoveryLike.y or 0 },
+        t0 = t0,
+        mid = canonicalMid
+    }
+
+    local Constants = L:GetModule("Constants", true)
+    local offsets = Constants and Constants.ACK_REINFORCE_OFFSETS
+    local nd = time() + (offsets and offsets[1] or 3600)
+
+    if incomingMid and incomingMid ~= "" then
+        deletedCache[incomingMid] = {
+            t0 = t0, deletedAt = time(), expiresAt = expiryTime,
+            payload = payload, ac = 1, nd = nd
+        }
+    end
+
+    if canonicalMid and canonicalMid ~= "" then
+        deletedCache[canonicalMid] = {
+            t0 = t0, deletedAt = time(), expiresAt = expiryTime,
+            payload = payload, ac = 1, nd = nd, isPrimary = true
+        }
+    end
+end
+
 function Core:ReportDiscoveryAsGone(guid)
     if not guid then return end
     local db = L:GetDiscoveriesDB()
@@ -2629,23 +3158,38 @@ function Core:ReportDiscoveryAsGone(guid)
     local rec = db[guid]
     if not rec then return end
 
-    local Comm = L:GetModule("Comm", true)
-    
-    if Comm and Comm.BroadcastAckFor and rec.mid and rec.mid ~= "" then
-        local discoveryPayload = {
-            i = rec.i, il = rec.il, c = rec.c, z = rec.z,
-            iz = rec.iz or 0, xy = rec.xy, t0 = rec.t0,
-        }
-        Comm:BroadcastAckFor(discoveryPayload, rec.mid, "DET")
+    rec.mk = rec.mk or self:MakeKeyV5(rec)
+
+    if not rec.mid or rec.mid == "" then
+        rec.mid = L:ComputeCanonicalDiscoveryMid(rec)
+        L._debug("Core-Report", "Generated missing mid for local discovery: " .. tostring(rec.mid))
     end
 
-    if rec.mid and rec.mid ~= "" and rec.t0 then
-        L.db.global.deletedCache = L.db.global.deletedCache or {}
-        L.db.global.deletedCache[rec.mid] = {
-            t0 = rec.t0,          
-            deletedAt = time(),   
+    local Comm = L:GetModule("Comm", true)
+    if Comm and Comm.BroadcastAckFor and rec.mid and rec.mid ~= "" then
+        local discoveryPayload = {
+            i = rec.i,
+            il = rec.il,
+            c = rec.c,
+            z = rec.z,
+            iz = rec.iz or 0,
+            xy = rec.xy,
+            t0 = rec.t0,
+            mid = rec.mid
         }
-        L._debug("Core-Delete", "Created tombstone for mid: " .. rec.mid)
+        Comm:BroadcastAckFor(discoveryPayload, rec.mid, "DET")
+    else
+        L._debug("Core-Report", "Failed to broadcast ACK. Missing Comm, BroadcastAckFor, or mid.")
+    end
+
+    L.db.global.deletedCache = L.db.global.deletedCache or {}
+    StoreDiscoveryTombstone(L.db.global.deletedCache, rec, nil)
+
+    if rec.mk and rec.t0 then
+        L.db.global.deletedCache["k:" .. rec.mk] = {
+            t0 = rec.t0,
+            deletedAt = time(),
+        }
     end
 
     self:RemoveDiscoveryByGuid(guid, string.format("Discovery %s reported as gone and removed.", rec.il or guid))
@@ -2658,9 +3202,13 @@ function Core:RemoveDiscoveryByGuid(guid, reason)
     if discoveries[guid] then
         local rec = discoveries[guid]
         
-        
         if rec and rec.z then
             self:RemoveFromZoneIndex(guid, rec.z)
+        end
+        
+        if self._lookupIndicesBuilt then
+            if rec.mid then self._midIndex[rec.mid] = nil end
+            if rec.mk then self._keyV5Index[rec.mk] = nil end
         end
         
         discoveries[guid] = nil
@@ -2688,7 +3236,6 @@ function Core:RemoveBlackmarketVendorByGuid(guid)
     if vendors[guid] then
         local rec = vendors[guid]
         
-        
         if rec and rec.z then
             self:RemoveFromZoneIndex(guid, rec.z)
         end
@@ -2714,7 +3261,7 @@ function Core:ClearDiscoveries()
 
     print(string.format("[%s] Cleared all discovery and vendor data.", L.name))
     
-    
+    self:InvalidateLookupIndices()
     self:RebuildZoneIndex()
     
     L:SendMessage("LootCollector_DiscoveriesUpdated", "clear", nil, nil)
@@ -2732,6 +3279,13 @@ function Core:RemoveDiscovery(guid)
     if not guid or not discoveries then return end
 
     if discoveries[guid] then
+        local rec = discoveries[guid]
+        
+        if self._lookupIndicesBuilt then
+            if rec.mid then self._midIndex[rec.mid] = nil end
+            if rec.mk then self._keyV5Index[rec.mk] = nil end
+        end
+        
         discoveries[guid] = nil
         print(string.format("|cff00ff00LootCollector:|r Discovery %s removed.", guid))
         
@@ -2769,7 +3323,7 @@ function Core:RescanAllClasses()
     return changed
 end
 
-function Core:_MakeKeyV5(norm)
+function Core:MakeKeyV5(norm)
     local c  = tonumber(norm.c) or 0
     local z  = tonumber(norm.z) or 0
     local iz = tonumber(norm.iz) or 0
@@ -2783,42 +3337,130 @@ function Core:_MakeKeyV5(norm)
     end
 end
 
-function Core:_FindByMid(mid)
-    local discoveries = L:GetDiscoveriesDB()
-    if not discoveries then return nil end
+function Core:BuildLookupIndices()
+    if self._lookupIndicesBuilt then return end
+    self._keyV5Index = {}
+    self._midIndex = {}
     
-    for _, rec in pairs(discoveries) do
-        if type(rec) == "table" and rec.mid == mid then
-            return rec
+    local db = L:GetDiscoveriesDB()
+    if not db then return end
+    
+    for g, r in pairs(db) do
+        if type(r) == "table" then
+            if r.mid then 
+                self._midIndex[r.mid] = g 
+            end
+            if self.MakeKeyV5 then
+                local mk = r.mk or self:MakeKeyV5(r)
+                self._keyV5Index[mk] = g
+                r.mk = mk
+            end
         end
     end
-    return nil
+    self._lookupIndicesBuilt = true
+end
+
+function Core:FindByMid(mid)
+    if not mid or mid == "" then return nil, nil end
+    local db = L:GetDiscoveriesDB()
+    if not db then return nil, nil end
+
+    self:BuildLookupIndices()
+    
+    local idx = self._midIndex[mid]
+    if idx and db[idx] then
+        return db[idx], idx
+    end
+
+    return nil, nil
+end
+
+function Core:FindExistingDiscovery(guid, incomingMid, keyV5)
+    local db = L:GetDiscoveriesDB()
+    if not db then return nil, nil end
+
+    if guid and db[guid] then
+        return db[guid], guid
+    end
+
+    self:BuildLookupIndices()
+
+    if incomingMid and incomingMid ~= "" then
+        local midGuid = self._midIndex[incomingMid]
+        if midGuid and db[midGuid] then
+            return db[midGuid], midGuid
+        end
+    end
+
+    if keyV5 and keyV5 ~= "" then
+        local keyGuid = self._keyV5Index[keyV5]
+        if keyGuid and db[keyGuid] then
+            return db[keyGuid], keyGuid
+        end
+    end
+
+    return nil, nil
 end
 
 function Core:ProcessAckVote(mid, sender)
+    L._debug("Core-Ack", "ProcessAckVote invoked for mid: " .. tostring(mid) .. " from " .. tostring(sender))
     if not mid or mid == "" or not sender or sender == "" then return end
+    local rec, guid = self:FindByMid(mid)
     
-    local rec = self:_FindByMid(mid)
-    if not rec then return end
+    
+    if not rec then
+        L._debug("Core-Ack", "Index miss for mid. Re-checking DB...")
+        local db = L:GetDiscoveriesDB()
+        for k, v in pairs(db) do
+            if v.mid == mid then
+                rec = v
+                guid = k
+                break
+            end
+        end
+    end
+    
+    if not rec then
+        L._debug("Core-Ack", "FAILED: Could not find any record in local DB matching mid: " .. tostring(mid))
+        return
+    end
+
+    
+    guid = guid or rec.g
+    L._debug("Core-Ack", "Match found! GUID: " .. tostring(guid) .. " | Current ADC: " .. tostring(rec.adc or 0))
     
     rec.ack_votes = rec.ack_votes or {}
-    
-    if rec.ack_votes[sender] then return end
+    if rec.ack_votes[sender] then 
+        L._debug("Core-Ack", "Sender has already voted on this record. Aborting.")
+        return 
+    end
     
     rec.ack_votes[sender] = true
     local voteCount = 0
     for _ in pairs(rec.ack_votes) do voteCount = voteCount + 1 end
     rec.adc = voteCount
     
+    local Constants = L:GetModule("Constants", true)
+    local DELETION_THRESHOLD_REMOVE = Constants and Constants.DELETION_THRESHOLD_REMOVE or 7
+    local DELETION_THRESHOLD_STALE = Constants and Constants.DELETION_THRESHOLD_STALE or 6
+    local DELETION_THRESHOLD_FADING = Constants and Constants.DELETION_THRESHOLD_FADING or 5
+
+    L._debug("Core-Ack", string.format("New VoteCount: %d. Thresholds: Fade=%d, Stale=%d, Rem=%d", voteCount, DELETION_THRESHOLD_FADING, DELETION_THRESHOLD_STALE, DELETION_THRESHOLD_REMOVE))
+    
     if voteCount >= DELETION_THRESHOLD_REMOVE then
+        L._debug("Core-Ack", "THRESHOLD REACHED: REMOVE")
         self:RemoveDiscoveryByGuid(rec.g, string.format("Discovery %s removed by consensus (%d votes).", rec.il or "item", voteCount))
     elseif rec.s == "CONFIRMED" and voteCount >= DELETION_THRESHOLD_STALE then
+        L._debug("Core-Ack", "THRESHOLD REACHED: STALE")
         rec.s = "STALE"
         rec.st = time()
     elseif rec.s == "CONFIRMED" and voteCount >= DELETION_THRESHOLD_FADING then
+        L._debug("Core-Ack", "THRESHOLD REACHED: FADING")
         rec.s = "FADING"
         rec.st = time()
-    end
+    else
+        L._debug("Core-Ack", "No threshold reached. Status remains: " .. tostring(rec.s))
+    end    
     
     L:SendMessage("LOOTCOLLECTOR_DISCOVERY_LIST_UPDATED")
     local Map = L:GetModule("Map", true)
@@ -2828,142 +3470,115 @@ function Core:ProcessAckVote(mid, sender)
 end
 
 function Core:HandleGuidedFix(fixData)
-    
     local discoveries = L:GetDiscoveriesDB()
     if not fixData or not discoveries then return end
 
     local updatedCount = 0
     local deletedCount = 0
+    local remoteKilledCount = 0
     local recordsToUpdate = {} 
     local recordsToDelete = {} 
+    local recordsToRemoteKill = {}
     
     local days = tonumber(fixData.dur) or 90 
     local expiryTime = time() + (days * 86400)
     local tolerance = tonumber(fixData.tol) or 0.05
-
     
     if fixData.type == 1 then 
         for guid, d in pairs(discoveries) do
             if d.i == fixData.i and d.c == fixData.c and d.z == fixData.z then
-                local dx = (d.xy.x or 0) - fixData.nx
-                local dy = (d.xy.y or 0) - fixData.ny
-                
-                
-                
+                local dx = (d.xy and d.xy.x or 0) - fixData.nx
+                local dy = (d.xy and d.xy.y or 0) - fixData.ny
                 if (dx*dx + dy*dy) <= (fixData.prox * fixData.prox) then
                     table.insert(recordsToUpdate, guid)
                 end
             end
         end
-
-    
     elseif fixData.type == 2 then 
         for guid, d in pairs(discoveries) do
             if d.i == fixData.i and d.c == fixData.c and d.z == fixData.z then
-                local dx = math.abs((d.xy.x or 0) - fixData.ox)
-                local dy = math.abs((d.xy.y or 0) - fixData.oy)
+                local dx = math.abs((d.xy and d.xy.x or 0) - fixData.ox)
+                local dy = math.abs((d.xy and d.xy.y or 0) - fixData.oy)
                 if dx <= tolerance and dy <= tolerance then
                     table.insert(recordsToUpdate, guid)
                 end
             end
         end
-    
-    
     elseif fixData.type == 3 then
         for guid, d in pairs(discoveries) do
             if d.i == fixData.i and d.c == fixData.c and d.z == fixData.z then
-                local dx = math.abs((d.xy.x or 0) - fixData.ox)
-                local dy = math.abs((d.xy.y or 0) - fixData.oy)
+                local dx = math.abs((d.xy and d.xy.x or 0) - fixData.ox)
+                local dy = math.abs((d.xy and d.xy.y or 0) - fixData.oy)
                 if dx <= tolerance and dy <= tolerance then
                     table.insert(recordsToDelete, guid)
                 end
             end
         end
-    end
-
-    
-    if #recordsToUpdate > 0 then
-        for _, oldGuid in ipairs(recordsToUpdate) do
-            local oldRecord = discoveries[oldGuid]
-            if oldRecord then
-                
-                if oldRecord.mid then
-                    L.db.global.deletedCache = L.db.global.deletedCache or {}
-                    L.db.global.deletedCache[oldRecord.mid] = {
-                        t0 = oldRecord.t0,
-                        deletedAt = time(),
-                        expiresAt = expiryTime
-                    }
+    elseif fixData.type == 4 then
+        for guid, d in pairs(discoveries) do
+            if d.i == fixData.i and d.c == fixData.c and d.z == fixData.z then
+                local dx = math.abs((d.xy and d.xy.x or 0) - fixData.ox)
+                local dy = math.abs((d.xy and d.xy.y or 0) - fixData.oy)
+                if dx <= tolerance and dy <= tolerance then
+                    table.insert(recordsToRemoteKill, guid)
                 end
-            
-                
-                discoveries[oldGuid] = nil
-                
-                
-                local newRecord = {}
-                for k, v in pairs(oldRecord) do newRecord[k] = v end
-                
-                newRecord.xy.x = fixData.nx
-                newRecord.xy.y = fixData.ny
-                
-                newRecord.s = "CONFIRMED" 
-                newRecord.st = time()
-                
-                local newGuid = L:GenerateGUID(newRecord.c, newRecord.z, newRecord.i, newRecord.xy.x, newRecord.xy.y)
-                newRecord.g = newGuid
-                
-                discoveries[newGuid] = newRecord
-                updatedCount = updatedCount + 1
             end
         end
     end
     
+	if recordsToUpdate and #recordsToUpdate > 0 then
+	    for _, oldGuid in ipairs(recordsToUpdate) do
+		  local oldRecord = discoveries[oldGuid]
+		  if oldRecord then
+			L.db.global.deletedCache = L.db.global.deletedCache or {}
+			StoreDiscoveryTombstone(L.db.global.deletedCache, oldRecord, expiryTime)
+			discoveries[oldGuid] = nil
+			local newRecord = {}
+			for k, v in pairs(oldRecord) do newRecord[k] = v end
+			newRecord.xy = newRecord.xy or {}
+			newRecord.xy.x = fixData.nx
+			newRecord.xy.y = fixData.ny
+			newRecord.s = "CONFIRMED"
+			newRecord.st = time()
+			local newGuid = L:GenerateGUID(newRecord.c, newRecord.z, newRecord.i, newRecord.xy.x, newRecord.xy.y)
+			newRecord.g = newGuid
+			newRecord.mid = L:ComputeCanonicalDiscoveryMid(newRecord)
+			newRecord.mk = self:MakeKeyV5(newRecord)
+			discoveries[newGuid] = newRecord
+			updatedCount = updatedCount + 1
+		  end
+	    end
+	end
     
-    if #recordsToDelete > 0 then
-        for _, oldGuid in ipairs(recordsToDelete) do
-             local oldRecord = discoveries[oldGuid]
-             if oldRecord then
-                
-                if oldRecord.mid then
-                    L.db.global.deletedCache = L.db.global.deletedCache or {}
-                    L.db.global.deletedCache[oldRecord.mid] = {
-                        t0 = oldRecord.t0,
-                        deletedAt = time(),
-                        expiresAt = expiryTime
-                    }
+    if recordsToRemoteKill and #recordsToRemoteKill > 0 then
+        for _, killGuid in ipairs(recordsToRemoteKill) do            
+            local staggeredDelay = math.random(30, 200)
+            L._debug("Core-GFIX", string.format("GFIX staggered: Remote Kill for %s scheduled in %d seconds.", killGuid, staggeredDelay))
+            
+            ScheduleAfter(staggeredDelay, function()                
+                if discoveries[killGuid] then
+                    self:ReportDiscoveryAsGone(killGuid)
                 end
-                
-                
-                discoveries[oldGuid] = nil
-                deletedCount = deletedCount + 1
-             end
+            end)
+            remoteKilledCount = remoteKilledCount + 1
         end
     end
 
-    if updatedCount > 0 or deletedCount > 0 then
-        
+    if recordsToRemoteKill and #recordsToRemoteKill > 0 then
+        for _, killGuid in ipairs(recordsToRemoteKill) do            
+            self:ReportDiscoveryAsGone(killGuid)
+            remoteKilledCount = remoteKilledCount + 1
+        end
+    end
+
+    if updatedCount > 0 or deletedCount > 0 or remoteKilledCount > 0 then
+        self:InvalidateLookupIndices()
         local Map = L:GetModule("Map", true)
-        if Map and Map.Update then
-            Map:Update()
+        if Map and Map.Update then Map:Update() end
+        if remoteKilledCount > 0 then
+            L._debug("Core-GFIX", string.format("GFIX-Type4: Successfully triggered Remote Kill for %d local records.", remoteKilledCount))
         end
-        
     end
-end
-
-function Core:_isFinderOnBlacklist(name, listName)
-    if not name or name == "" or not XXH_Lua_Lib or not listName then return false end
-    local Constants = L:GetModule("Constants", true)
-    if not Constants or not Constants[listName] then return false end
-
-    local blacklist = Constants[listName]
-    local normalizedName = L:normalizeSenderName(name)
-    if not normalizedName then return false end
-    
-    local combined_str = normalizedName .. Constants.HASH_SAP
-    local hash_val = XXH_Lua_Lib.XXH32(combined_str, Constants.HASH_SEED)
-    local hex_hash = string.format("%08x", hash_val)
-
-    return blacklist[hex_hash] == true
 end
 
 function Core:FixLegacyZoneIDs()
@@ -2980,7 +3595,6 @@ function Core:FixLegacyZoneIDs()
         print("|cffff0000LootCollector:|r ZoneList module not ready.")
         return 
     end
-
     
     local LegacyZoneData = {[1]={[1]="Ammen Vale",[2]="Ashenvale",[3]="Azshara",[4]="Azuremyst Isle",[5]="Ban'ethil Barrow Den",[6]="Bloodmyst Isle",[7]="Burning Blade Coven",[8]="Caverns of Time",[9]="Darkshore",[10]="Darnassus",[11]="Desolace",[12]="Durotar",[13]="Dustwallow Marsh",[14]="Dustwind Cave",[15]="Fel Rock",[16]="Felwood",[17]="Feralas",[18]="Maraudon",[19]="Moonglade",[20]="Moonlit Ossuary",[21]="Mulgore",[22]="Orgrimmar",[23]="Palemane Rock",[24]="Camp Narache",[25]="Shadowglen",[26]="Shadowthread Cave",[27]="Silithus",[28]="Sinister Lair",[29]="Skull Rock",[30]="Stillpine Hold",[31]="Stonetalon Mountains",[32]="Tanaris",[33]="Teldrassil",[34]="The Barrens",[35]="The Exodar",[36]="The Gaping Chasm",[37]="The Noxious Lair",[38]="The Slithering Scar",[39]="The Venture Co. Mine",[40]="Thousand Needles",[41]="Thunder Bluff",[42]="Tides' Hollow",[43]="Twilight's Run",[44]="Un'Goro Crater",[45]="Valley of Trials",[46]="Wailing Caverns",[47]="Winterspring"},[2]={[1]="Alterac Mountains",[2]="Amani Catacombs",[3]="Arathi Highlands",[4]="Badlands",[5]="Blackrock Mountain",[6]="Blasted Lands",[7]="Burning Steppes",[8]="Coldridge Pass",[9]="Coldridge Valley",[10]="Deadwind Pass",[11]="Deathknell",[12]="Dun Morogh",[13]="Duskwood",[14]="Eastern Plaguelands",[15]="Echo Ridge Mine",[16]="Elwynn Forest",[17]="Eversong Woods",[18]="Fargodeep Mine",[19]="Ghostlands",[20]="Gol'Bolar Quarry",[21]="Gold Coast Quarry",[22]="Hillsbrad Foothills",[23]="Ironforge",[24]="Isle of Quel'Danas",[25]="Jangolode Mine",[26]="Jasperlode Mine",[27]="Loch Modan",[28]="Night Web's Hollow",[29]="Northshire Valley",[30]="Redridge Mountains",[31]="Scarlet Monastery",[32]="Searing Gorge",[33]="Secret Inquisitorial Dungeon",[34]="Shadewell Spring",[35]="Silvermoon City",[36]="Silverpine Forest",[37]="Stormwind City",[38]="Stranglethorn Vale",[39]="Sunstrider Isle",[40]="Swamp of Sorrows",[41]="The Deadmines",[42]="The Grizzled Den",[43]="The Hinterlands",[44]="Tirisfal Glades",[45]="Uldaman",[46]="Undercity",[47]="Western Plaguelands",[48]="Westfall",[49]="Wetlands"},[3]={[1]="Blade's Edge Mountains", [2]="Hellfire Peninsula", [3]="Nagrand", [4]="Netherstorm", [5]="Shadowmoon Valley", [6]="Shattrath City", [7]="Terokkar Forest", [8]="Zangarmarsh"},[4]={[1]="Borean Tundra", [2]="Crystalsong Forest", [3]="Dalaran", [4]="Dragonblight", [5]="Grizzly Hills", [6]="Howling Fjord", [7]="Hrothgar's Landing", [8]="Icecrown", [9]="Sholazar Basin", [10]="The Storm Peaks", [11]="Wintergrasp", [12]="Zul'Drak"}}
 

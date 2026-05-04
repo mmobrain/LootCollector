@@ -1,6 +1,9 @@
-## LootCollector 0.7.48 - New Filters, QOL (Raxxlian/Rhenyra)
+## LootCollector 0.7.49 - New Filters, QOL (Raxxlian/Rhenyra)
 - **Added Filter to hide:** Collected Mystic Enchants and WF items you've collected their appearance.
 - **QOL:** Added option to disable the fading effect of the stale items.
+
+## LootCollector 0.7.48 - Bugfix
+- **Fixed a typo:** ec.mk = self:MakeKeyV5(rec) -> rec.mk = self:MakeKeyV5(rec)
 
 ## LootCollector 0.7.47 - Network Consensus, Background Maintenance, Optimizations & Fixes
 #### **1. Consensus & Data Integrity**

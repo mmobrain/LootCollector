@@ -1,3 +1,7 @@
+## LootCollector 0.7.47 - New Filters, QOL (Raxxlian/Rhenyra)
+- **Added Filter to hide:** Collected Mystic Enchants and WF items you've collected their appearance.
+- **QOL:** Added option to disable the fading effect of the stale items.
+
 ## LootCollector 0.7.47 - Network Consensus, Background Maintenance, Optimizations & Fixes
 #### **1. Consensus & Data Integrity**
 *   **Repaired Deletion Consensus:** Fully implemented the "Report as Gone" (ACK) threshold logic. Nodes now transition to **Fading** at 5 votes, **Stale** at 6 votes, and are **Permanently Deleted** at 7 votes.

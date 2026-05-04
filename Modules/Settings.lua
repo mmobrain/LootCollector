@@ -229,6 +229,28 @@ local function buildOptions()
 							refreshUI()
 						end,
 					},
+					hideCollectedME = {
+						type = "toggle",
+						name = "Hide Collected Mystic Enchants",
+						order = 4.2,
+						desc = "Hide Mystic Scroll discoveries for enchants you have already collected.",
+						get = function() return L.db.profile.mapFilters.hideCollectedME end,
+						set = function(_, v)
+							L.db.profile.mapFilters.hideCollectedME = v
+							refreshUI()
+						end,
+					},
+					disableFadeEffect = {
+						type = "toggle",
+						name = "Disable Fade Effect",
+						order = 4.3,
+						desc = "Show all map pins at full opacity, even if their discovery is fading or stale.",
+						get = function() return L.db.profile.mapFilters.disableFadeEffect end,
+						set = function(_, v)
+							L.db.profile.mapFilters.disableFadeEffect = v
+							refreshUI()
+						end,
+					},
 					hidePlayerNames = {
 						type = "toggle",
 						name = "Hide Player Names",

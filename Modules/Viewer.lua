@@ -43,6 +43,7 @@ local CLASS_OPTIONS = {
 }
 
 Viewer.lootedFilterState = nil 
+Viewer.collectedMEFilterState = nil 
 
 local time = time or os.time
 
@@ -834,6 +835,20 @@ GetFilteredDatasetForUniqueValues = function(context)
             local isLooted = Viewer:IsLootedByChar(data.guid)
             if Viewer.lootedFilterState == true and not isLooted then return false end
             if Viewer.lootedFilterState == false and isLooted then return false end
+        end
+
+        -- Collected ME filter
+        if Viewer.collectedMEFilterState ~= nil then
+            local Constants = L:GetModule("Constants", true)
+            local isME = Constants and data.discovery.dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL
+            if isME and data.discovery.i and data.discovery.i > 0 then
+                local isCollectedME = L:IsMysticEnchantCollected(data.discovery.i)
+                if Viewer.collectedMEFilterState == true and not isCollectedME then return false end
+                if Viewer.collectedMEFilterState == false and isCollectedME then return false end
+            elseif not isME then
+                -- Non-ME items: hide when filtering for collected MEs only
+                if Viewer.collectedMEFilterState == true then return false end
+            end
         end
 
         
@@ -2049,6 +2064,19 @@ function Viewer:GetFilteredDiscoveries()
             if Viewer.lootedFilterState == false and isLooted then return false end
         end
 
+        -- Collected ME filter
+        if Viewer.collectedMEFilterState ~= nil then
+            local Constants = L:GetModule("Constants", true)
+            local isME = Constants and data.discovery.dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL
+            if isME and data.discovery.i and data.discovery.i > 0 then
+                local isCollectedME = L:IsMysticEnchantCollected(data.discovery.i)
+                if Viewer.collectedMEFilterState == true and not isCollectedME then return false end
+                if Viewer.collectedMEFilterState == false and isCollectedME then return false end
+            elseif not isME then
+                if Viewer.collectedMEFilterState == true then return false end
+            end
+        end
+
         
         if not filterPredicates.columnFilters.duplicates(data) then return false end
 
@@ -2132,6 +2160,9 @@ function Viewer:GetFilterStateHash()
     
     if self.lootedFilterState ~= nil then
         _tinsert(filterEntries, "looted:" .. tostring(self.lootedFilterState))
+    end
+    if self.collectedMEFilterState ~= nil then
+        _tinsert(filterEntries, "collectedME:" .. tostring(self.collectedMEFilterState))
     end
 
     
@@ -2218,6 +2249,10 @@ function Viewer:HasActiveFilters()
 
     
     if self.lootedFilterState ~= nil or size(self.columnFilters.looted) > 0 then
+        return true
+    end
+
+    if self.collectedMEFilterState ~= nil then
         return true
     end
 
@@ -2328,6 +2363,20 @@ function Viewer:UpdateFilterButtonStates()
         else
             setButtonTextColor(self.duplicatesFilterBtn, 1, 1, 1) 
             self.duplicatesFilterBtn:SetText("Duplicates")
+        end
+    end
+
+    -- Collected ME filter button state
+    if self.collectedMEFilterBtn then
+        if self.collectedMEFilterState == true then
+            setButtonTextColor(self.collectedMEFilterBtn, 1, 0.8, 0.2)
+            self.collectedMEFilterBtn:SetText("Collected: Yes")
+        elseif self.collectedMEFilterState == false then
+            setButtonTextColor(self.collectedMEFilterBtn, 1, 0.8, 0.2)
+            self.collectedMEFilterBtn:SetText("Collected: No")
+        else
+            setButtonTextColor(self.collectedMEFilterBtn, 1, 1, 1)
+            self.collectedMEFilterBtn:SetText("Collected: All")
         end
     end
 end
@@ -2925,8 +2974,8 @@ function Viewer:CreateWindow()
 
     
     local sourceFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
-    sourceFilterBtn:SetSize(70, BUTTON_HEIGHT)
-    sourceFilterBtn:SetPoint("LEFT", filtersLabel, "RIGHT", 10, 0)
+    sourceFilterBtn:SetSize(55, BUTTON_HEIGHT)
+    sourceFilterBtn:SetPoint("LEFT", filtersLabel, "RIGHT", 5, 0)
     sourceFilterBtn:SetText("Source")
     sourceFilterBtn:SetFrameStrata(FRAME_STRATA)
     sourceFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
@@ -2938,8 +2987,8 @@ function Viewer:CreateWindow()
     
     
     local qualityFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
-    qualityFilterBtn:SetSize(70, BUTTON_HEIGHT)
-    qualityFilterBtn:SetPoint("LEFT", sourceFilterBtn, "RIGHT", 5, 0)
+    qualityFilterBtn:SetSize(55, BUTTON_HEIGHT)
+    qualityFilterBtn:SetPoint("LEFT", sourceFilterBtn, "RIGHT", 3, 0)
     qualityFilterBtn:SetText("Quality")
     qualityFilterBtn:SetFrameStrata(FRAME_STRATA)
     qualityFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
@@ -2951,8 +3000,8 @@ function Viewer:CreateWindow()
     
     
     local slotsFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
-    slotsFilterBtn:SetSize(60, BUTTON_HEIGHT)
-    slotsFilterBtn:SetPoint("LEFT", qualityFilterBtn, "RIGHT", 5, 0)
+    slotsFilterBtn:SetSize(42, BUTTON_HEIGHT)
+    slotsFilterBtn:SetPoint("LEFT", qualityFilterBtn, "RIGHT", 3, 0)
     slotsFilterBtn:SetText("Slots")
     slotsFilterBtn:SetFrameStrata(FRAME_STRATA)
     slotsFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
@@ -2964,8 +3013,8 @@ function Viewer:CreateWindow()
     
     
     local usableByFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
-    usableByFilterBtn:SetSize(80, BUTTON_HEIGHT)
-    usableByFilterBtn:SetPoint("LEFT", slotsFilterBtn, "RIGHT", 5, 0)
+    usableByFilterBtn:SetSize(65, BUTTON_HEIGHT)
+    usableByFilterBtn:SetPoint("LEFT", slotsFilterBtn, "RIGHT", 3, 0)
     usableByFilterBtn:SetText("Usable By")
     usableByFilterBtn:SetFrameStrata(FRAME_STRATA)
     usableByFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
@@ -2977,8 +3026,8 @@ function Viewer:CreateWindow()
 
     
     local lootedFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
-    lootedFilterBtn:SetSize(90, BUTTON_HEIGHT)
-    lootedFilterBtn:SetPoint("LEFT", usableByFilterBtn, "RIGHT", 5, 0)
+    lootedFilterBtn:SetSize(75, BUTTON_HEIGHT)
+    lootedFilterBtn:SetPoint("LEFT", usableByFilterBtn, "RIGHT", 3, 0)
     lootedFilterBtn:SetText("Looted: All")
     lootedFilterBtn:SetFrameStrata(FRAME_STRATA)
     lootedFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
@@ -3000,10 +3049,33 @@ function Viewer:CreateWindow()
     end)
     lootedFilterBtn:RegisterForClicks("LeftButtonUp")
 
+    -- Collected ME filter button
+    local collectedMEFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
+    collectedMEFilterBtn:SetSize(82, BUTTON_HEIGHT)
+    collectedMEFilterBtn:SetPoint("LEFT", lootedFilterBtn, "RIGHT", 3, 0)
+    collectedMEFilterBtn:SetText("Collected: All")
+    collectedMEFilterBtn:SetFrameStrata(FRAME_STRATA)
+    collectedMEFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
+    collectedMEFilterBtn:SetScript("OnClick", function(self, button)
+        if Viewer.collectedMEFilterState == nil then
+            Viewer.collectedMEFilterState = true
+        elseif Viewer.collectedMEFilterState == true then
+            Viewer.collectedMEFilterState = false
+        else
+            Viewer.collectedMEFilterState = nil
+        end
+        Viewer.currentPage = 1
+        Cache.filteredResults = {}
+        Cache.lastFilterState = nil
+        Viewer:RefreshData()
+        Viewer:UpdateFilterButtonStates()
+    end)
+    collectedMEFilterBtn:RegisterForClicks("LeftButtonUp")
+
     
     local duplicatesFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
-    duplicatesFilterBtn:SetSize(90, BUTTON_HEIGHT)
-    duplicatesFilterBtn:SetPoint("LEFT", lootedFilterBtn, "RIGHT", 5, 0)
+    duplicatesFilterBtn:SetSize(75, BUTTON_HEIGHT)
+    duplicatesFilterBtn:SetPoint("LEFT", collectedMEFilterBtn, "RIGHT", 3, 0)
     duplicatesFilterBtn:SetText("Duplicates")
     duplicatesFilterBtn:SetFrameStrata(FRAME_STRATA)
     duplicatesFilterBtn:SetFrameLevel(FRAME_LEVEL + 1)
@@ -3023,6 +3095,7 @@ function Viewer:CreateWindow()
     self.slotsFilterBtn = slotsFilterBtn
     self.usableByFilterBtn = usableByFilterBtn
     self.lootedFilterBtn = lootedFilterBtn
+    self.collectedMEFilterBtn = collectedMEFilterBtn
     self.duplicatesFilterBtn = duplicatesFilterBtn
 
     
@@ -3264,6 +3337,7 @@ function Viewer:CreateWindow()
         Viewer.columnFilters.duplicates = false 
         
         Viewer.lootedFilterState = nil 
+        Viewer.collectedMEFilterState = nil 
 
         
         Viewer.searchTerm = ""

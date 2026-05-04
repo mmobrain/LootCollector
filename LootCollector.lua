@@ -123,7 +123,9 @@ local dbDefaults = {
             hideUncached = false,
             hideUnconfirmed = false,
             hideLearnedTransmog = false,
+            hideCollectedME = false,
 		    hidePlayerNames = false,
+            disableFadeEffect = false,
             pinSize = 17, 
             minimapPinSize = 14, 
             showZoneSummaries = false,
@@ -432,6 +434,7 @@ function LootCollector:GetFilters()
     if f.hideUnconfirmed == nil then f.hideUnconfirmed = false end
     if f.hideUncached == nil then f.hideUncached = false end
     if f.hideLearnedTransmog == nil then f.hideLearnedTransmog = false end
+    if f.hideCollectedME == nil then f.hideCollectedME = false end
     if f.minRarity == nil then f.minRarity = 0 end
     if f.allowedEquipLoc == nil then f.allowedEquipLoc = {} end
     if f.usableByClasses == nil then f.usableByClasses = {} end
@@ -440,6 +443,7 @@ function LootCollector:GetFilters()
     if f.showWorldforged == nil then f.showWorldforged = true end
     if f.maxMinimapDistance == nil then f.maxMinimapDistance = 1400 end
     if f.pinSize == nil then f.pinSize = 16 end
+    if f.disableFadeEffect == nil then f.disableFadeEffect = false end
     return f
 end
 
@@ -459,6 +463,60 @@ end
 local appearanceCache = {}
 local appearanceCacheTime = {}
 local APPEARANCE_CACHE_DURATION = 300
+
+local meCollectedCache = {}
+local meCollectedCacheTime = {}
+local ME_COLLECTED_CACHE_DURATION = 300
+
+function LootCollector:IsMysticEnchantCollected(itemID)
+    if not itemID or itemID == 0 then return false end
+
+    local now = GetTime()
+    if meCollectedCacheTime[itemID] and (now - meCollectedCacheTime[itemID]) < ME_COLLECTED_CACHE_DURATION then
+        return meCollectedCache[itemID]
+    end
+
+    local isCollected = false
+
+    -- Try direct API first (Ascension-specific)
+    if C_MysticEnchant and C_MysticEnchant.IsCollected then
+        local ok, result = pcall(C_MysticEnchant.IsCollected, itemID)
+        if ok and result then
+            isCollected = true
+        end
+    end
+
+    -- Fallback: scan the item tooltip for "Collected" text
+    if not isCollected then
+        local scannerName = "LootCollectorMEScannerTooltip"
+        local scanner = _G[scannerName]
+        if not scanner then
+            scanner = CreateFrame("GameTooltip", scannerName, UIParent, "GameTooltipTemplate")
+            scanner:SetOwner(UIParent, "ANCHOR_NONE")
+        end
+        scanner:ClearLines()
+        scanner:SetOwner(UIParent, "ANCHOR_NONE")
+        scanner:SetHyperlink("item:" .. itemID)
+
+        for i = 1, scanner:NumLines() do
+            local leftText = _G[scannerName .. "TextLeft" .. i]
+            if leftText then
+                local text = leftText:GetText()
+                local stripped = text and text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "") or ""
+                if stripped == "Collected" then
+                    isCollected = true
+                    break
+                end
+            end
+        end
+        scanner:Hide()
+    end
+
+    meCollectedCache[itemID] = isCollected
+    meCollectedCacheTime[itemID] = now
+
+    return isCollected
+end
 
 function LootCollector:IsAppearanceCollected(itemID)
     if not itemID or itemID == 0 then return false end
@@ -495,6 +553,10 @@ function LootCollector:DiscoveryPassesFilters(d)
     end
 
     if f.hideLearnedTransmog and d.i and d.i > 0 and self:IsAppearanceCollected(d.i) then
+        return false
+    end
+
+    if f.hideCollectedME and Constants and d.dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL and d.i and d.i > 0 and self:IsMysticEnchantCollected(d.i) then
         return false
     end
 
@@ -1229,4 +1291,146 @@ SlashCmdList["LCCLEANUP"] = function()
     else
         print("|cffff7f00LootCollector:|r Core module not available.")
     end
+end
+
+-- Diagnostic command: /lcme [itemID]
+-- Dumps C_MysticEnchant API and tests ME collection detection for a given item
+SLASH_LCMEDIAG1 = "/lcme"
+SlashCmdList["LCMEDIAG"] = function(msg)
+    local prefix = "|cff00ff00[LC-ME-Diag]|r "
+
+    -- 1. Dump all C_MysticEnchant methods
+    print(prefix .. "--- C_MysticEnchant API dump ---")
+    if C_MysticEnchant then
+        local count = 0
+        for k, v in pairs(C_MysticEnchant) do
+            print(prefix .. "  " .. tostring(k) .. " = " .. type(v))
+            count = count + 1
+        end
+        if count == 0 then
+            print(prefix .. "  (table exists but is empty)")
+        end
+    else
+        print(prefix .. "  C_MysticEnchant does NOT exist")
+    end
+
+    -- 2. Dump C_MysticEnchant sub-tables (sometimes APIs are nested)
+    print(prefix .. "--- Checking related globals ---")
+    for _, name in ipairs({"C_MysticEnchantCollection", "C_Enchant", "C_MysticScroll", "C_Collection"}) do
+        if _G[name] then
+            print(prefix .. "  " .. name .. " EXISTS:")
+            for k, v in pairs(_G[name]) do
+                print(prefix .. "    " .. tostring(k) .. " = " .. type(v))
+            end
+        end
+    end
+
+    -- 3. Test with a specific item ID
+    local testID = tonumber(msg) or 200118 -- default: Air Ascendance from screenshot
+    print(prefix .. "--- Testing itemID: " .. testID .. " ---")
+
+    -- 3a. GetItemInfo
+    local itemName, itemLink, _, _, _, _, _, _, _, itemTexture = GetItemInfo(testID)
+    print(prefix .. "  GetItemInfo name: " .. tostring(itemName))
+    print(prefix .. "  GetItemInfo link: " .. tostring(itemLink))
+
+    -- 3b. GetItemSpell (what spell does this item teach?)
+    if GetItemSpell then
+        local spellName, spellID = GetItemSpell(testID)
+        print(prefix .. "  GetItemSpell: name=" .. tostring(spellName) .. " id=" .. tostring(spellID))
+
+        if spellID then
+            -- Check if spell is known
+            if IsSpellKnown then
+                print(prefix .. "  IsSpellKnown(" .. spellID .. "): " .. tostring(IsSpellKnown(spellID)))
+            end
+            if IsPlayerSpell then
+                print(prefix .. "  IsPlayerSpell(" .. spellID .. "): " .. tostring(IsPlayerSpell(spellID)))
+            end
+        end
+    end
+
+    -- 3c. Scanner tooltip dump
+    local scannerName = "LootCollectorMEScannerTooltip"
+    local scanner = _G[scannerName]
+    if not scanner then
+        scanner = CreateFrame("GameTooltip", scannerName, UIParent, "GameTooltipTemplate")
+    end
+    scanner:SetOwner(UIParent, "ANCHOR_NONE")
+    scanner:ClearLines()
+    scanner:SetHyperlink("item:" .. testID)
+
+    print(prefix .. "  Scanner tooltip lines (" .. scanner:NumLines() .. "):")
+    for i = 1, scanner:NumLines() do
+        local leftFS = _G[scannerName .. "TextLeft" .. i]
+        local rightFS = _G[scannerName .. "TextRight" .. i]
+        local leftText = leftFS and leftFS:GetText() or ""
+        local rightText = rightFS and rightFS:GetText() or ""
+        local r, g, b = 1, 1, 1
+        if leftFS and leftFS.GetTextColor then
+            r, g, b = leftFS:GetTextColor()
+        end
+        print(prefix .. string.format("    L%d: [%.1f,%.1f,%.1f] %s | %s", i, r, g, b, leftText, rightText))
+        -- Byte dump for lines containing "Collect"
+        if leftText and leftText:find("Collect") then
+            local bytes = {}
+            for j = 1, #leftText do
+                bytes[#bytes+1] = string.format("%02X", string.byte(leftText, j))
+            end
+            print(prefix .. "    ^ BYTES: " .. table.concat(bytes, " "))
+            print(prefix .. "    ^ LEN: " .. #leftText .. " == 'Collected': " .. tostring(leftText == "Collected"))
+        end
+    end
+    scanner:Hide()
+
+    -- 4. Direct test of IsMysticEnchantCollected
+    print(prefix .. "--- Direct IsMysticEnchantCollected test ---")
+    -- Clear cache first to force re-scan
+    meCollectedCache[testID] = nil
+    meCollectedCacheTime[testID] = nil
+    local result = LootCollector:IsMysticEnchantCollected(testID)
+    print(prefix .. "  IsMysticEnchantCollected(" .. testID .. ") = " .. tostring(result))
+
+    -- 5. Check the filter setting
+    print(prefix .. "--- Filter setting check ---")
+    local filters = LootCollector:GetFilters()
+    print(prefix .. "  hideCollectedME = " .. tostring(filters.hideCollectedME))
+
+    -- 6. Check GetEnchantInfoByItem
+    print(prefix .. "--- C_MysticEnchant.GetEnchantInfoByItem test ---")
+    if C_MysticEnchant and C_MysticEnchant.GetEnchantInfoByItem then
+        local ok, r1, r2, r3, r4, r5 = pcall(C_MysticEnchant.GetEnchantInfoByItem, testID)
+        if ok then
+            print(prefix .. "  Returns: " .. tostring(r1) .. ", " .. tostring(r2) .. ", " .. tostring(r3) .. ", " .. tostring(r4) .. ", " .. tostring(r5))
+        else
+            print(prefix .. "  ERROR: " .. tostring(r1))
+        end
+    end
+
+    -- 7. Check GetMysticScrolls (list of collected scrolls?)
+    print(prefix .. "--- C_MysticEnchant.GetMysticScrolls test ---")
+    if C_MysticEnchant and C_MysticEnchant.GetMysticScrolls then
+        local ok, scrolls = pcall(C_MysticEnchant.GetMysticScrolls)
+        if ok and scrolls then
+            print(prefix .. "  Type: " .. type(scrolls))
+            if type(scrolls) == "table" then
+                local count = 0
+                for k, v in pairs(scrolls) do
+                    if count < 5 then
+                        print(prefix .. "    [" .. tostring(k) .. "] = " .. tostring(v))
+                    end
+                    count = count + 1
+                end
+                print(prefix .. "  Total entries: " .. count)
+            else
+                print(prefix .. "  Value: " .. tostring(scrolls))
+            end
+        elseif ok then
+            print(prefix .. "  Returned nil")
+        else
+            print(prefix .. "  ERROR: " .. tostring(scrolls))
+        end
+    end
+
+    print(prefix .. "--- End diagnostic ---")
 end

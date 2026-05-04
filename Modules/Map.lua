@@ -912,6 +912,8 @@ local function GetQualityColor(quality)
 end
 
 local function AlphaForStatus(status)
+  local f = L:GetFilters()
+  if f.disableFadeEffect then return 1.0 end
   if status == "FADING" then return 0.65 elseif status == "STALE" then return 0.45 end
   return 1.0
 end
@@ -1412,6 +1414,9 @@ local function BuildFilterEasyMenu()
   addToggle("Hide Faded", "hideFaded", hideSub)
   addToggle("Hide Stale", "hideStale", hideSub)
   addToggle("Hide Collected Appearances", "hideLearnedTransmog", hideSub)
+  addToggle("Hide Collected Mystic Enchants", "hideCollectedME", hideSub)
+  table.insert(hideSub, { text = "", notCheckable = true, disabled = true })
+  addToggle("Disable Fade Effect", "disableFadeEffect", hideSub)
   table.insert(menu, { text = "Hide", hasArrow = true, notCheckable = true, menuList = hideSub })
   
   local showSub = { { text = "Show Item Types", isTitle = true, notCheckable = true } }

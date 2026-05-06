@@ -255,237 +255,240 @@ Constants.CLASS_PROFICIENCIES = {
         armor = {1}, 
         weapons = {37, 39, 41, 44}, 
     },
-    DRUID = {
+DRUID = {
         armor = {1, 2, 7}, 
         weapons = {34, 35, 36, 39, 40, 41}, 
     },
 }
 
+function Constants:DetermineRealmCapabilities()
+    local mode = "WR"
+    local realmName = GetRealmName() or ""
+    
+    
+    if L.db and L.db.profile and L.db.profile.featureOverrides then
+        local override = L.db.profile.featureOverrides.realmType
+        if override and override ~= "AUTO" then
+            self.ACTIVE_REALM_TYPE = override
+            self:_ApplyCapabilitiesForType(override)
+            return
+        end
+    end
+
+    
+    
+    if string.find(realmName, "Vol'jin") or string.find(realmName, "CoA") then
+        mode = "COA"
+    elseif string.find(realmName, "Elune") then
+        mode = "CLASSLESS"
+    elseif string.find(realmName, "Area 52") or string.find(realmName, "A:25") then
+        mode = "WILDCARD"
+    elseif string.find(realmName, "Bronzebeard") or string.find(realmName, "Warcraft Reborn") then
+        mode = "WR"
+    else
+        
+        local isCoA = false
+        local isWildcard = false
+        local isClassless = false
+
+        
+        if _G.C_GameMode and _G.Enum and _G.Enum.GameMode then
+            if _G.C_GameMode:IsGameModeActive(_G.Enum.GameMode.WildCard) then
+                isWildcard = true
+            end
+        end
+
+        
+        if _G.C_CharacterCreate and _G.C_CharacterCreate.CanCreateArchetype then
+            local ok, canCreate = pcall(_G.C_CharacterCreate.CanCreateArchetype)
+            if ok and canCreate then
+                isCoA = true
+            end
+        end
+
+        
+        if not isCoA and _G.C_Player then
+            if _G.C_Player.IsCustomClass and _G.C_Player:IsCustomClass("player") then
+                isCoA = true
+            end
+        end
+
+        
+        if not isCoA and not isWildcard and _G.C_Player then
+            if _G.C_Player.IsHero and _G.C_Player:IsHero("player") then
+                isClassless = true
+            end
+        end
+
+        if isCoA then mode = "COA"
+        elseif isWildcard then mode = "WILDCARD"
+        elseif isClassless then mode = "CLASSLESS"
+        else mode = "WR"
+        end
+    end
+
+    self.ACTIVE_REALM_TYPE = mode
+    self:_ApplyCapabilitiesForType(mode)
+end
+
+function Constants:_ApplyCapabilitiesForType(mode)
+    if mode == "COA" then
+        self._hasArchetypes = true
+        self._hasMysticScrolls = false
+    elseif mode == "WILDCARD" then
+        self._hasArchetypes = false
+        self._hasMysticScrolls = false
+    elseif mode == "CLASSLESS" or mode == "WR" then
+        self._hasArchetypes = false
+        self._hasMysticScrolls = true
+    else
+        self._hasArchetypes = false
+        self._hasMysticScrolls = true
+    end
+end
+
+function Constants:HasMysticScrolls() return self._hasMysticScrolls end
+function Constants:HasArchetypes() return self._hasArchetypes end
+function Constants:GetActiveRealmType() return self.ACTIVE_REALM_TYPE or "WR" end
+
+function Constants:CanSendMessages()
+    local realmName = GetRealmName() or ""
+    
+    if string.find(realmName, "Area 52") then
+        if UnitLevel("player") < 10 then
+            return false
+        end
+    end
+    return true
+end
+
+Constants.CLASS_ABBREVIATIONS = {
+    WARRIOR = "wa", PALADIN = "pa", HUNTER = "hu", ROGUE = "ro",
+    PRIEST = "pr", DEATHKNIGHT = "dk", SHAMAN = "sh", MAGE = "ma",
+    WARLOCK = "lo", DRUID = "dr", HERO = "he", BARBARIAN = "ba",
+    WITCHDOCTOR = "wd", DEMONHUNTER = "dh", WITCHHUNTER = "wh",
+    STORMBRINGER = "sb", FLESHWARDEN = "fw", GUARDIAN = "gu",
+    MONK = "mo", SONOFARUGAL = "sa", RANGER = "ra", CHRONOMANCER = "ch",
+    NECROMANCER = "ne", PYROMANCER = "py", CULTIST = "cu",
+    STARCALLER = "sc", SUNCLERIC = "su", TINKER = "ti",
+    PROPHET = "pt", REAPER = "re", WILDWALKER = "ww", SPIRITMAGE = "sm",
+}
+
+Constants.CLASS_ABBREVIATIONS_REVERSE = {}
+for k, v in pairs(Constants.CLASS_ABBREVIATIONS) do
+    Constants.CLASS_ABBREVIATIONS_REVERSE[v] = k
+end
+
+local BASE_CLASSES = { "WARRIOR","PALADIN","HUNTER","ROGUE","PRIEST","DEATHKNIGHT","SHAMAN","MAGE","WARLOCK","DRUID" }
+local NEW_CLASSES = {
+    "HERO", "BARBARIAN", "WITCHDOCTOR", "DEMONHUNTER", "WITCHHUNTER", "STORMBRINGER",
+    "FLESHWARDEN", "GUARDIAN", "MONK", "SONOFARUGAL", "RANGER", "CHRONOMANCER",
+    "NECROMANCER", "PYROMANCER", "CULTIST", "STARCALLER", "SUNCLERIC", "TINKER",
+    "PROPHET", "REAPER", "WILDWALKER", "SPIRITMAGE"
+}
+
+function Constants:GetActiveClasses()
+    local classes = {}
+    for _, c in ipairs(BASE_CLASSES) do table.insert(classes, c) end
+    if self:HasArchetypes() then
+        for _, c in ipairs(NEW_CLASSES) do table.insert(classes, c) end
+    end
+    return classes
+end
+
+local ALL_ARMOR = {1, 2, 3, 4, 5, 6, 7, 8, 9}
+local ALL_WEAPONS = {30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45}
+for _, c in ipairs(NEW_CLASSES) do
+    Constants.CLASS_PROFICIENCIES[c] = { armor = ALL_ARMOR, weapons = ALL_WEAPONS }
+end
+
+Constants.PROFICIENCY_ARMOR_ISTS = { [1] = true, [2] = true, [3] = true, [4] = true, [5] = true }
+Constants.IST_TO_EQUIPLOC = {
+    [1] = "INVTYPE_CLOTH", [2] = "INVTYPE_LEATHER", [3] = "INVTYPE_MAIL", [4] = "INVTYPE_PLATE", [5] = "INVTYPE_SHIELD",
+    [6] = "INVTYPE_LIBRAM", [7] = "INVTYPE_IDOL", [8] = "INVTYPE_TOTEM", [9] = "INVTYPE_SIGIL", [30] = "INVTYPE_WEAPON", 
+    [34] = "INVTYPE_WEAPON", [37] = "INVTYPE_WEAPON", [40] = "INVTYPE_WEAPON", [41] = "INVTYPE_DAGGER", [31] = "INVTYPE_2HWEAPON", 
+    [35] = "INVTYPE_2HWEAPON", [38] = "INVTYPE_2HWEAPON", [36] = "INVTYPE_2HWEAPON", [39] = "INVTYPE_2HWEAPON", [32] = "INVTYPE_RANGED", 
+    [33] = "INVTYPE_RANGEDRIGHT", [43] = "INVTYPE_RANGEDRIGHT", [44] = "INVTYPE_RANGED", [42] = "INVTYPE_THROWN", [45] = "INVTYPE_FISHINGPOLE",
+}
+
 Constants.HASH_SAP = "LC@Asc.BB25"
 Constants.HASH_SEED = 2025
-
-Constants.HASH_BLACKLIST = {
-   
-}
-
-Constants.rHASH_BLACKLIST = {
-	["f0f44edb"] = true, ["27f22c66"] = true, ["671cab01"] = true,	
-}
-
+Constants.HASH_BLACKLIST = {}
+Constants.rHASH_BLACKLIST = { ["f0f44edb"] = true, ["27f22c66"] = true, ["671cab01"] = true }
 Constants.cHASH_BLACKLIST = {
-["051901b6"] = true, ["da238c3f"] = true, ["cff15644"] = true, ["9a060893"] = true,
-	["2d013949"] = true, ["9eefc783"] = true, ["2f9f0f0a"] = true, ["7e10b250"] = true,
-	["2e8deaa2"] = true, ["bc34aa4f"] = true, ["78cf4671"] = true, ["a9879922"] = true,
-	["b641b413"] = true, ["4c6aab78"] = true,	["fb544442"] = true, ["21cd4aa4"] = true,
-	["324397dd"] = true, ["4bbed387"] = true,	["a84cee53"] = true, ["51ac4ad6"] = true,
-	["387c7ead"] = true, ["dab462d2"] = true, ["71b23c1d"] = true, ["89855da9"] = true,
-	["b0c52c50"] = true, ["2064ff8b"] = true, ["9d113ac7"] = true, ["c42f0d64"] = true,
-	["2ebc9926"] = true,  
-	
-	["8782f429"] = true, ["72aa2219"] = true, ["4c9ca17b"] = true, ["727c0172"] = true,
-	["1d4fb044"] = true, ["e1be2c84"] = true, ["1b6c6c4b"] = true, ["d2f11f88"] = true,	
-	["fe882c07"] = true, ["4837c8dd"] = true,
-	
-	["e6b20cbd"] = true, ["3e931c1f"] = true, ["810003a5"] = true, ["30d5d57f"] = true,
-	["9ac1e6cd"] = true, ["a91117fc"] = true, ["d0ae0c62"] = true, ["e0d4f49b"] = true,	
-	["dbe80f12"] = true, ["1bab3599"] = true, ["657ba6a3"] = true, ["a33da348"] = true,
-	["ffe5ca8c"] = true,
+	["051901b6"] = true, ["da238c3f"] = true, ["cff15644"] = true, ["9a060893"] = true, ["2d013949"] = true, ["9eefc783"] = true, 
+    ["2f9f0f0a"] = true, ["7e10b250"] = true, ["2e8deaa2"] = true, ["bc34aa4f"] = true, ["78cf4671"] = true, ["a9879922"] = true,
+	["b641b413"] = true, ["4c6aab78"] = true, ["fb544442"] = true, ["21cd4aa4"] = true, ["324397dd"] = true, ["4bbed387"] = true,	
+    ["a84cee53"] = true, ["51ac4ad6"] = true, ["387c7ead"] = true, ["dab462d2"] = true, ["71b23c1d"] = true, ["89855da9"] = true,
+	["b0c52c50"] = true, ["2064ff8b"] = true, ["9d113ac7"] = true, ["c42f0d64"] = true, ["2ebc9926"] = true, ["8782f429"] = true, 
+    ["72aa2219"] = true, ["4c9ca17b"] = true, ["727c0172"] = true, ["1d4fb044"] = true, ["e1be2c84"] = true, ["1b6c6c4b"] = true, 
+    ["d2f11f88"] = true, ["fe882c07"] = true, ["4837c8dd"] = true, ["e6b20cbd"] = true, ["3e931c1f"] = true, ["810003a5"] = true, 
+    ["30d5d57f"] = true, ["9ac1e6cd"] = true, ["a91117fc"] = true, ["d0ae0c62"] = true, ["e0d4f49b"] = true, ["dbe80f12"] = true, 
+    ["1bab3599"] = true, ["657ba6a3"] = true, ["a33da348"] = true, ["ffe5ca8c"] = true,
 }
-
 Constants.iHASH_BLACKLIST = {
-	["376eafb7"] = true, ["17cb02f0"] = true, ["f0f44edb"] = true, ["27f22c66"] = true, 	
-	["21cd4aa4"] = true, ["f4f00527"] = true, ["324397dd"] = true, ["4bbed387"] = true, 
-	["387c7ead"] = true, ["dab462d2"] = true, ["71b23c1d"] = true, ["015bea49"] = true,
-	["6620c0ec"] = true, ["a84cee53"] = true, ["89855da9"] = true, ["7e10b250"] = true,	
-	["fb544442"] = true, ["9672c459"] = true, ["30dd772f"] = true, ["cbd6682f"] = true, 	
-	["dd8ece3c"] = true, ["8a250f52"] = true, ["d5309afa"] = true, ["cbe6f90c"] = true, 
-	["051901b6"] = true, ["da238c3f"] = true, ["cff15644"] = true, ["9a060893"] = true,
-	["2d013949"] = true, ["9eefc783"] = true, ["2f9f0f0a"] = true,
-	["2e8deaa2"] = true, ["bc34aa4f"] = true, ["78cf4671"] = true, ["a9879922"] = true,
-	["b641b413"] = true, ["4c6aab78"] = true, ["b0c52c50"] = true, ["2064ff8b"] = true,
-	["2ebc9926"] = true, ["51ac4ad6"] = true, ["9d113ac7"] = true, ["c42f0d64"] = true,
-    
-}
-
-Constants.CLASS_ABBREVIATIONS_REVERSE = {
-  ["wa"] = "WARRIOR", ["pa"] = "PALADIN", ["hu"] = "HUNTER", ["ro"] = "ROGUE",
-  ["pr"] = "PRIEST", ["dk"] = "DEATHKNIGHT", ["sh"] = "SHAMAN", ["ma"] = "MAGE",
-  ["lo"] = "WARLOCK", ["dr"] = "DRUID",
-}
-
-Constants.PROFICIENCY_ARMOR_ISTS = {
-    [1] = true, 
-    [2] = true, 
-    [3] = true, 
-    [4] = true, 
-    [5] = true, 
-}
-
-Constants.IST_TO_EQUIPLOC = {
-    [1] = "INVTYPE_CLOTH",
-    [2] = "INVTYPE_LEATHER",
-    [3] = "INVTYPE_MAIL",
-    [4] = "INVTYPE_PLATE",
-    [5] = "INVTYPE_SHIELD",
-    [6] = "INVTYPE_LIBRAM",
-    [7] = "INVTYPE_IDOL",
-    [8] = "INVTYPE_TOTEM",
-    [9] = "INVTYPE_SIGIL",
-    [30] = "INVTYPE_WEAPON", 
-    [34] = "INVTYPE_WEAPON", 
-    [37] = "INVTYPE_WEAPON", 
-    [40] = "INVTYPE_WEAPON", 
-    [41] = "INVTYPE_DAGGER",
-    [31] = "INVTYPE_2HWEAPON", 
-    [35] = "INVTYPE_2HWEAPON", 
-    [38] = "INVTYPE_2HWEAPON", 
-    [36] = "INVTYPE_2HWEAPON", 
-    [39] = "INVTYPE_2HWEAPON", 
-    [32] = "INVTYPE_RANGED", 
-    [33] = "INVTYPE_RANGEDRIGHT", 
-    [43] = "INVTYPE_RANGEDRIGHT", 
-    [44] = "INVTYPE_RANGED", 
-    [42] = "INVTYPE_THROWN",
-    [45] = "INVTYPE_FISHINGPOLE",
+	["376eafb7"] = true, ["17cb02f0"] = true, ["f0f44edb"] = true, ["27f22c66"] = true, ["21cd4aa4"] = true, ["f4f00527"] = true, 
+    ["324397dd"] = true, ["4bbed387"] = true, ["387c7ead"] = true, ["dab462d2"] = true, ["71b23c1d"] = true, ["015bea49"] = true,
+	["6620c0ec"] = true, ["a84cee53"] = true, ["89855da9"] = true, ["7e10b250"] = true,	["fb544442"] = true, ["9672c459"] = true, 
+    ["30dd772f"] = true, ["cbd6682f"] = true, ["dd8ece3c"] = true, ["8a250f52"] = true, ["d5309afa"] = true, ["cbe6f90c"] = true, 
+	["051901b6"] = true, ["da238c3f"] = true, ["cff15644"] = true, ["9a060893"] = true, ["2d013949"] = true, ["9eefc783"] = true, 
+    ["2f9f0f0a"] = true, ["2e8deaa2"] = true, ["bc34aa4f"] = true, ["78cf4671"] = true, ["a9879922"] = true, ["b641b413"] = true, 
+    ["4c6aab78"] = true, ["b0c52c50"] = true, ["2064ff8b"] = true, ["2ebc9926"] = true, ["51ac4ad6"] = true, ["9d113ac7"] = true, 
+    ["c42f0d64"] = true,
 }
 
 Constants.NameHashCache = {}
-
 function Constants.RoundTo(v, places)
     v = tonumber(v) or 0
-    local mul = 10 ^ (places or 0)
-    return math.floor(v * mul + 0.5) / mul
+    return math.floor(v * (10 ^ (places or 0)) + 0.5) / (10 ^ (places or 0))
 end
-
-function Constants.RoundCoord(v)
-    return Constants.RoundTo(v, Constants.COORD_PRECISION)
-end
-
-function Constants.IsValidOp(op)
-    return op == Constants.OP.DISC or op == Constants.OP.CONF or op == Constants.OP.ACK
-end
-
-function Constants.IsValidAct(act)
-    return act == Constants.ACT.DET or act == Constants.ACT.VER or act == Constants.ACT.SPM or act == Constants.ACT.DUP
-end
-
+function Constants.RoundCoord(v) return Constants.RoundTo(v, Constants.COORD_PRECISION) end
+function Constants.IsValidOp(op) return op == Constants.OP.DISC or op == Constants.OP.CONF or op == Constants.OP.ACK end
+function Constants.IsValidAct(act) return act == Constants.ACT.DET or act == Constants.ACT.VER or act == Constants.ACT.SPM or act == Constants.ACT.DUP end
 function Constants:GetCachedNameHash(name)
     if not name or name == "" then return nil end
-    if Constants.NameHashCache[name] then
-        return Constants.NameHashCache[name]
-    end
-    
+    if Constants.NameHashCache[name] then return Constants.NameHashCache[name] end
     if not XXH_Lua_Lib then return nil end
-    
-    local combined_str = name .. Constants.HASH_SAP
-    local hash_val = XXH_Lua_Lib.XXH32(combined_str, Constants.HASH_SEED)
-    local hex_hash = string.format("%08x", hash_val)
-    
+    local hex_hash = string.format("%08x", XXH_Lua_Lib.XXH32(name .. Constants.HASH_SAP, Constants.HASH_SEED))
     Constants.NameHashCache[name] = hex_hash
     return hex_hash
 end
-
 function Constants:IsHashInList(name, listName)
-    if not name or name == "" or not listName then return false end
-    
     local blacklist = Constants[listName]
-    if not blacklist or not next(blacklist) then return false end 
-    
+    if not name or name == "" or not blacklist or not next(blacklist) then return false end 
     local hex_hash = self:GetCachedNameHash(name)
-    if not hex_hash then return false end
-    
-    return blacklist[hex_hash] == true
+    return hex_hash and (blacklist[hex_hash] == true)
 end
 
-function Constants._DevOverridePrecision(n)
-    if type(n) == "number" and n >= 0 and n <= 6 then
-        Constants.COORD_PRECISION = math.floor(n)
-    end
-end
+function Constants._DevOverridePrecision(n) if type(n) == "number" and n >= 0 and n <= 6 then Constants.COORD_PRECISION = math.floor(n) end end
+function Constants._DevOverrideCompression(level) if type(level) == "number" and level >= 1 and level <= 9 then Constants.DEFLATE_LEVEL = math.floor(level) end end
+function Constants._DevOverrideAckThreshold(n) if type(n) == "number" and n >= 1 and n <= 100 then Constants.ACK_HOLD_THRESHOLD = math.floor(n) end end
 
-function Constants._DevOverrideCompression(level)
-    if type(level) == "number" and level >= 1 and level <= 9 then
-        Constants.DEFLATE_LEVEL = math.floor(level)
-    end
-end
-
-function Constants._DevOverrideAckThreshold(n)
-    if type(n) == "number" and n >= 1 and n <= 100 then
-        Constants.ACK_HOLD_THRESHOLD = math.floor(n)
-    end
-end
-
-function Constants:GetProtocolVersion()
-    return Constants.PROTO_V
-end
-
-function Constants:GetMinCompatibleVersion()
-    return Constants.MIN_COMPATIBLE_VERSION
-end
-
-function Constants:GetAllowedDiscoveryTypes()
-    return Constants.ALLOWED_DISCOVERY_TYPES
-end
-
-function Constants:GetOp()
-    return Constants.OP
-end
-
-function Constants:GetAct()
-    return Constants.ACT
-end
-
-function Constants:GetStatusConstants()
-    return Constants.STATUS
-end
-
-function Constants:GetCoordPrecision()
-    return Constants.COORD_PRECISION
-end
-
-function Constants:GetMaxChatBytes()
-    return Constants.MAX_CHAT_BYTES
-end
-
-function Constants:GetDeflateLevel()
-    return Constants.DEFLATE_LEVEL
-end
-
-function Constants:GetSeenTtl()
-    return Constants.SEEN_TTL_SECONDS
-end
-
-function Constants:GetCooldownTtl()
-    return Constants.COOLDOWN_TTL
-end
-
-function Constants:GetChatMinInterval()
-    return Constants.CHAT_MIN_INTERVAL
-end
-
-function Constants:GetAckHoldThreshold()
-    return Constants.ACK_HOLD_THRESHOLD
-end
-
-function Constants:GetDefaultPrefix()
-    return Constants.ADDON_PREFIX_DEFAULT
-end
-
-function Constants:GetDefaultChannel()
-    return Constants.CHANNEL_NAME_DEFAULT
-end
+function Constants:GetProtocolVersion() return Constants.PROTO_V end
+function Constants:GetMinCompatibleVersion() return Constants.MIN_COMPATIBLE_VERSION end
+function Constants:GetAllowedDiscoveryTypes() return Constants.ALLOWED_DISCOVERY_TYPES end
+function Constants:GetOp() return Constants.OP end
+function Constants:GetAct() return Constants.ACT end
+function Constants:GetStatusConstants() return Constants.STATUS end
+function Constants:GetCoordPrecision() return Constants.COORD_PRECISION end
+function Constants:GetMaxChatBytes() return Constants.MAX_CHAT_BYTES end
+function Constants:GetDeflateLevel() return Constants.DEFLATE_LEVEL end
+function Constants:GetSeenTtl() return Constants.SEEN_TTL_SECONDS end
+function Constants:GetCooldownTtl() return Constants.COOLDOWN_TTL end
+function Constants:GetChatMinInterval() return Constants.CHAT_MIN_INTERVAL end
+function Constants:GetAckHoldThreshold() return Constants.ACK_HOLD_THRESHOLD end
+function Constants:GetDefaultPrefix() return Constants.ADDON_PREFIX_DEFAULT end
+function Constants:GetDefaultChannel() return Constants.CHANNEL_NAME_DEFAULT end
 
 function Constants:UpdateAllowedTypes()
     if L.db and L.db.profile then
-        
-        
-        local msEnabled = not L.db.profile.disableMysticScrolls
-        self.ALLOWED_DISCOVERY_TYPES[self.DISCOVERY_TYPE.MYSTIC_SCROLL] = msEnabled
+        local userWantsMS = not L.db.profile.disableMysticScrolls
+        self.ALLOWED_DISCOVERY_TYPES[self.DISCOVERY_TYPE.MYSTIC_SCROLL] = (userWantsMS and self:HasMysticScrolls())
     end
 end
 
 function Constants:OnInitialize()
-    
+    self:DetermineRealmCapabilities()
     self:UpdateAllowedTypes()
 end
 

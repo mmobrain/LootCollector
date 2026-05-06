@@ -99,20 +99,6 @@ local guidPrefixesToPurge = {
 	["1-363-"] = true,
 }
 
-local CLASS_ABBREVIATIONS = {
-    WARRIOR = "wa",
-    PALADIN = "pa",
-    HUNTER = "hu",
-    ROGUE = "ro",
-    PRIEST = "pr",
-    DEATHKNIGHT = "dk",
-    SHAMAN = "sh",
-    MAGE = "ma",
-    WARLOCK = "lo",
-    DRUID = "dr",
-}
-
-local CLASS_TOKENS = { "WARRIOR","PALADIN","HUNTER","ROGUE","PRIEST","DEATHKNIGHT","SHAMAN","MAGE","WARLOCK","DRUID" }
 local CLASS_LOCAL_BY_TOKEN, TOKEN_BY_LOCAL = nil, nil
 
 local function BuildClassLocalizationMaps()
@@ -120,7 +106,8 @@ local function BuildClassLocalizationMaps()
     CLASS_LOCAL_BY_TOKEN, TOKEN_BY_LOCAL = {}, {}
     local m = _G.LOCALIZED_CLASS_NAMES_MALE or {}
     local f = _G.LOCALIZED_CLASS_NAMES_FEMALE or {}
-    for _, tok in ipairs(CLASS_TOKENS) do
+    local activeClasses = Constants:GetActiveClasses()
+    for _, tok in ipairs(activeClasses) do
         local loc = m[tok] or f[tok] or tok
         CLASS_LOCAL_BY_TOKEN[tok] = loc
         TOKEN_BY_LOCAL[string.lower(loc)] = tok
@@ -181,8 +168,8 @@ end
 
 local function GetItemClassAbbr(itemLinkOrID)
     local tok = ExtractClassTokenFromTooltip(itemLinkOrID)
-    if tok and CLASS_ABBREVIATIONS[tok] then
-        return CLASS_ABBREVIATIONS[tok]
+    if tok and Constants.CLASS_ABBREVIATIONS[tok] then
+        return Constants.CLASS_ABBREVIATIONS[tok]
     end
     return "cl"
 end
@@ -2043,6 +2030,11 @@ function Core:OnInitialize()
     end
 
     ScheduleAfter(8, function()
+        local Constants = L:GetModule("Constants", true)
+        if Constants then
+            print(string.format("|cff00ff00LootCollector:|r Realm capabilities mapped: |cffffff00%s|r mode.", Constants:GetActiveRealmType()))
+        end
+        
 	    Core:FixIncorrectInstanceContinentIDs()
         Core:ConvertLegacyInstanceData() 
         Core:PurgeEmbossedScrolls()
@@ -2113,10 +2105,21 @@ function Core:HandleLocalLoot(discovery)
         end
     end
 
-    if isVendorDiscovery then
+	if isVendorDiscovery then
         if not dt then
             dt = Constants.DISCOVERY_TYPE.BLACKMARKET
             discovery.dt = dt
+        end
+
+        local vType = discovery.vendorType
+        if not vType then
+            local id = tonumber(discovery.i) or 0
+            if id >= -499999 and id <= -400000 then vType = "MS" end
+        end
+
+        
+        if vType == "MS" and not Constants:HasMysticScrolls() then
+            return
         end
         
         local c = tonumber(discovery.c) or 0

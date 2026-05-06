@@ -1,3 +1,9 @@
+## LootCollector 0.7.51 - Initial interface compatibility update for non "Warcraft Reborn" Ascension realms. (Special thanks to **Netherborne** for the CoA invite that made this update possible.)
+- **Dynamic Realm Capabilities:** The addon now automatically detects your active realm type (Warcraft Reborn, Classless, CoA, or Wildcard) to toggle unsupported features like Mystic Scrolls. Added a manual override dropdown in Settings.
+- **CoA Class Support:** Added native support and proficiency mappings for custom archetype classes (Barbarian, Witchdoctor, Reaper, etc.), fixing Lua crashes caused by Ascension's background UI tooltip scanning.
+- **Network:** Automatically pauses outgoing database sharing for characters under level 10 on Area 52 realm to prevent "You don't have permission..." chat errors.
+- **QOL:** You can now toggle "Disable Nearby Discoveries" in Settings window and the quick Map Filter dropdown (->Hide).
+
 ## LootCollector 0.7.49 - New Filters, QOL (Raxxlian/Rhenyra)
 - **Added Filter to hide:** Collected Mystic Enchants and WF items you've collected their appearance.
 - **QOL:** Added option to disable the fading effect of the stale items.

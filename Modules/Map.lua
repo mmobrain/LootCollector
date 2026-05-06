@@ -1418,6 +1418,18 @@ local function BuildFilterEasyMenu()
   table.insert(hideSub, { text = "", notCheckable = true, disabled = true })
   addToggle("Disable Fade Effect", "disableFadeEffect", hideSub)
   table.insert(menu, { text = "Hide", hasArrow = true, notCheckable = true, menuList = hideSub })
+    table.insert(hideSub, {
+      text = "Disable 'Nearby Discoveries'",
+      checked = f.disableProximityList,
+      keepShownOnClick = true,
+      func = function()
+          f.disableProximityList = not f.disableProximityList
+          if f.disableProximityList then
+              local PL = L:GetModule("ProximityList", true)
+              if PL and PL.Hide then PL:Hide() end
+          end
+      end
+  })
   
   local showSub = { { text = "Show Item Types", isTitle = true, notCheckable = true } }
   table.insert(showSub, { text = "Mystic Scrolls", checked = f.showMysticScrolls, keepShownOnClick = true, func = function() f.showMysticScrolls = not f.showMysticScrolls; Map.cacheIsDirty = true; Map:Update(); Map:UpdateMinimap() end })
@@ -1485,8 +1497,10 @@ table.insert(showSub, {
   end
   table.insert(menu, { text = "Slots", hasArrow = true, notCheckable = true, menuList = slotsSub })
 
-  local usableBySub = { { text = "Usable by", isTitle = true, notCheckable = true }, { text = "Clear All", notCheckable = true, func = function() for k in pairs(f.usableByClasses) do f.usableByClasses[k] = nil end; Map.cacheIsDirty = true; Map:Update(); Map:UpdateMinimap() end } }
-  for _, classTok in ipairs(CLASS_OPTIONS) do
+local usableBySub = { { text = "Usable by", isTitle = true, notCheckable = true }, { text = "Clear All", notCheckable = true, func = function() for k in pairs(f.usableByClasses) do f.usableByClasses[k] = nil end; Map.cacheIsDirty = true; Map:Update(); Map:UpdateMinimap() end } }
+  local Constants = L:GetModule("Constants", true)
+  local activeClasses = Constants and Constants:GetActiveClasses() or { "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "DEATHKNIGHT", "SHAMAN", "MAGE", "WARLOCK", "DRUID" }
+  for _, classTok in ipairs(activeClasses) do
     local locName = (LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[classTok]) or classTok
     table.insert(usableBySub, {
       text = locName,
@@ -1532,7 +1546,7 @@ function Map:EnsureFilterUI()
   if not WorldMapFrame then return end
   if not FilterButton then
     FilterButton = CreateFrame("Button", "LootCollectorFilterButton", WorldMapFrame, "UIPanelButtonTemplate")
-    FilterButton:SetSize(24, 20)
+    FilterButton:SetSize(26, 20)
     FilterButton:SetText("LC")
     FilterButton:SetFrameStrata("HIGH")
     FilterButton:SetFrameLevel(WorldMapFrame:GetFrameLevel() + 10)
@@ -1666,17 +1680,19 @@ function Map:BuildPin()
         end
     end
     
-    local ProximityList = L:GetModule("ProximityList", true)
-    if ProximityList and not IsControlKeyDown() then
-        if ProximityList.UpdateForPin then
-            local clusterFound = ProximityList:UpdateForPin(self)
-            if clusterFound then
-                Map:HideDiscoveryTooltip() 
-                return
-            end
-        end
-    end
-  end)
+	local ProximityList = L:GetModule("ProximityList", true)
+		local disableProx = L.db and L.db.profile and L.db.profile.mapFilters and L.db.profile.mapFilters.disableProximityList
+				
+		if ProximityList and not disableProx and not IsControlKeyDown() then
+			if ProximityList.UpdateForPin then
+				local clusterFound = ProximityList:UpdateForPin(self)
+				if clusterFound then
+					Map:HideDiscoveryTooltip() 
+					return
+				end
+			end
+		end
+	  end)
 
   frame:SetScript("OnLeave", function(self)
     L._debug("Map", "OnLeave - Pin")

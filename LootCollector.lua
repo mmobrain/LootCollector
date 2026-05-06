@@ -478,7 +478,7 @@ function LootCollector:IsMysticEnchantCollected(itemID)
 
     local isCollected = false
 
-    -- Try direct API first (Ascension-specific)
+    
     if C_MysticEnchant and C_MysticEnchant.IsCollected then
         local ok, result = pcall(C_MysticEnchant.IsCollected, itemID)
         if ok and result then
@@ -486,7 +486,7 @@ function LootCollector:IsMysticEnchantCollected(itemID)
         end
     end
 
-    -- Fallback: scan the item tooltip for "Collected" text
+    
     if not isCollected then
         local scannerName = "LootCollectorMEScannerTooltip"
         local scanner = _G[scannerName]
@@ -1080,6 +1080,23 @@ function LootCollector:PreInitializeMigration()
     StaticPopup_Show("LOOTCOLLECTOR_MIGRATION_RELOAD")
 end
 
+if _G.GetSpecName then
+    local origGetSpecName = _G.GetSpecName
+    _G.GetSpecName = function(class, spec, ...)
+        if class == nil then return "" end
+        return origGetSpecName(class, spec, ...)
+    end
+end
+
+if _G.GameTooltip_GetEnchantRequirements then
+    local origReq = _G.GameTooltip_GetEnchantRequirements
+    _G.GameTooltip_GetEnchantRequirements = function(...)
+        local ok, res = pcall(origReq, ...)
+        if ok then return res end
+        return nil
+    end
+end
+
 function LootCollector:OnInitialize()
     
     self:PreInitializeMigration()
@@ -1110,7 +1127,7 @@ function LootCollector:OnInitialize()
 
     self.channelReady = false
     self.name         = "LootCollector"
-    self.Version      = "beta-0.7.49"
+    self.Version      = "beta-0.7.51"
 
     local Constants = self:GetModule("Constants", true)
     if Constants and Constants.GetDefaultChannel then
@@ -1293,13 +1310,11 @@ SlashCmdList["LCCLEANUP"] = function()
     end
 end
 
--- Diagnostic command: /lcme [itemID]
--- Dumps C_MysticEnchant API and tests ME collection detection for a given item
 SLASH_LCMEDIAG1 = "/lcme"
 SlashCmdList["LCMEDIAG"] = function(msg)
     local prefix = "|cff00ff00[LC-ME-Diag]|r "
 
-    -- 1. Dump all C_MysticEnchant methods
+    
     print(prefix .. "--- C_MysticEnchant API dump ---")
     if C_MysticEnchant then
         local count = 0
@@ -1314,7 +1329,7 @@ SlashCmdList["LCMEDIAG"] = function(msg)
         print(prefix .. "  C_MysticEnchant does NOT exist")
     end
 
-    -- 2. Dump C_MysticEnchant sub-tables (sometimes APIs are nested)
+    
     print(prefix .. "--- Checking related globals ---")
     for _, name in ipairs({"C_MysticEnchantCollection", "C_Enchant", "C_MysticScroll", "C_Collection"}) do
         if _G[name] then
@@ -1325,22 +1340,22 @@ SlashCmdList["LCMEDIAG"] = function(msg)
         end
     end
 
-    -- 3. Test with a specific item ID
-    local testID = tonumber(msg) or 200118 -- default: Air Ascendance from screenshot
+    
+    local testID = tonumber(msg) or 200118 
     print(prefix .. "--- Testing itemID: " .. testID .. " ---")
 
-    -- 3a. GetItemInfo
+    
     local itemName, itemLink, _, _, _, _, _, _, _, itemTexture = GetItemInfo(testID)
     print(prefix .. "  GetItemInfo name: " .. tostring(itemName))
     print(prefix .. "  GetItemInfo link: " .. tostring(itemLink))
 
-    -- 3b. GetItemSpell (what spell does this item teach?)
+    
     if GetItemSpell then
         local spellName, spellID = GetItemSpell(testID)
         print(prefix .. "  GetItemSpell: name=" .. tostring(spellName) .. " id=" .. tostring(spellID))
 
         if spellID then
-            -- Check if spell is known
+            
             if IsSpellKnown then
                 print(prefix .. "  IsSpellKnown(" .. spellID .. "): " .. tostring(IsSpellKnown(spellID)))
             end
@@ -1350,7 +1365,7 @@ SlashCmdList["LCMEDIAG"] = function(msg)
         end
     end
 
-    -- 3c. Scanner tooltip dump
+    
     local scannerName = "LootCollectorMEScannerTooltip"
     local scanner = _G[scannerName]
     if not scanner then
@@ -1371,7 +1386,7 @@ SlashCmdList["LCMEDIAG"] = function(msg)
             r, g, b = leftFS:GetTextColor()
         end
         print(prefix .. string.format("    L%d: [%.1f,%.1f,%.1f] %s | %s", i, r, g, b, leftText, rightText))
-        -- Byte dump for lines containing "Collect"
+        
         if leftText and leftText:find("Collect") then
             local bytes = {}
             for j = 1, #leftText do
@@ -1383,20 +1398,20 @@ SlashCmdList["LCMEDIAG"] = function(msg)
     end
     scanner:Hide()
 
-    -- 4. Direct test of IsMysticEnchantCollected
+    
     print(prefix .. "--- Direct IsMysticEnchantCollected test ---")
-    -- Clear cache first to force re-scan
+    
     meCollectedCache[testID] = nil
     meCollectedCacheTime[testID] = nil
     local result = LootCollector:IsMysticEnchantCollected(testID)
     print(prefix .. "  IsMysticEnchantCollected(" .. testID .. ") = " .. tostring(result))
 
-    -- 5. Check the filter setting
+    
     print(prefix .. "--- Filter setting check ---")
     local filters = LootCollector:GetFilters()
     print(prefix .. "  hideCollectedME = " .. tostring(filters.hideCollectedME))
 
-    -- 6. Check GetEnchantInfoByItem
+    
     print(prefix .. "--- C_MysticEnchant.GetEnchantInfoByItem test ---")
     if C_MysticEnchant and C_MysticEnchant.GetEnchantInfoByItem then
         local ok, r1, r2, r3, r4, r5 = pcall(C_MysticEnchant.GetEnchantInfoByItem, testID)
@@ -1407,7 +1422,7 @@ SlashCmdList["LCMEDIAG"] = function(msg)
         end
     end
 
-    -- 7. Check GetMysticScrolls (list of collected scrolls?)
+    
     print(prefix .. "--- C_MysticEnchant.GetMysticScrolls test ---")
     if C_MysticEnchant and C_MysticEnchant.GetMysticScrolls then
         local ok, scrolls = pcall(C_MysticEnchant.GetMysticScrolls)

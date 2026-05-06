@@ -19,6 +19,11 @@ local function ChatFilter(_, _, msg, _, _, _, _, _, _, _, channelName)
     local chB = string.upper(Comm.channelName or "")
     if chA ~= chB then return false end
     
+  
+    if L.db and L.db.profile and L.db.profile.chatDebug then
+        return false
+    end
+    
     if type(msg) == "string" and msg:match("^LC[1-5]:") then
         return true
     end
@@ -39,6 +44,14 @@ local cachedRealmNameFirstWord = (GetRealmName() or ""):match("^[^- ]+") or ""
 
 local function isSharingEnabled()
     return L.db and L.db.profile and L.db.profile.sharing and L.db.profile.sharing.enabled
+end
+
+local function canSendMessages()
+    local Constants = L:GetModule("Constants", true)
+    if Constants and Constants.CanSendMessages then
+        return Constants:CanSendMessages()
+    end
+    return true
 end
 
 local function isBlacklisted(str)
@@ -629,8 +642,8 @@ end
 function Comm:BroadcastDiscovery(discovery)
     local Core = L:GetModule("Core", true)
     if Core and Core.isSB and Core:isSB() then return end
-
-    if not isSharingEnabled() then return end
+    if not isSharingEnabled() or not canSendMessages() then return end
+    
 
     if L and L.IsPaused and L:IsPaused() then
         if L.pauseQueue and L.pauseQueue.outgoing then
@@ -686,7 +699,7 @@ function Comm:BroadcastShow(discovery, targetPlayer)
         return
     end
     
-    if not isSharingEnabled() then return end
+    if not isSharingEnabled() or not canSendMessages() then return end
 
     L._debug("Comm-Broadcast", string.format("BroadcastShow called. Discovery has dt: %s, src: %s", tostring(discovery.dt), tostring(discovery.src)))
 
@@ -712,7 +725,7 @@ function Comm:BroadcastShow(discovery, targetPlayer)
 end
 
 function Comm:BroadcastGuidedFix(fixData)
-    if not isSharingEnabled() then return end
+    if not isSharingEnabled() or not canSendMessages() then return end
 
     local w = self:_buildWireV5_GFIX(fixData)
     if not w then return end
@@ -725,7 +738,7 @@ function Comm:BroadcastGuidedFix(fixData)
 end
 
 function Comm:BroadcastAckFor(discovery, ackMid, act)    
-    if not isSharingEnabled() then return end
+    if not isSharingEnabled() or not canSendMessages() then return end
 
     L._debug("Comm-Broadcast", string.format("Preparing to broadcast ACK for mid: %s, act: %s", tostring(ackMid), tostring(act)))
 
@@ -1377,7 +1390,7 @@ end
 function Comm:RouteIncoming(tbl, via, sender)   
     local Dev = L:GetModule("DevCommands", true)
     if Dev and Dev.LogPerformanceMessage then
-        Dev:LogPerformanceMessage(sender)
+        Dev:LogPerformanceMessage(sender, tbl.av)
     end
     
     L._debug("Comm-Route", string.format("Routing parsed payload from %s via %s. OP: %s, Item: %s, Zone: %s", sender, via, tostring(tbl.op), tostring(tbl.i), tostring(tbl.z)))

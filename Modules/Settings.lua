@@ -130,6 +130,11 @@ local function ensureDefaults()
 	if not L.db and L.db.profile then return end
 	local p = L.db.profile
 	if p.hidePlayerNames == nil then p.hidePlayerNames = false end
+    
+    p.featureOverrides = p.featureOverrides or {
+        realmType = "AUTO",
+    }
+    
 	p.sharing = p.sharing or {}
 	if p.sharing.enabled == nil then p.sharing.enabled = true end
 	if p.sharing.anonymous == nil then p.sharing.anonymous = false end
@@ -144,7 +149,6 @@ local function ensureDefaults()
 	if p.sharing.whiteList == nil then p.sharing.whiteList = {} end
 	if p.autoCache == nil then p.autoCache = true end
 
-	
 	p.toasts = p.toasts or {}
 	if p.toasts.enabled == nil then p.toasts.enabled = true end	
 	if p.toasts.displayTime == nil then p.toasts.displayTime = 5.0 end
@@ -154,12 +158,12 @@ local function ensureDefaults()
 	if p.toasts.tickerOutline == nil then p.toasts.tickerOutline = false end
 	if p.toasts.whiteFrame == nil then p.toasts.whiteFrame = true end
     
-    
     p.mapFilters = p.mapFilters or {}
     if p.mapFilters.showMapFilter == nil then p.mapFilters.showMapFilter = true end
     if p.mapFilters.showMinimap == nil then p.mapFilters.showMinimap = true end
     if p.mapFilters.autoTrackNearest == nil then p.mapFilters.autoTrackNearest = false end
     if p.mapFilters.maxMinimapDistance == nil then p.mapFilters.maxMinimapDistance = 0 end 
+	if p.mapFilters.disableProximityList == nil then p.mapFilters.disableProximityList = false end 
 end
 
 local function buildOptions()
@@ -342,7 +346,20 @@ local function buildOptions()
                             end
                         end,
                     },
-			  
+					disableProximityList = {
+						type = "toggle",
+						name = "Disable 'Nearby Discoveries'",
+						order = 8,
+						desc = "Completely disables the 'Nearby Discoveries' list from popping up when hovering over clustered map pins. (You can also hold CTRL to temporarily suppress it).",
+						get = function() return L.db.profile.mapFilters.disableProximityList end,
+						set = function(_, v)
+							L.db.profile.mapFilters.disableProximityList = v
+							if v then
+								local PL = L:GetModule("ProximityList", true)
+								if PL and PL.Hide then PL:Hide() end
+							end
+						end,
+					},
 					
 					toastHeader = {
 						type = "header",
@@ -685,11 +702,15 @@ local function buildOptions()
 								name = "Data Types",
 								order = 14.1,
 							},
-					  disableMysticScrolls = {
-						type = "toggle",
-						name = "Disable Mystic Scrolls",
-						desc = "If checked, Mystic Scroll discoveries will not be recorded, shared, or received from others.",
-						order = 14.2,
+					disableMysticScrolls = {
+								type = "toggle",
+								name = "Disable Mystic Scrolls",
+								desc = "If checked, Mystic Scroll discoveries will not be recorded, shared, or received from others.",
+								order = 14.2,
+								hidden = function() 
+								    local Constants = L:GetModule("Constants", true)
+								    return Constants and not Constants:HasMysticScrolls()
+								end,
 						get = function() return L.db.profile.disableMysticScrolls end,
 						set = function(_, v) 
 						    L.db.profile.disableMysticScrolls = v 
@@ -801,6 +822,32 @@ local function buildOptions()
 					},
 				},
 			},
+			
+			realmOverridesHeader = {
+						type = "header",
+						name = "Realm Capability Overrides",
+						order = 40,
+					},
+                    overrideDesc = {
+                        type = "description",
+                        name = "LootCollector automatically detects the Ascension Realm type to optimize UI and features. If detection fails, you can force the mode here.\n|cffff0000Requires a /reload to apply changes.|r",
+                        order = 41,
+                    },
+realmTypeOverride = {
+						type = "select",
+						name = "Active Realm Mode",
+						order = 42,
+						width = 1.6,
+						values = {
+                            ["AUTO"] = "Auto-Detect (Recommended)",
+                            ["WR"] = "Warcraft Reborn (Bronzebeard) + Mystic Scrolls",
+                            ["WILDCARD"] = "Wildcard (Elune)",
+                            ["COA"] = "CoA (Vol'jin) - No Scrolls",
+                            ["CLASSLESS"] = "Classless (A:25) - No Scrolls",
+                        },
+						get = function() return L.db.profile.featureOverrides.realmType end,
+						set = function(_, v) L.db.profile.featureOverrides.realmType = v; ReloadUI() end,
+					},
 
             
             about = {

@@ -837,7 +837,7 @@ GetFilteredDatasetForUniqueValues = function(context)
             if Viewer.lootedFilterState == false and isLooted then return false end
         end
 
-        -- Collected ME filter
+        
         if Viewer.collectedMEFilterState ~= nil then
             local Constants = L:GetModule("Constants", true)
             local isME = Constants and data.discovery.dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL
@@ -846,7 +846,7 @@ GetFilteredDatasetForUniqueValues = function(context)
                 if Viewer.collectedMEFilterState == true and not isCollectedME then return false end
                 if Viewer.collectedMEFilterState == false and isCollectedME then return false end
             elseif not isME then
-                -- Non-ME items: hide when filtering for collected MEs only
+                
                 if Viewer.collectedMEFilterState == true then return false end
             end
         end
@@ -2064,7 +2064,7 @@ function Viewer:GetFilteredDiscoveries()
             if Viewer.lootedFilterState == false and isLooted then return false end
         end
 
-        -- Collected ME filter
+        
         if Viewer.collectedMEFilterState ~= nil then
             local Constants = L:GetModule("Constants", true)
             local isME = Constants and data.discovery.dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL
@@ -2366,7 +2366,7 @@ function Viewer:UpdateFilterButtonStates()
         end
     end
 
-    -- Collected ME filter button state
+    
     if self.collectedMEFilterBtn then
         if self.collectedMEFilterState == true then
             setButtonTextColor(self.collectedMEFilterBtn, 1, 0.8, 0.2)
@@ -3049,7 +3049,7 @@ function Viewer:CreateWindow()
     end)
     lootedFilterBtn:RegisterForClicks("LeftButtonUp")
 
-    -- Collected ME filter button
+    
     local collectedMEFilterBtn = CreateFrame("Button", nil, additionalFiltersFrame, "UIPanelButtonTemplate")
     collectedMEFilterBtn:SetSize(82, BUTTON_HEIGHT)
     collectedMEFilterBtn:SetPoint("LEFT", lootedFilterBtn, "RIGHT", 3, 0)

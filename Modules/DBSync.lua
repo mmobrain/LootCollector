@@ -253,6 +253,16 @@ function DBSync:ApplyRecord(c, z, i, x4, y4, s, fp_t0, foundBy, q, dt, it, ist, 
     local Constants = L:GetModule("Constants", true)
     if not Core or not Constants then return end
 
+    
+    if Constants.ALLOWED_DISCOVERY_TYPES and dt then
+        if Constants.ALLOWED_DISCOVERY_TYPES[dt] == false then return end
+    end
+
+    local isMSVendor = (i >= -499999 and i <= -400000)
+    if dt == Constants.DISCOVERY_TYPE.BLACKMARKET and isMSVendor then
+        if not Constants:HasMysticScrolls() then return end
+    end
+
     local x = L:Round4((tonumber(x4) or 0) / 10000)
     local y = L:Round4((tonumber(y4) or 0) / 10000)
 
@@ -378,6 +388,12 @@ function DBSync.Shares(scope, targetOrZone, zoneId)
         return
     end
 
+    local Constants = L:GetModule("Constants", true)
+    if Constants and Constants.CanSendMessages and not Constants:CanSendMessages() then
+        print("|cffff7f00LootCollector|r: You cannot share discoveries until you reach level 10 on this realm.")
+        return
+    end
+
     scope = (scope and scope.upper and scope:upper()) or "PARTY"
     
     local distribution
@@ -412,11 +428,19 @@ function DBSync.Shares(scope, targetOrZone, zoneId)
     local recordsToShare = {}
     
     
+local Constants = L:GetModule("Constants", true)
+    local allowedTypes = Constants and Constants.ALLOWED_DISCOVERY_TYPES
+    local msAllowed = Constants and Constants:HasMysticScrolls()
+
+    
     local discoveries = L:GetDiscoveriesDB()
     for _, d in pairs(discoveries or {}) do
         if type(d) == "table" and d.i and not d.onHold then
-            if not zoneFilterID or (d.z == zoneFilterID) then
-                table.insert(recordsToShare, d)
+            
+            if not allowedTypes or allowedTypes[d.dt] ~= false then
+                if not zoneFilterID or (d.z == zoneFilterID) then
+                    table.insert(recordsToShare, d)
+                end
             end
         end
     end
@@ -425,8 +449,12 @@ function DBSync.Shares(scope, targetOrZone, zoneId)
     local vendors = L:GetVendorsDB()
     for _, d in pairs(vendors or {}) do
         if type(d) == "table" and d.i and (not d.vendorItems or #d.vendorItems <= 5) then
-            if not zoneFilterID or (d.z == zoneFilterID) then
-                table.insert(recordsToShare, d)
+            
+            local isMSVendor = (d.vendorType == "MS" or (d.g and d.g:find("MS-", 1, true)))
+            if not isMSVendor or msAllowed then
+                if not zoneFilterID or (d.z == zoneFilterID) then
+                    table.insert(recordsToShare, d)
+                end
             end
         end
     end

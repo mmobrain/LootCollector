@@ -147,6 +147,9 @@ function Detect:IsWorldforged(link)
 end
 
 function Detect:IsMysticScroll(link, source)
+  local Constants = L:GetModule("Constants", true)
+  if Constants and not Constants:HasMysticScrolls() then return false end
+
   local name = (link and select(1, GetItemInfo(link))) or (link and link:match("%[(.-)%]")) or ""
   if name == "" then return false end
   if L.ignoreList and L.ignoreList[name] then return false end
@@ -244,13 +247,16 @@ function Detect:ScanAndRecordVendor()
         isBlackmarket = true
     end
 
-    for _, itemData in ipairs(merchantItems) do
-        if itemData.name and itemData.name:find("Mystic Scroll", 1, true) then
-            sellsMysticScroll = true
-            break
+local Constants = L:GetModule("Constants", true)
+    if Constants and Constants:HasMysticScrolls() then
+        for _, itemData in ipairs(merchantItems) do
+            if itemData.name and itemData.name:find("Mystic Scroll", 1, true) then
+                sellsMysticScroll = true
+                break
+            end
         end
     end
-
+    
     if isBlackmarket or sellsMysticScroll then
         local now = time()
         local px, py = GetPlayerMapPosition("player")
@@ -402,7 +408,9 @@ function Detect:OnNPCInteraction()
     if not merchantItems or #merchantItems == 0 then return end
     local isMSVendor = false
     local isBMVendor = IsBlackmarketArtisan(unitToCheck)
-    if not isBMVendor then
+    local Constants = L:GetModule("Constants", true)
+    
+    if not isBMVendor and Constants and Constants:HasMysticScrolls() then
         for _, itemData in ipairs(merchantItems) do
             if itemData.name and string.find(itemData.name, "Mystic Scroll", 1, true) then
                 isMSVendor = true

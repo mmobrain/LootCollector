@@ -352,12 +352,9 @@ function Constants:HasArchetypes() return self._hasArchetypes end
 function Constants:GetActiveRealmType() return self.ACTIVE_REALM_TYPE or "WR" end
 
 function Constants:CanSendMessages()
-    local realmName = GetRealmName() or ""
-    print("@CanSendMessages")
-    if string.find(realmName, "Area 52") then
-	print("@string.find(realmName, Area 52)")
-        if UnitLevel("player") < 10 then
-		print("@UnitLevel("player")")
+    local realmName = GetRealmName() or ""    
+    if string.find(realmName, "Area 52") then	
+        if UnitLevel("player") < 10 then		
             return false
         end
     end

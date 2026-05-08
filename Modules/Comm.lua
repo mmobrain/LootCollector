@@ -362,6 +362,8 @@ function Comm:EnsureChannelJoined()
     
     local p = L and L.db and L.db.profile
     if not (p and p.sharing and p.sharing.enabled) then return end
+	
+	if not canSendMessages() then return end
     
     local ch = self.channelName or "BBLC25C"
        
@@ -613,6 +615,7 @@ function Comm:_buildWireV5_CORR(corr_data)
 end
 
 function Comm:SendAceCommPayload(wire)
+	if not canSendMessages() then return end
     if not wire then return end
     
     local ok, payload = pcall(AceSerializer.Serialize, AceSerializer, wire)
@@ -759,7 +762,7 @@ function Comm:BroadcastAckFor(discovery, ackMid, act)
 end
 
 function Comm:BroadcastCorrection(corr_data)
-    if not isSharingEnabled() then return end
+    if not isSharingEnabled() or not canSendMessages() then return end
 
     if not (L and L.db and L.db.profile and L.db.profile.sharing and L.db.profile.sharing.enabled) then return end
     local w = self:_buildWireV5_CORR(corr_data)
@@ -770,6 +773,7 @@ function Comm:BroadcastCorrection(corr_data)
 end
 
 local function _sendChannelWireEncoded(wire)
+	if not canSendMessages() then return false end
     if not (LibDeflate and AceSerializer) then return false end
     
     local okS, serialized = pcall(AceSerializer.Serialize, AceSerializer, wire)

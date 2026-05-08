@@ -1080,20 +1080,33 @@ function LootCollector:PreInitializeMigration()
     StaticPopup_Show("LOOTCOLLECTOR_MIGRATION_RELOAD")
 end
 
-if _G.GetSpecName then
-    local origGetSpecName = _G.GetSpecName
-    _G.GetSpecName = function(class, spec, ...)
-        if class == nil then return "" end
-        return origGetSpecName(class, spec, ...)
+local function ApplyAscensionHooks()
+    
+    if _G.ClassInfoUtil and type(_G.ClassInfoUtil.GetSpecName) == "function" and not _G.ClassInfoUtil._LCHooked then
+        _G.ClassInfoUtil.GetSpecName = function(class, spec)
+            if not class or not spec then return "" end
+            local ok, info = pcall(_G.C_ClassInfo.GetSpecInfo, class, spec)
+            if ok and info and info.Name then
+                return info.Name
+            end
+            return ""
+        end
+        _G.ClassInfoUtil._LCHooked = true
+    end
+
+    
+    if type(_G.GameTooltip_GetEnchantRequirements) == "function" and not _G._LCEnchantReqHooked then
+        local origReq = _G.GameTooltip_GetEnchantRequirements
+        _G.GameTooltip_GetEnchantRequirements = function(...)
+            local ok, res = pcall(origReq, ...)
+            if ok then return res end
+            return nil
+        end
+        _G._LCEnchantReqHooked = true
     end
 end
 
-    
-    
-        
-        
-        
-    
+ApplyAscensionHooks()
 
 function LootCollector:OnInitialize()
     
@@ -1125,7 +1138,7 @@ function LootCollector:OnInitialize()
 
     self.channelReady = false
     self.name         = "LootCollector"
-    self.Version      = "beta-0.7.52"
+    self.Version      = "beta-0.7.53"
 
     local Constants = self:GetModule("Constants", true)
     if Constants and Constants.GetDefaultChannel then

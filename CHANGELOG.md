@@ -1,3 +1,7 @@
+## LootCollector 0.7.53 - Fixes
+- **Fix:** (Possibly) fixed bug that caused crash and some Worldforged items were not marked as looted after being collected.
+- **Fix:** More Area 52 dedicated fixes.
+
 ## LootCollector 0.7.52 - Feature, Fixes
 - **Added:** "Show Minimap Button" option under "Visibility" settings.
 - **Fix:** Minimap discovery icons blinking.

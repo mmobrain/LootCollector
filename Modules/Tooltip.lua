@@ -59,7 +59,7 @@ local function DebugPrint(...)
 end
 
 local function DebugPrintTable(tbl, name)
-    if not (L and L.db and L.db.profile and L.db.profile.enhancedWFTooltipDebug) then return end
+    if not (L and L.db and L.db.profile and L.db.profile.enhancedWFTooltipDebug and L.db.profile.debugMode) then return end
     if not tbl then
         DebugPrint(name .. " is nil")
         return

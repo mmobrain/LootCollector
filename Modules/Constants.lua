@@ -353,9 +353,11 @@ function Constants:GetActiveRealmType() return self.ACTIVE_REALM_TYPE or "WR" en
 
 function Constants:CanSendMessages()
     local realmName = GetRealmName() or ""
-    
+    print("@CanSendMessages")
     if string.find(realmName, "Area 52") then
+	print("@string.find(realmName, Area 52)")
         if UnitLevel("player") < 10 then
+		print("@UnitLevel("player")")
             return false
         end
     end

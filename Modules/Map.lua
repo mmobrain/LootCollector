@@ -1919,8 +1919,6 @@ function Map:UpdateMinimap()
                     pin.color_frame:Show()
                 end
             end
-          
-            pin:Show()
         else
             pin:Hide()
             pin.discovery = nil

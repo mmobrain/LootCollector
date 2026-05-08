@@ -1,3 +1,9 @@
+## LootCollector 0.7.52 - Feature, Fixes
+- **Added:** "Show Minimap Button" option under "Visibility" settings.
+- **Fix:** Minimap discovery icons blinking.
+- **Fix:** (Possibly) fixed bug where some Worldforged items were not marked as looted after being collected.
+- **Network Protocol "bump":** Bumped minimum compatible version to 0.7.49.
+
 ## LootCollector 0.7.51 - Initial interface compatibility update for non "Warcraft Reborn" Ascension realms. (Special thanks to **Netherborne** for the CoA invite that made this update possible.)
 - **Dynamic Realm Capabilities:** The addon now automatically detects your active realm type (Warcraft Reborn, Classless, CoA, or Wildcard) to toggle unsupported features like Mystic Scrolls. Added a manual override dropdown in Settings.
 - **CoA Class Support:** Added native support and proficiency mappings for custom archetype classes (Barbarian, Witchdoctor, Reaper, etc.), fixing Lua crashes caused by Ascension's background UI tooltip scanning.

@@ -1914,6 +1914,10 @@ function Core:ProcessIndexerBatch()
     local k = self._indexerNextKey
     local changedCount = 0
 
+    if k ~= nil and db[k] == nil then
+        k = nil
+    end
+
     while processed < MID_GEN_CHUNK_SIZE do
         k, v = next(db, k)
         
@@ -2318,9 +2322,12 @@ function Core:HandleLocalLoot(discovery)
         L:SendMessage("LootCollector_DiscoveriesUpdated", "update", rec.g, rec)
     end
     
-    if not L.db.char then L.db.char = {} end
-    L.db.char.looted = L.db.char.looted or {}
-    L.db.char.looted[rec.g] = time()
+    
+     if L.db and L.db.char then
+        L.db.char.looted = L.db.char.looted or {}
+        L.db.char.looted[rec.g] = time()
+    end
+    
     
     local Map = L:GetModule("Map", true)
     if Map then Map.cacheIsDirty = true end

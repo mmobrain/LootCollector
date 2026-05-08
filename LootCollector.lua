@@ -1088,14 +1088,12 @@ if _G.GetSpecName then
     end
 end
 
-if _G.GameTooltip_GetEnchantRequirements then
-    local origReq = _G.GameTooltip_GetEnchantRequirements
-    _G.GameTooltip_GetEnchantRequirements = function(...)
-        local ok, res = pcall(origReq, ...)
-        if ok then return res end
-        return nil
-    end
-end
+    
+    
+        
+        
+        
+    
 
 function LootCollector:OnInitialize()
     
@@ -1127,7 +1125,7 @@ function LootCollector:OnInitialize()
 
     self.channelReady = false
     self.name         = "LootCollector"
-    self.Version      = "beta-0.7.51"
+    self.Version      = "beta-0.7.52"
 
     local Constants = self:GetModule("Constants", true)
     if Constants and Constants.GetDefaultChannel then

@@ -164,6 +164,7 @@ local function ensureDefaults()
     if p.mapFilters.autoTrackNearest == nil then p.mapFilters.autoTrackNearest = false end
     if p.mapFilters.maxMinimapDistance == nil then p.mapFilters.maxMinimapDistance = 0 end 
 	if p.mapFilters.disableProximityList == nil then p.mapFilters.disableProximityList = false end 
+	if p.minimapButtonHidden == nil then p.minimapButtonHidden = false end
 end
 
 local function buildOptions()
@@ -346,6 +347,24 @@ local function buildOptions()
                             end
                         end,
                     },
+			  showMinimapButton = {
+						type = "toggle",
+						name = "Show Minimap Button",
+						order = 7.1,
+						desc = "Toggle the visibility of the LootCollector minimap button.",
+						get = function() return not L.db.profile.minimapButtonHidden end,
+						set = function(_, v)
+							L.db.profile.minimapButtonHidden = not v
+							local MMBtn = L:GetModule("MinimapButton", true)
+							if MMBtn then
+								if v then 
+									MMBtn:Show() 
+								else 
+									MMBtn:Hide() 
+								end
+							end
+						end,
+					},
 					disableProximityList = {
 						type = "toggle",
 						name = "Disable 'Nearby Discoveries'",

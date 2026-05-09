@@ -142,6 +142,7 @@ function Detect:IsWorldforged(link)
   local c = self._cache.isWF[link]
   if c ~= nil then return c end
   local ok = TooltipHas(link, "Worldforged")
+  L._ddebug("Detect", string.format("IsWorldforged scan for %s: %s", tostring(link), tostring(ok)))
   self._cache.isWF[link] = ok
   return ok
 end
@@ -161,7 +162,10 @@ end
 
 function Detect:Qualifies(link, source)
   if not link then return false end
-  return self:IsWorldforged(link) or self:IsMysticScroll(link, source)
+  local isWF = self:IsWorldforged(link)
+  local isMS = self:IsMysticScroll(link, source)
+  L._ddebug("Detect", string.format("Qualifies check for %s | WF: %s, MS: %s", tostring(link), tostring(isWF), tostring(isMS)))
+  return isWF or isMS
 end
 
 Detect._ctx = {
@@ -195,14 +199,14 @@ function Detect:OnRecoveryEvent(event, arg1, arg2)
     end
 
     if isRecoverySuccess then
-        L._debug("Detect", "Item recovery event detected.")
+        L._ddebug("Detect", "Item recovery event detected.")
         local now = GetTime()
         
         
         if self._lastDiscoveryGUID and (now - self._lastDiscoveryTime < 1.0) then
             local Core = L:GetModule("Core", true)
             if Core and Core.RemoveDiscoveryByGuid then
-                L._debug("Detect", "Retroactively removing last discovery due to recovery: " .. self._lastDiscoveryGUID)
+                L._ddebug("Detect", "Retroactively removing last discovery due to recovery: " .. self._lastDiscoveryGUID)
                 Core:RemoveDiscoveryByGuid(self._lastDiscoveryGUID, "Discovery suppressed due to item recovery.")
             end
         end
@@ -320,14 +324,14 @@ function Detect:OnRecoveryEvent(event, arg1, arg2)
     end
 
     if isRecoverySuccess then
-        L._debug("Detect", "Item recovery event detected.")
+        L._ddebug("Detect", "Item recovery event detected.")
         local now = GetTime()
         
         
         if self._lastDiscoveryGUID and (now - self._lastDiscoveryTime < 2.5) then
             local Core = L:GetModule("Core", true)
             if Core and Core.RemoveDiscoveryByGuid then
-                L._debug("Detect", "Retroactively removing last discovery due to recovery: " .. self._lastDiscoveryGUID)
+                L._ddebug("Detect", "Retroactively removing last discovery due to recovery: " .. self._lastDiscoveryGUID)
                 Core:RemoveDiscoveryByGuid(self._lastDiscoveryGUID, "Discovery suppressed due to item recovery.")
             end
         end
@@ -586,20 +590,44 @@ local function classifySource(ctx, now)
 end
 
 function Detect:OnChatMsgLoot(_, msg)
-    
+    L._ddebug("Detect", "OnChatMsgLoot fired: " .. tostring(msg))
     
     local link = msg and msg:match("|Hitem:%d+:[^|]+|h%[[^%]]+%]|h")
-    if not link then return end
+    if not link then 
+        L._ddebug("Detect", "Dropped: No item link found in chat message.")
+        return 
+    end
 
     local _, _, playerName = string.find(msg, "([^%s]+)%s+receives loot:")
     local looter = playerName or UnitName("player")
-    if looter ~= UnitName("player") then return end
+    
+    if looter ~= UnitName("player") then 
+        L._ddebug("Detect", "Dropped: Looter is not player (" .. tostring(looter) .. ")")
+        return 
+    end
     
     local now = time()
     local src = classifySource(self._ctx, now)
+    L._ddebug("Detect", "Source originally classified as: " .. tostring(src))
+
+    local isWF = self:IsWorldforged(link)
+    if isWF and src == "quest_reward" then
+        if lastLootContext.openedAt and (now - lastLootContext.openedAt) <= LOOT_VALIDITY_WINDOW then
+            src = "world_loot"
+            L._ddebug("Detect", "Override: Changed quest_reward to world_loot (WF items do not come from quests)")      
+        end
+    end
+
     local deniedSources = { mail = true, quest_reward = true, trade = true, crafting = true, mystic_altar = true, vendor = true, bank = true, guild_bank = true, achievement = true }
-    if deniedSources[src] then return end
-    if src == "world_loot" and (now - lastLootContext.openedAt) > LOOT_VALIDITY_WINDOW then return end
+    if deniedSources[src] then 
+        L._ddebug("Detect", "Dropped: Source is in denied list (" .. tostring(src) .. ")")
+        return 
+    end
+
+    if src == "world_loot" and (now - lastLootContext.openedAt) > LOOT_VALIDITY_WINDOW then 
+        L._ddebug("Detect", "Dropped: world_loot timeframe expired (Window closed).")
+        return 
+    end
 
     local c, z, iz, x_val, y_val
     if src == "world_loot" then
@@ -625,15 +653,24 @@ function Detect:OnChatMsgLoot(_, msg)
         x_val, y_val = px or 0, py or 0
     end
     
-    if FORBIDDEN_CITY_ZONES[c] and FORBIDDEN_CITY_ZONES[c][z] then
+	if FORBIDDEN_CITY_ZONES[c] and FORBIDDEN_CITY_ZONES[c][z] then
+        L._ddebug("Detect", "Dropped: Looted inside a forbidden city zone.")
         return
     end
 
-    if not self:Qualifies(link, src) then return end
+    if not self:Qualifies(link, src) then 
+        L._ddebug("Detect", "Dropped: Item does not qualify (Not WF or MS).")
+        return 
+    end
+    
     local last = self._recent[link] or 0
-    if now - last < 1.0 then return end
+    if now - last < 1.0 then 
+        L._ddebug("Detect", "Dropped: Throttled (Looted multiple in <1s).")
+        return 
+    end
     self._recent[link] = now
 
+    L._ddebug("Detect", "SUCCESS: Passing " .. tostring(link) .. " to Core:HandleLocalLoot.")
     local discovery = { il = link, c = c, z = z, iz = iz, xy = { x = x_val, y = y_val }, t0 = now, src = src, fp = looter }
     local Core = L:GetModule("Core", true)
     if Core and Core.HandleLocalLoot then
@@ -650,15 +687,21 @@ function Detect:OnChatMsgLoot(_, msg)
 end
 
 function Detect:ProcessPotentialDiscovery(link, sourceHint, looterName)
-    
-
     local now = time()
     looterName = looterName or UnitName("player")
     local src = classifySource(self._ctx, now)
+        
+    local isWF = self:IsWorldforged(link)
+    if isWF and src == "quest_reward" then
+        if lastLootContext.openedAt and (now - lastLootContext.openedAt) <= LOOT_VALIDITY_WINDOW then
+            src = "world_loot"  
+		end			
+    end
+
     local deniedSources = { mail = true, quest_reward = true, trade = true, crafting = true, mystic_altar = true, vendor = true, vendor_buyback = true, bank = true, guild_bank = true, achievement = true }
     if deniedSources[src] then return end
 
-    local isWF, isMS = self:Qualifies(link, src)
+    local isMS = self:IsMysticScroll(link, src)
     if not isWF and not isMS then return end
     if isWF and src ~= "world_loot" then return end
     

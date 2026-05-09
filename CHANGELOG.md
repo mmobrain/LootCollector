@@ -1,3 +1,8 @@
+## LootCollector 0.7.54 - Fixes & Optimizations
+- **Fix:** (pssibly) fixed an issue that sometimes caused Worldforged items not to be marked as looted after being collected.
+- **Fix:** fixed an issue where the header was not displayed in the key bindings section.
+- **Other:** slightly lowered the amount of WoW API calls.
+
 ## LootCollector 0.7.53 - Fixes
 - **Fix:** (Possibly) fixed bug that caused crash and some Worldforged items were not marked as looted after being collected.
 - **Fix:** More Area 52 dedicated fixes.

@@ -7,10 +7,11 @@ local AceDB        = LibStub("AceDB-3.0")
 local LootCollector = AceAddon:NewAddon("LootCollector", "AceEvent-3.0", "AceComm-3.0")
 _G.LootCollector = LootCollector
 
-BINDING_HEADER_LOOTCOLLECTOR = "LootCollector"
+BINDING_HEADER_LOOTCOLLECTOR = GetAddOnMetadata(..., "Title")
 LootCollector.LEGACY_MODE_ACTIVE = true
 LootCollector.addonPrefix = "BBLC25AM"
 LootCollector.chatChannel = "BBLC25C"
+LootCollector.DEBUG_MODE = false
 
 LootCollector.ignoreList = {
     ["Embossed Mystic Scroll"] = true,
@@ -207,6 +208,12 @@ function LootCollector._idebug(module, message)
         print(string.format("|cffffff00[LC-Debug|cffff8c00][%s]|r %s", tostring(module), tostring(message)))
     end
 end
+
+function LootCollector._ddebug(module, message)
+    if LootCollector.DEBUG_MODE then
+        print(string.format("|cffffff00[LC-Debug|cffff8c00][%s]|r %s", tostring(module), tostring(message)))
+    end
+end
     
 function LootCollector:normalizeSenderName(sender)
     if type(sender) ~= "string" then return nil end
@@ -232,19 +239,18 @@ function LootCollector:GenerateGUID(c, mapID, i, x, y)
 end
 
 function LootCollector:GetActiveRealmKey()
-    
-    
-    local realmName = nil
+    if self.realmNameCached then return self.realmNameCached end
 
+    local realmName = nil
     if GetRealmName then
         realmName = GetRealmName()
     end
 
     if type(realmName) ~= "string" or realmName == "" then
-        
         realmName = "Unknown Realm"
     end
 
+    self.realmNameCached = realmName
     return realmName
 end
 
@@ -1138,7 +1144,7 @@ function LootCollector:OnInitialize()
 
     self.channelReady = false
     self.name         = "LootCollector"
-    self.Version      = "beta-0.7.53"
+    self.Version      = "beta-0.7.54"
 
     local Constants = self:GetModule("Constants", true)
     if Constants and Constants.GetDefaultChannel then

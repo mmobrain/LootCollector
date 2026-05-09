@@ -263,7 +263,7 @@ DRUID = {
 
 function Constants:DetermineRealmCapabilities()
     local mode = "WR"
-    local realmName = GetRealmName() or ""
+    local realmName = L.GetActiveRealmKey and L:GetActiveRealmKey() or (GetRealmName() or "")
     
     
     if L.db and L.db.profile and L.db.profile.featureOverrides then
@@ -351,13 +351,19 @@ function Constants:HasMysticScrolls() return self._hasMysticScrolls end
 function Constants:HasArchetypes() return self._hasArchetypes end
 function Constants:GetActiveRealmType() return self.ACTIVE_REALM_TYPE or "WR" end
 
-function Constants:CanSendMessages()
-    local realmName = GetRealmName() or ""    
-    if string.find(realmName, "Area 52") then	
-        if UnitLevel("player") < 10 then		
+Constants._canSendCache = nil
+function Constants:CanSendMessages()    
+    if self._canSendCache ~= nil then return self._canSendCache end
+
+    local realmName = L.GetActiveRealmKey and L:GetActiveRealmKey() or (GetRealmName() or "")
+    
+    if string.find(realmName, "Area 52") or self.ACTIVE_REALM_TYPE == "WILDCARD" then
+        if UnitLevel("player") < 10 then
             return false
         end
     end
+    
+    self._canSendCache = true
     return true
 end
 

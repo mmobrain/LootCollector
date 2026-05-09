@@ -57,4 +57,3 @@ Modules\ImportExport.lua
 Modules\Viewer.lua
 Modules\MinimapButton.lua
 Modules\Tooltip.lua
-DevCommands.lua

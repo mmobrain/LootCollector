@@ -164,6 +164,7 @@ local function ensureDefaults()
     if p.mapFilters.autoTrackNearest == nil then p.mapFilters.autoTrackNearest = false end
     if p.mapFilters.maxMinimapDistance == nil then p.mapFilters.maxMinimapDistance = 0 end 
 	if p.mapFilters.disableProximityList == nil then p.mapFilters.disableProximityList = false end 
+	if p.mapFilters.hideBags == nil then p.mapFilters.hideBags = false end
 	if p.minimapButtonHidden == nil then p.minimapButtonHidden = false end
 end
 
@@ -242,6 +243,17 @@ local function buildOptions()
 						get = function() return L.db.profile.mapFilters.hideCollectedME end,
 						set = function(_, v)
 							L.db.profile.mapFilters.hideCollectedME = v
+							refreshUI()
+						end,
+					},
+					hideBags = {
+						type = "toggle",
+						name = "Hide Bags",
+						order = 4.25,
+						desc = "Hide discoveries for bag items (containers). Useful if you already have large bags.",
+						get = function() return L.db.profile.mapFilters.hideBags end,
+						set = function(_, v)
+							L.db.profile.mapFilters.hideBags = v
 							refreshUI()
 						end,
 					},

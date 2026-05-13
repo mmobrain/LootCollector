@@ -125,6 +125,7 @@ local dbDefaults = {
             hideUnconfirmed = false,
             hideLearnedTransmog = false,
             hideCollectedME = false,
+            hideBags = false,
 		    hidePlayerNames = false,
             disableFadeEffect = false,
             pinSize = 17, 
@@ -441,6 +442,7 @@ function LootCollector:GetFilters()
     if f.hideUncached == nil then f.hideUncached = false end
     if f.hideLearnedTransmog == nil then f.hideLearnedTransmog = false end
     if f.hideCollectedME == nil then f.hideCollectedME = false end
+    if f.hideBags == nil then f.hideBags = false end
     if f.minRarity == nil then f.minRarity = 0 end
     if f.allowedEquipLoc == nil then f.allowedEquipLoc = {} end
     if f.usableByClasses == nil then f.usableByClasses = {} end
@@ -465,6 +467,8 @@ function LootCollector:IsLootedByChar(guid)
     if not (self.db and self.db.char and self.db.char.looted) then return false end
     return self.db.char.looted[guid] and true or false
 end
+
+
 
 local appearanceCache = {}
 local appearanceCacheTime = {}
@@ -566,6 +570,10 @@ function LootCollector:DiscoveryPassesFilters(d)
         return false
     end
 
+    -- Hide Bags: item type 2 = Container
+    if f.hideBags and d.it == 2 then
+        return false
+    end
     local quality = d.q or 0
     if quality < (f.minRarity or 0) then return false end
 

@@ -145,6 +145,30 @@ StaticPopupDialogs["LOOTCOLLECTOR_NUKE_CONFIRM"] = {
 	hideOnEscape = 1,
 }
 
+StaticPopupDialogs["LOOTCOLLECTOR_CLEAR_LOOTED_CONFIRM"] = {
+	text = "Are you sure you want to clear ALL looted history for this character?\n\n|cffff7f00This only affects this character. The discovery database and all settings are untouched.\n\nUseful after prestiging or rerolling with the same name.|r\n\n|cffff0000This cannot be undone!|r",
+	button1 = "Yes, Clear History",
+	button2 = "Cancel",
+	OnAccept = function(self, data)
+		if not (L and L.db and L.db.char) then return end
+		L.db.char.looted = {}
+		print("|cff00ff00LootCollector:|r Looted history cleared for this character.")
+		-- Refresh map pins so any previously-hidden looted pins reappear
+		local Map = L:GetModule("Map", true)
+		if Map and Map.Update and WorldMapFrame and WorldMapFrame:IsShown() then
+			Map:Update()
+		end
+		-- Refresh the Looted tab list
+		if data and data.refreshFunc then
+			data.refreshFunc()
+		end
+	end,
+	timeout = 0,
+	whileDead = 1,
+	hideOnEscape = 1,
+	showAlert = true,
+}
+
 local function longKeyRecordFromShort(d)
 	if type(d) ~= "table" then return nil end
 	return {
@@ -1251,6 +1275,14 @@ local function BuildListPage(parent, titleText, dataFilterFunc)
         nukeBtn:SetText("|cffff0000Factory Reset|r")
         nukeBtn:SetScript("OnClick", function()
 			StaticPopup_Show("LOOTCOLLECTOR_NUKE_CONFIRM")
+		end)
+	elseif titleText == "Looted by this character" then
+		local clearBtn = CreateFrame("Button", nil, page, "UIPanelButtonTemplate")
+		clearBtn:SetSize(160, 24)
+		clearBtn:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 8)
+		clearBtn:SetText("|cffff7f00Clear All Looted|r")
+		clearBtn:SetScript("OnClick", function()
+			StaticPopup_Show("LOOTCOLLECTOR_CLEAR_LOOTED_CONFIRM", nil, nil, { refreshFunc = page.refresh })
 		end)
 	end
 	

@@ -468,7 +468,57 @@ function LootCollector:IsLootedByChar(guid)
     return self.db.char.looted[guid] and true or false
 end
 
+-- Returns true if this character has already looted any discovery with the given
+-- itemID in the given zone. Used to suppress incoming network duplicates.
+function LootCollector:IsSameZoneAlreadyLootedByChar(itemID, zoneID)
+    if not itemID or not zoneID then return false end
+    if not (self.db and self.db.char and self.db.char.looted) then return false end
+    local discoveries = self:GetDiscoveriesDB()
+    if not discoveries then return false end
+    for guid, _ in pairs(self.db.char.looted) do
+        local d = discoveries[guid]
+        if d and d.i == itemID and d.z == zoneID then
+            return true
+        end
+    end
+    return false
+end
 
+-- When a discovery is looted, immediately remove same-zone duplicates (same itemID + same
+-- zone) from the discoveries DB. Duplicates in different zones are left untouched.
+-- Returns the number of duplicate entries removed.
+function LootCollector:MarkSameZoneDuplicatesLooted(lootedGuid)
+    if not lootedGuid then return 0 end
+    local discoveries = self:GetDiscoveriesDB()
+    if not discoveries then return 0 end
+
+    local src = discoveries[lootedGuid]
+    if not src or not src.i or not src.z then return 0 end
+
+    local itemID = src.i
+    local zoneID = src.z
+
+    -- Collect duplicate GUIDs first (never mutate a table while pairs() iterates it).
+    local toRemove = {}
+    for guid, d in pairs(discoveries) do
+        if guid ~= lootedGuid and d and d.i == itemID and d.z == zoneID then
+            toRemove[#toRemove + 1] = guid
+        end
+    end
+
+    -- Delete each duplicate and fire the standard removal event so the map pins
+    -- and Viewer cache react immediately, without needing a /reload.
+    for _, guid in ipairs(toRemove) do
+        discoveries[guid] = nil
+        self:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
+    end
+
+    if #toRemove > 0 then
+        self.DataHasChanged = true
+    end
+
+    return #toRemove
+end
 
 local appearanceCache = {}
 local appearanceCacheTime = {}

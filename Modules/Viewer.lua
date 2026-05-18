@@ -9,6 +9,28 @@ function ViewerSetSelectedRow(row)
     end
 end
 
+local tooltipScanner = CreateFrame("GameTooltip", "LCSearchTooltipScanner", nil, "GameTooltipTemplate")
+tooltipScanner:SetOwner(UIParent, "ANCHOR_NONE")
+
+local function GetItemTooltipText(itemLink)
+    if not itemLink or itemLink == "" then return nil end
+    tooltipScanner:ClearLines()
+    tooltipScanner:SetHyperlink(itemLink)
+    local fullText = ""
+    for i = 1, tooltipScanner:NumLines() do
+        local left = _G["LCSearchTooltipScannerTextLeft"..i]
+        if left and left:GetText() then
+            fullText = fullText .. " " .. left:GetText()
+        end
+        local right = _G["LCSearchTooltipScannerTextRight"..i]
+        if right and right:GetText() then
+            fullText = fullText .. " " .. right:GetText()
+        end
+    end
+    if fullText == "" then return nil end
+    return string.lower(fullText)
+end
+
 local SOURCE_NAMES = {
     ["world_loot"] = "World Drop",
     ["mail"] = "Mail",
@@ -44,6 +66,7 @@ local CLASS_OPTIONS = {
 
 Viewer.lootedFilterState = nil 
 Viewer.collectedMEFilterState = nil 
+Viewer.searchTooltipsEnabled = false
 
 local time = time or os.time
 
@@ -1651,6 +1674,7 @@ function Viewer:ProcessScanQueueBatch()
                         minLevel      = minLevel,
                         cl            = discovery.cl,
                         isVendor      = false,
+                        tooltipText   = GetItemTooltipText(itemLink),
                     })
 
                     processedInBatch = processedInBatch + 1
@@ -1795,6 +1819,7 @@ function Viewer:UpdateAllDiscoveriesCacheSync()
                         minLevel      = minLevel,
                         cl            = discovery.cl,
                         isVendor      = false, 
+                        tooltipText   = GetItemTooltipText(itemLink),
                     })
 
                     processedItems = processedItems + 1
@@ -1896,7 +1921,12 @@ function Viewer:GetFilteredDiscoveries()
             local zoneName  = GetLocalizedZoneName(data.discovery)
             local zoneMatch = _strfind(_strlower(zoneName), searchLower, 1, true)
 
-            return nameMatch or zoneMatch
+            local tooltipMatch = false
+            if Viewer.searchTooltipsEnabled and data.tooltipText then
+                tooltipMatch = _strfind(data.tooltipText, searchLower, 1, true)
+            end
+
+            return nameMatch or zoneMatch or tooltipMatch
         end,
 
         
@@ -2640,6 +2670,21 @@ function Viewer:CreateWindow()
         clearBtn:Hide()
     end)
     clearBtn:Hide() 
+
+    local tooltipCheck = CreateFrame("CheckButton", "LCSearchTooltipCheck", window, "UICheckButtonTemplate")
+    tooltipCheck:SetSize(24, 24)
+    tooltipCheck:SetPoint("LEFT", searchBox, "RIGHT", 30, 0)
+    tooltipCheck:SetChecked(Viewer.searchTooltipsEnabled)
+    
+    local tooltipLabel = tooltipCheck:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    tooltipLabel:SetPoint("LEFT", tooltipCheck, "RIGHT", 0, 0)
+    tooltipLabel:SetText("Search Tooltips")
+
+    tooltipCheck:SetScript("OnClick", function(self)
+        Viewer.searchTooltipsEnabled = self:GetChecked()
+        Viewer.currentPage = 1
+        Viewer:RefreshData()
+    end)
         
 
     local autocompleteDropdown = nil

@@ -2326,6 +2326,13 @@ function Core:HandleLocalLoot(discovery)
      if L.db and L.db.char then
         L.db.char.looted = L.db.char.looted or {}
         L.db.char.looted[rec.g] = time()
+        if rec.i and rec.z then
+            L.db.char.lootedByZone = L.db.char.lootedByZone or {}
+            L.db.char.lootedByZone[rec.i .. ":" .. rec.z] = true
+        end
+        -- Remove same-zone duplicates of this item immediately (same as startup deduplication,
+        -- but triggered at loot-time so pins disappear without a /reload).
+        L:MarkSameZoneDuplicatesLooted(rec.g)
     end
     
     
@@ -2984,6 +2991,12 @@ function Core:AddDiscovery(discoveryData, options)
             fp_votes = { [finderName] = { score = 1, t0 = t0 } },
             s_flag = s_flag,
         }
+
+        -- If this character already looted this item in this zone, don't add the incoming
+        -- duplicate — it would reappear on the map even though the item can't be looted again.
+        if L:IsSameZoneAlreadyLootedByChar(itemID, z) then
+            return
+        end
 
         db[guid] = rec
         self:AddToZoneIndex(guid, z)

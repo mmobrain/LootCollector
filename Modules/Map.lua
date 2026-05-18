@@ -1285,6 +1285,10 @@ function Map:OpenPinMenu(anchorFrame)
         if not (L.db and L.db.char) then return end
         L.db.char.looted = L.db.char.looted or {}
         L.db.char.looted[d.g] = time()
+        if d.i and d.z then
+            L.db.char.lootedByZone = L.db.char.lootedByZone or {}
+            L.db.char.lootedByZone[d.i .. ":" .. d.z] = true
+        end
         -- Also mark same-zone duplicates as looted.
         L:MarkSameZoneDuplicatesLooted(d.g)
         Map.cacheIsDirty = true 
@@ -1293,6 +1297,10 @@ function Map:OpenPinMenu(anchorFrame)
       table.insert(menuList, { text = "Set as unlooted", notCheckable = true, func = function()
         if not (L.db and L.db.char and L.db.char.looted) then return end
         L.db.char.looted[d.g] = nil
+        if d.i and d.z then
+            L.db.char.lootedByZone = L.db.char.lootedByZone or {}
+            L.db.char.lootedByZone[d.i .. ":" .. d.z] = nil
+        end
         Map.cacheIsDirty = true 
         Map:Update()
       end })

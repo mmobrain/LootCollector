@@ -472,16 +472,24 @@ end
 -- itemID in the given zone. Used to suppress incoming network duplicates.
 function LootCollector:IsSameZoneAlreadyLootedByChar(itemID, zoneID)
     if not itemID or not zoneID then return false end
-    if not (self.db and self.db.char and self.db.char.looted) then return false end
-    local discoveries = self:GetDiscoveriesDB()
-    if not discoveries then return false end
-    for guid, _ in pairs(self.db.char.looted) do
-        local d = discoveries[guid]
-        if d and d.i == itemID and d.z == zoneID then
-            return true
+    if not (self.db and self.db.char) then return false end
+
+    if not self.db.char.lootedByZone then
+        self.db.char.lootedByZone = {}
+        if self.db.char.looted then
+            local discoveries = self:GetDiscoveriesDB()
+            if discoveries then
+                for guid, _ in pairs(self.db.char.looted) do
+                    local d = discoveries[guid]
+                    if d and d.i and d.z then
+                        self.db.char.lootedByZone[d.i .. ":" .. d.z] = true
+                    end
+                end
+            end
         end
     end
-    return false
+
+    return self.db.char.lootedByZone[itemID .. ":" .. zoneID] or false
 end
 
 -- When a discovery is looted, immediately remove same-zone duplicates (same itemID + same

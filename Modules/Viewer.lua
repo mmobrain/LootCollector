@@ -4522,11 +4522,25 @@ function Viewer:ToggleLootedState(guid, discoveryData)
     if isCurrentlyLooted then
         
         L.db.char.looted[guid] = nil
+        if discoveryData and discoveryData.discovery then
+            local d = discoveryData.discovery
+            if d.i and d.z then
+                L.db.char.lootedByZone = L.db.char.lootedByZone or {}
+                L.db.char.lootedByZone[d.i .. ":" .. d.z] = nil
+            end
+        end
         print(string.format("|cff00ff00LootCollector:|r Marked '%s' as unlooted.",
             discoveryData.itemName or "Unknown Item"))
     else
         
         L.db.char.looted[guid] = time()
+        if discoveryData and discoveryData.discovery then
+            local d = discoveryData.discovery
+            if d.i and d.z then
+                L.db.char.lootedByZone = L.db.char.lootedByZone or {}
+                L.db.char.lootedByZone[d.i .. ":" .. d.z] = true
+            end
+        end
         print(string.format("|cff00ff00LootCollector:|r Marked '%s' as looted.", discoveryData.itemName or "Unknown Item"))
         -- Also mark same-zone duplicates of this item as looted locally.
         local extraMarked = L:MarkSameZoneDuplicatesLooted(guid)

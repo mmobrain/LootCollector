@@ -2326,6 +2326,10 @@ function Core:HandleLocalLoot(discovery)
      if L.db and L.db.char then
         L.db.char.looted = L.db.char.looted or {}
         L.db.char.looted[rec.g] = time()
+        if rec.i and rec.z then
+            L.db.char.lootedByZone = L.db.char.lootedByZone or {}
+            L.db.char.lootedByZone[rec.i .. ":" .. rec.z] = true
+        end
         -- Remove same-zone duplicates of this item immediately (same as startup deduplication,
         -- but triggered at loot-time so pins disappear without a /reload).
         L:MarkSameZoneDuplicatesLooted(rec.g)

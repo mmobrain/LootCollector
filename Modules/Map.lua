@@ -1285,8 +1285,6 @@ function Map:OpenPinMenu(anchorFrame)
         if not (L.db and L.db.char) then return end
         L.db.char.looted = L.db.char.looted or {}
         L.db.char.looted[d.g] = time()
-        -- Also mark same-zone duplicates as looted.
-        L:MarkSameZoneDuplicatesLooted(d.g)
         Map.cacheIsDirty = true 
         Map:Update()
       end })

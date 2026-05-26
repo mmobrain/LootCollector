@@ -4528,11 +4528,6 @@ function Viewer:ToggleLootedState(guid, discoveryData)
         
         L.db.char.looted[guid] = time()
         print(string.format("|cff00ff00LootCollector:|r Marked '%s' as looted.", discoveryData.itemName or "Unknown Item"))
-        -- Also mark same-zone duplicates of this item as looted locally.
-        local extraMarked = L:MarkSameZoneDuplicatesLooted(guid)
-        if extraMarked > 0 then
-            print(string.format("|cff00ff00LootCollector:|r Also marked %d same-zone duplicate(s) as looted.", extraMarked))
-        end
     end
 
     

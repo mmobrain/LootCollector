@@ -442,6 +442,7 @@ function Map:OnInitialize()
     if not (L.db and L.db.profile and L.db.global and L.db.char) then return end
     
     self:EnsureThrottleFrame()
+	self:InstallChatItemLinkHook()
     
     
     self.cacheIsDirty = true
@@ -951,6 +952,86 @@ StaticPopupDialogs["LOOTCOLLECTOR_REMOVE_DISCOVERY"] = {
   hideOnEscape = 1,
 }
 
+local function GetDiscoveryItemLink(d)
+    if not d then return nil end
+    if d.il and type(d.il) == "string" and d.il:find("|Hitem:") then
+        return d.il
+    end
+    if d.i and tonumber(d.i) and tonumber(d.i) > 0 then
+        local _, link = GetItemInfo(d.i)
+        if link then return link end
+    end
+    if d.il and type(d.il) == "string" then
+        local _, link = GetItemInfo(d.il)
+        if link then return link end
+    end
+    return nil
+end
+
+local function GetDiscoveryDisplayName(d)
+    if not d then return "Discovery" end
+    local link = GetDiscoveryItemLink(d)
+    if link then return link end
+    if d.il and type(d.il) == "string" and d.il ~= "" then return d.il end
+    if d.i and tonumber(d.i) and tonumber(d.i) > 0 then
+        local name = GetItemInfo(d.i)
+        if name then return name end
+        return "Item ID " .. tostring(d.i)
+    end
+    return "Discovery"
+end
+
+local function GetDiscoveryCoordsText(d)
+    if d and d.xy then
+        return string.format("%.1f, %.1f", (tonumber(d.xy.x) or 0) * 100, (tonumber(d.xy.y) or 0) * 100)
+    end
+    return "?, ?"
+end
+
+local function BuildDiscoveryShareText(d)
+    if not d then return nil end
+    local itemText = GetDiscoveryDisplayName(d)
+    local zoneName = (L.ResolveZoneDisplay and L.ResolveZoneDisplay(d.c, d.z, d.iz)) or "Unknown Zone"
+    return string.format("%s @ %s (%s)", itemText, zoneName, GetDiscoveryCoordsText(d))
+end
+
+local function PasteShareTextToChat(d)
+    local msg = BuildDiscoveryShareText(d)
+    if not msg then return end
+    if ChatFrame1EditBox and ChatFrame1EditBox.IsVisible and ChatFrame1EditBox:IsVisible() then
+        ChatFrame1EditBox:Insert(msg)
+    elseif ChatFrame_OpenChat then
+        ChatFrame_OpenChat(msg)
+    else
+        print("|cffff7f00LootCollector:|r " .. msg)
+    end
+end
+
+function Map:ShareDiscoveryToChat(d, target)
+    local msg = BuildDiscoveryShareText(d)
+    if not msg then return end
+
+    target = target or "PASTE"
+    if target == "GUILD" then
+        if IsInGuild and not IsInGuild() then
+            print("|cffff7f00LootCollector:|r You are not in a guild. Pasting the item+location to last used chat.")
+            PasteShareTextToChat(d)
+            return
+        end
+        SendChatMessage(msg, "GUILD")
+        return
+    end
+
+    PasteShareTextToChat(d)
+end
+
+local function AddShareMenuItems(menu, d)
+    if not menu or not d then return end
+    table.insert(menu, { text = "Share item+location", isTitle = true, notCheckable = true })
+    table.insert(menu, { text = "Link to Guild Chat", notCheckable = true, func = function() Map:ShareDiscoveryToChat(d, "GUILD") end })
+    table.insert(menu, { text = "Link to Current Chat", notCheckable = true, func = function() Map:ShareDiscoveryToChat(d, "PASTE") end })
+end
+
 local FilterButton = nil
 local FilterMenuHost = CreateFrame("Frame", "LootCollectorFilterMenuHost", UIParent, "UIDropDownMenuTemplate")
 
@@ -1391,11 +1472,19 @@ StaticPopupDialogs["LOOTCOLLECTOR_REMOVE_BM_VENDOR"] = {
 function Map:OpenPinMenu(anchorFrame)
     if not anchorFrame or not anchorFrame.discovery then return end
     local d = anchorFrame.discovery
-    local name = d.il or (select(1, GetItemInfo(d.i)) or "Discovery")
+    
+    
+    local name = GetDiscoveryDisplayName(d)
+    
     wipe(menuList)
     table.insert(menuList, { text = tostring(name), isTitle = true, notCheckable = true })
     table.insert(menuList, { text = "Navigate here", notCheckable = true, func = function() NavigateHere(d) end })
     table.insert(menuList, { text = "Show to...", notCheckable = true, func = function() Map:OpenShowToDialog(d) end })
+    
+    
+    table.insert(menuList, { text = "", notCheckable = true, disabled = true })
+    AddShareMenuItems(menuList, d)
+    table.insert(menuList, { text = "", notCheckable = true, disabled = true })
     
     
     if d.i and d.i > 0 then
@@ -1464,7 +1553,7 @@ function Map:OpenPinMenu(anchorFrame)
         for _, item in ipairs(menuList) do UIDropDownMenu_AddButton(item, level) end
       end, "MENU")
     end
-  end
+end
 
 local function BuildFilterEasyMenu()
   local Constants = L:GetModule("Constants", true)
@@ -3135,6 +3224,170 @@ function Map:OnRecordStatusChanged(rec)
   else
     self:AddOrUpdatePinV5(rec)
   end
+end
+
+local function ExtractItemIDFromItemLink(link)
+    if not link or type(link) ~= "string" then return nil end
+    local itemString = link:match("item[%-?%d:]+") or link:match("Hitem:([^|]+)")
+    if not itemString then return nil end
+    local itemID = itemString:match("item:(%-?%d+)") or itemString:match("^(%-?%d+)")
+    itemID = tonumber(itemID)
+    if itemID and itemID > 0 then return itemID end
+    return nil
+end
+
+function Map:FindBestDiscoveryForItem(itemID)
+    itemID = tonumber(itemID)
+    if not itemID or itemID <= 0 then return nil end
+
+    local discoveries = L.GetDiscoveriesDB and L:GetDiscoveriesDB() or {}
+    local best, bestScore = nil, -999999
+    local now = time and time() or 0
+
+    for _, d in pairs(discoveries) do
+        if d and tonumber(d.i) == itemID and d.g and d.xy then
+            local score = 0
+            if d.s == "ACTIVE" or d.s == nil then score = score + 50 end
+            if d.s == "STALE" then score = score - 20 end
+            if L.IsLootedByChar and L:IsLootedByChar(d.g) then score = score - 10 end
+            if d.ls and now > 0 then score = score - math.min(30, math.floor((now - tonumber(d.ls)) / 86400)) end
+            if (d.mc or 0) > 0 then score = score + math.min(20, tonumber(d.mc) or 0) end
+
+            if score > bestScore then
+                best = d
+                bestScore = score
+            end
+        end
+    end
+
+    return best
+end
+
+function Map:FocusItemIDFromChatLink(itemID, sourceLink)
+    local d = self:FindBestDiscoveryForItem(itemID)
+    if not d then
+        local name = sourceLink and GetItemInfo(sourceLink)
+        print(string.format("|cffff7f00LootCollector:|r No known location found for %s in your database yet.", name or ("item:" .. tostring(itemID))))
+        return false
+    end
+
+    if L.db and L.db.char and L.db.char.mapFilters then
+        L.db.char.mapFilters.hideAll = false
+        L.db.char.mapFilters.showWorldforged = true
+    end
+
+    self.cacheIsDirty = true
+    if self.Update and WorldMapFrame and WorldMapFrame:IsShown() then self:Update() end
+    if self.FocusOnDiscovery then self:FocusOnDiscovery(d) end
+    if NavigateHere then NavigateHere(d) end
+
+    local link = d.il or sourceLink or ("item:" .. tostring(itemID))
+    local zoneName = "unknown zone"
+    if L.ResolveZoneDisplay then
+        local zn = L.ResolveZoneDisplay(d.c, d.z, d.iz)
+        if zn then zoneName = zn end
+    end
+    local cx = d.xy and d.xy.x and (d.xy.x * 100) or 0
+    local cy = d.xy and d.xy.y and (d.xy.y * 100) or 0
+    print(string.format("|cff00ff00LootCollector:|r Showing %s at |cffffff00%s %.1f, %.1f|r.", tostring(link), tostring(zoneName), cx, cy))
+    return true
+end
+
+function Map:HandleChatItemRightClick(link, text, button, chatFrame)
+    
+    if button ~= "RightButton" or not IsAltKeyDown() then return false end
+
+    local itemID = ExtractItemIDFromItemLink(link or text)
+    if not itemID then return false end
+
+    local d = self:FindBestDiscoveryForItem(itemID)
+    if d then
+        return self:FocusItemIDFromChatLink(itemID, text or link)
+    end
+
+    local itemName = GetItemInfo(text or link)
+    if itemName and string.find(itemName, "Worldforged", 1, true) then
+        print(string.format("|cffff7f00LootCollector:|r %s looks Worldforged, but no known location is saved in your database yet.", text or itemName))
+        return true
+    end
+
+    return false
+end
+
+function Map:InstallChatItemLinkHook()
+    if self._chatItemLinkHooked then return end
+    self._chatItemLinkHooked = true
+
+    local function TryLootCollectorChatLink(frame, link, text, button)
+        
+        if L.db and L.db.profile and L.db.profile.mapFilters and L.db.profile.mapFilters.enableChatLinkIntegration == false then return false end
+
+        
+        if button ~= "RightButton" or not IsAltKeyDown() then return false end
+
+        local mapModule = LootCollector and LootCollector.GetModule and LootCollector:GetModule("Map", true)
+        if mapModule and mapModule.HandleChatItemRightClick then
+            local ok, handled = pcall(mapModule.HandleChatItemRightClick, mapModule, link, text, button, frame)
+            if ok and handled then
+                if ItemRefTooltip then ItemRefTooltip:Hide() end
+                if ShoppingTooltip1 then ShoppingTooltip1:Hide() end
+                if ShoppingTooltip2 then ShoppingTooltip2:Hide() end
+                return true
+            end
+        end
+        return false
+    end
+
+    if SetItemRef and not self._originalSetItemRef then
+        self._originalSetItemRef = SetItemRef
+        local originalSetItemRef = SetItemRef
+        SetItemRef = function(link, text, button, chatFrame)
+            if TryLootCollectorChatLink(chatFrame, link, text, button) then return end
+            return originalSetItemRef(link, text, button, chatFrame)
+        end
+    end
+
+    if ChatFrame_OnHyperlinkShow and not self._originalChatFrameOnHyperlinkShow then
+        self._originalChatFrameOnHyperlinkShow = ChatFrame_OnHyperlinkShow
+        local originalChatFrame_OnHyperlinkShow = ChatFrame_OnHyperlinkShow
+        ChatFrame_OnHyperlinkShow = function(frame, link, text, button, ...)
+            if TryLootCollectorChatLink(frame, link, text, button) then return end
+            return originalChatFrame_OnHyperlinkShow(frame, link, text, button, ...)
+        end
+    end
+
+    function self:InstallChatFrameHyperlinkScripts()
+        local count = NUM_CHAT_WINDOWS or 10
+        for i = 1, count do
+            local frame = _G["ChatFrame" .. i]
+            if frame and frame.GetScript and frame.SetScript and not frame._lootCollectorChatMapHooked then
+                frame._lootCollectorChatMapHooked = true
+                local originalScript = frame:GetScript("OnHyperlinkClick")
+                frame._lootCollectorOriginalHyperlinkClick = originalScript
+
+                frame:SetScript("OnHyperlinkClick", function(chatFrame, link, text, button, ...)
+                    if TryLootCollectorChatLink(chatFrame, link, text, button) then return end
+
+                    if originalScript then
+                        return originalScript(chatFrame, link, text, button, ...)
+                    elseif ChatFrame_OnHyperlinkShow then
+                        return ChatFrame_OnHyperlinkShow(chatFrame, link, text, button, ...)
+                    end
+                end)
+            end
+        end
+    end
+
+    self:InstallChatFrameHyperlinkScripts()
+
+    if C_Timer and C_Timer.After then
+        C_Timer.After(2, function()
+            local mapModule = LootCollector and LootCollector.GetModule and LootCollector:GetModule("Map", true)
+            if mapModule and mapModule.InstallChatFrameHyperlinkScripts then
+                mapModule:InstallChatFrameHyperlinkScripts()
+            end
+        end)
+    end
 end
 
 return Map

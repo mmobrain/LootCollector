@@ -185,6 +185,7 @@ local function ensureDefaults()
 	if p.mapFilters.minimapPinSize == nil then p.mapFilters.minimapPinSize = 10 end
 	if p.mapFilters.showZoneSummaries == nil then p.mapFilters.showZoneSummaries = false end
 	if p.mapFilters.disableFadeEffect == nil then p.mapFilters.disableFadeEffect = false end
+	if p.mapFilters.enableChatLinkIntegration == nil then p.mapFilters.enableChatLinkIntegration = true end
 	
     
     if not L.db.char then L.db.char = {} end
@@ -418,6 +419,16 @@ pauseAddon = {
 							refreshUI()
 						end,
 					},
+					enableChatLinkIntegration = {
+                        type = "toggle",
+                        name = "Chat Link Map Integration",
+                        order = 4.38,
+                        desc = "Allows you to Alt + Right-Click any item link in the chat box to instantly search your database and show its location on the World Map if found.",
+                        get = function() return L.db.profile.mapFilters.enableChatLinkIntegration ~= false end,
+                        set = function(_, v)
+                            L.db.profile.mapFilters.enableChatLinkIntegration = v
+                        end,
+                    },
 					disableFadeEffect = {
 						type = "toggle",
 						name = "Disable Fade Effect",

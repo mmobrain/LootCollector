@@ -1,3 +1,15 @@
+## LootCollector 0.8.2 - Pin Menu / Chat Linking, Fixes.
+
+- **Added RMB Chat Link Action:** Added a context-menu option on map pins to insert the item and its location into chat.
+- **Improved Existing Shortcut Discoverability:** Surfaced the old Ctrl+Alt+RMB behavior through the normal RMB menu so it is no longer hidden behind a modifier-only flow.
+- **Fixes:** .toc, code.
+
+Credit:
+- Chat action suggestion and .toc fixes by StepOnLegos - The Chaotic Helper.
+
+## LootCollector 0.8.1 - Fix.
+- **Lua error fix**
+
 ## LootCollector 0.8.0 - The V8 Engine Overhaul (Performance, Proximity logic, Security, QOL, CoA)
 *The features and code in this release were built with efficiency in mind rather than aiming for the best possible overall solution.*
 

@@ -1,11 +1,11 @@
 ## Interface: 30300
-## Title: |ce5cc80ffLootCollector|r |cffff5555[beta.0.8.1]
+## Title: |ce5cc80ffLootCollector|r |cffff5555[beta.0.8.2]
 ## Notes: LootCollector is a community-powered addon that helps players discover and share Worldforged and Mystic Scroll locations on Ascension Bronzebeard (CoA compatible). Designed by Skulltrail. |cffff7f00Sponsor:|r |cffffff00@ERitzman|r. |cffffffffContributors:|r |cffffff00Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan, Stilnight, Xurkon, Netherborne, Liakate|r. |cffffffffAlpha Collectors:|r |cffffff00Morty, Laya, Brokenheart, Mie, Rhen, Aaltrix, Insanestar, Harrydn, Blutact|r.
 ## Author: Skulltrail
 ## Contributors: Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan, Stilnight, Xurkon, Netherborne
 ## Sponsors: @ERitzman
 ## AlphaTopCollectors: Morty, Laya, Brokenheart, Mie, Rhen, Aaltrix, Insanestar, Harrydn, Blutact
-## Version: beta 0.8.1
+## Version: beta 0.8.2
 ## SavedVariables: LootCollectorDB_Asc
 ## OptionalDeps: Ace3, TomTom, AtlasLoot_Cache
 
@@ -17,9 +17,7 @@ libs\Ace3\AceAddon-3.0\AceAddon-3.0.xml
 libs\Ace3\AceEvent-3.0\AceEvent-3.0.xml
 libs\Ace3\AceDB-3.0\AceDB-3.0.xml
 libs\Ace3\AceConsole-3.0\AceConsole-3.0.xml
-libs\Ace3\AceGUI-3.0\AceGUI-3.0.xml
-libs\Ace3\AceConfig-3.0\AceConfig-3.0.xml
-libs\AceSerializer-3.0\AceSerializer-3.0.lua
+libs\Ace3\AceSerializer-3.0\AceSerializer-3.0.xml
 libs\LibBase64-1.0\lib.xml
 libs\Ace3\AceComm-3.0\AceComm-3.0.xml
 libs\LibDeflate\lib.xml
@@ -54,4 +52,3 @@ Modules\ImportExport.lua
 Modules\Viewer.lua
 Modules\MinimapButton.lua
 Modules\Tooltip.lua
-DevCommands.lua

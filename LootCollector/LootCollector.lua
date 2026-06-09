@@ -192,13 +192,14 @@ local dbDefaults = {
             showMapFilter = true,
             showMinimap = true,
             autoTrackNearest = false,
-            maxMinimapDistance = 1400,
+            maxMinimapDistance = 800,
             showMysticScrolls = true,
             showWorldforged = true,
             showVendors = true,
             minRarity = 0,
             usableByClasses = {},
             allowedEquipLoc = {},
+			enableChatLinkIntegration = true,
         },
         toasts = { 
             enabled = true,            
@@ -613,6 +614,7 @@ function LootCollector:GetFilters()
     combined.showZoneSummaries = ui.showZoneSummaries or false
     combined.hideSearchBar = ui.hideSearchBar or false
     combined.disableProximityList = ui.disableProximityList or false
+	combined.enableChatLinkIntegration = ui.enableChatLinkIntegration ~= false
     
     return combined
 end
@@ -1315,7 +1317,7 @@ function LootCollector:OnInitialize()
 
     self.channelReady = false
     self.name         = "LootCollector"
-    self.Version      = "beta-0.8.1"
+    self.Version      = "beta-0.8.2"
 
     local Constants = self:GetModule("Constants", true)
     if Constants and Constants.GetDefaultChannel then

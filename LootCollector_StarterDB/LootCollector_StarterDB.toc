@@ -1,0 +1,9 @@
+## Interface: 30300
+## Title: LootCollector Starter DB
+## Notes: Contains the optional starter database for LootCollector.
+## Author: Skulltrail
+## Version: v6.7
+## LoadOnDemand: 1
+## Dependencies: LootCollector
+
+db.lua

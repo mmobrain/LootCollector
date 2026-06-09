@@ -2538,8 +2538,17 @@ end
 
 function Viewer:CreateWindow()
     local pTime = L.ProfileStart and L:ProfileStart() 
-    if not db then return end
-    if self.window then return end
+    
+    
+    if not (L and L.db and L.db.profile and L.db.profile.viewer) then
+        if pTime then L:ProfileStop("Viewer:CreateWindow", pTime) end
+        return
+    end
+
+    if self.window then 
+        if pTime then L:ProfileStop("Viewer:CreateWindow", pTime) end
+        return 
+    end
     
     local rowFont = _G[ROW_FONT_NAME] or CreateFont(ROW_FONT_NAME)
     rowFont:SetFont(ROW_FONT_PATH, ROW_FONT_SIZE, "")
@@ -2550,7 +2559,6 @@ function Viewer:CreateWindow()
     local db = L.db.profile.viewer
 
     local window = CreateFrame("Frame", "LootCollectorViewerWindow", UIParent)
-    
     window:SetSize(db.width or WINDOW_WIDTH, db.height or WINDOW_HEIGHT)
     window:SetMinResize(WINDOW_WIDTH, 400)
     window:SetMaxResize(1600, 1000) 
@@ -2571,23 +2579,23 @@ function Viewer:CreateWindow()
     window:RegisterForDrag("LeftButton")
     window:SetScript("OnDragStart", window.StartMoving)
     window:SetScript("OnDragStop", function(self)
-    self:StopMovingOrSizing()
+        self:StopMovingOrSizing()
 
-    local point, _, _, x, y = self:GetPoint()
-    L.db.profile.viewer.point = point
-    L.db.profile.viewer.x = x
-    L.db.profile.viewer.y = y
+        local point, _, _, x, y = self:GetPoint()
+        L.db.profile.viewer.point = point
+        L.db.profile.viewer.x = x
+        L.db.profile.viewer.y = y
 
-    if Viewer and Viewer.window == self then
-        Viewer:UpdateLayout()
+        if Viewer and Viewer.window == self then
+            Viewer:UpdateLayout()
 
-        local visibleRows = math.ceil(Viewer:GetMainScrollHeight() / ROW_HEIGHT)
-        Viewer:CreateRows(visibleRows)
+            local visibleRows = math.ceil(Viewer:GetMainScrollHeight() / ROW_HEIGHT)
+            Viewer:CreateRows(visibleRows)
 
-        Viewer:UpdateSortHeaders()
-        Viewer:UpdateRows()
-    end
-end)
+            Viewer:UpdateSortHeaders()
+            Viewer:UpdateRows()
+        end
+    end)
     window:SetScript("OnMouseDown", function(self)
         CloseDropDownMenus()
     end)
@@ -2628,7 +2636,6 @@ end)
     end)
     resizeGrip:SetScript("OnMouseUp", function()
         window:StopMovingOrSizing()
-        
         L.db.profile.viewer.width = window:GetWidth()
         L.db.profile.viewer.height = window:GetHeight()
     end)
@@ -2951,7 +2958,6 @@ end)
     local bmvBtn
     if isCoA then
         mysticBtn:Hide()
-        
         bmvBtn = CreateTabBtn(window, "Vendors", equipmentBtn, "RIGHT", nil)
     else
         bmvBtn = CreateTabBtn(window, "Vendors", mysticBtn, "RIGHT", nil)
@@ -4250,28 +4256,19 @@ end)
         Viewer:CreateRows()
 
         local innerWidth = width - 60
-
-        
         local staticEq = GRID_LAYOUT.FAV_WIDTH + GRID_LAYOUT.LEVEL_WIDTH + GRID_LAYOUT.SLOT_WIDTH + 
                          GRID_LAYOUT.TYPE_WIDTH + GRID_LAYOUT.ZONE_WIDTH + GRID_LAYOUT.FOUND_BY_WIDTH + 
                          (GRID_LAYOUT.COLUMN_SPACING * 6) + 162
         
-        
         local currentNameWidth = math.max(GRID_LAYOUT.NAME_WIDTH, innerWidth - staticEq)
-        local flexAmount = currentNameWidth - GRID_LAYOUT.NAME_WIDTH
-        
-        
         local baseVendorNameWidth = Viewer.inlineVendorView and GRID_LAYOUT.VENDOR_NAME_WIDTH_INLINE or GRID_LAYOUT.VENDOR_NAME_WIDTH_SPLIT
-        local currentVendorNameWidth = baseVendorNameWidth + flexAmount
-        
+        local currentVendorNameWidth = baseVendorNameWidth + (currentNameWidth - GRID_LAYOUT.NAME_WIDTH)
+
         if Viewer.nameHeader then Viewer.nameHeader:SetWidth(currentNameWidth) end
         if Viewer.vendorNameHeader then Viewer.vendorNameHeader:SetWidth(currentVendorNameWidth) end
 
         for _, row in ipairs(Viewer.rows) do
             row:SetWidth(innerWidth)
-            if row.nameFrame then row.nameFrame:SetWidth(currentNameWidth) end
-            if row.nameText then row.nameText:SetWidth(currentNameWidth) end
-            if row.vendorNameText then row.vendorNameText:SetWidth(currentVendorNameWidth) end
         end
         Viewer:UpdateRows()
     end)
@@ -5948,6 +5945,12 @@ function Viewer:Show()
     local pTime = L.ProfileStart and L:ProfileStart() 
 
     if not self.window then self:CreateWindow() end
+    
+    
+    if not self.window then 
+        if pTime then L:ProfileStop("Viewer:Show", pTime) end
+        return 
+    end
     
     local t0 = time()
     VDebug("Show: start, currentFilter=" .. tostring(self.currentFilter) .. ", cacheBuilt=" .. tostring(Cache.discoveriesBuilt) .. ", building=" .. tostring(Cache.discoveriesBuilding))

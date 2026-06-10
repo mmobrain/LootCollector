@@ -1,3 +1,6 @@
+## LootCollector 0.8.3 - Fix.
+- **Lua error fix**
+
 ## LootCollector 0.8.2 - Pin Menu / Chat Linking, Fixes.
 
 - **Added RMB Chat Link Action:** Added a context-menu option on map pins to insert the item and its location into chat.

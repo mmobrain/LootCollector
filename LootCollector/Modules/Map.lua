@@ -2877,7 +2877,7 @@ end
 
 function Map:RefreshPinIconsForItem(itemID)
     if not itemID or not self.pins then return end
-    L._mdebug("Map-Cache", "Force refreshing pin icons for itemID: " .. itemID)
+    L._mdebug("Map-Cache", "Force refreshing pin icons for itemID: " .. tostring(itemID))
 
     local filters = L:GetFilters()
 

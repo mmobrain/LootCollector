@@ -102,14 +102,14 @@ function Core:RunUnifiedDatabasePass(blacklistName)
     local stats = {
         blacklist = 0, zeroCoord = 0, ignored = 0, prefix = 0, 
         forbidden = 0, coa = 0, vendorDeadzones = 0, 
-        msMigrated = 0, msInvalidSrc = 0, vendorsFixed = 0
+        msMigrated = 0, msInvalidSrc = 0, vendorsFixed = 0,
+        
+        invalidZoneCombo = 0
     }
-    
     
     local vendorsByZone = {}
     if vendors then
         for g, v in pairs(vendors) do
-            
             if not v.vendorType then
                 if g:find("MS%-", 1, true) then v.vendorType = "MS"
                 elseif g:find("BM%-", 1, true) then v.vendorType = "BM"
@@ -127,7 +127,6 @@ function Core:RunUnifiedDatabasePass(blacklistName)
                 L.DataHasChanged = true
             end
 
-            
             if Constants and Constants.IsForbiddenZone and Constants:IsForbiddenZone(v.c, v.z, v.fp) then
                 vendors[g] = nil
                 L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", g, nil)
@@ -152,31 +151,33 @@ function Core:RunUnifiedDatabasePass(blacklistName)
     for guid, d in pairs(discoveries) do
         local removeReason = nil
         
-        
         if not removeReason and d.xy and d.xy.x == 0 and d.xy.y == 0 then
             removeReason = "zeroCoord"
         end
-        
         
         if not removeReason and Constants and Constants.IsForbiddenZone and Constants:IsForbiddenZone(d.c, d.z, d.fp) then
             removeReason = "forbidden"
         end
         
-        
         if not removeReason and d.c and d.z and c_z_toPurge[d.c] and c_z_toPurge[d.c][d.z] then
             removeReason = "prefix"
         end
-        
         
         if not removeReason and d.fp and self:_isFinderOnBlacklist(d.fp, blacklistName) then
             removeReason = "blacklist"
         end
         
-        
         if not removeReason and isCoA and (d.dt == MS_TYPE or d.ist == 6 or d.ist == 7) then
             removeReason = "coa"
         end
         
+        
+        if not removeReason and d.c and d.z then
+            local mapData = ZoneList and ZoneList.MapDataByID and ZoneList.MapDataByID[tonumber(d.z)]
+            if mapData and mapData.continentID ~= tonumber(d.c) and tonumber(d.z) <= 2000 then
+                removeReason = "invalidZoneCombo"
+            end
+        end
         
         if not removeReason and d.i then
             if itemIgnoreCache[d.i] == nil then
@@ -186,9 +187,7 @@ function Core:RunUnifiedDatabasePass(blacklistName)
             if itemIgnoreCache[d.i] then removeReason = "ignored" end
         end
         
-        
         if not removeReason and d.dt == MS_TYPE then
-            
             local zKey = tostring(d.c)..":"..tostring(d.z)..":"..tostring(d.iz or 0)
             local vList = vendorsByZone[zKey]
             if vList then
@@ -202,7 +201,6 @@ function Core:RunUnifiedDatabasePass(blacklistName)
                     end
                 end
             end
-            
             
             if not removeReason then
                 local owner = normalizeName(d.o) or normalizeName(d.fp)
@@ -239,6 +237,8 @@ function Core:RunUnifiedDatabasePass(blacklistName)
     end
     
     for _, guid in ipairs(guidsToRemove) do
+        local d = discoveries[guid]
+        if d and d.z then self:RemoveFromZoneIndex(guid, d.z) end
         discoveries[guid] = nil
         L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
     end
@@ -658,9 +658,11 @@ function Core:DropAOETombstone(name, c, z, iz, dt, x, y, radiusYards, daysToLive
             end
         end
         for _, guid in ipairs(guidsToRemove) do
-            discoveries[guid] = nil
-            L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
-        end
+		  local d = discoveries[guid]
+		  if d and d.z then self:RemoveFromZoneIndex(guid, d.z) end
+		  discoveries[guid] = nil
+		  L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
+	    end
         if #guidsToRemove > 0 then
             L._debug("Core-AOE", string.format("Blast radius annihilated %d existing pins.", #guidsToRemove))
         end
@@ -1009,8 +1011,9 @@ function Core:FixIncorrectInstanceContinentIDs()
         if pTime then L:ProfileStop("Core:FixIncorrectInstanceContinentIDs", pTime) end
         return 
     end
-
+	if not (L.db and L.db.profile and L.db.profile.hideNonEssential) then
     print("|cff00ff00LootCollector:|r Scanning for instance records with incorrect continent data...")
+	end
 
     local discoveries = L:GetDiscoveriesDB()
     if not (discoveries and next(discoveries)) then
@@ -1027,7 +1030,7 @@ function Core:FixIncorrectInstanceContinentIDs()
         end
     end
 
-    if #guidsToFix == 0 then
+    if #guidsToFix == 0 and not (L.db and L.db.profile and L.db.profile.hideNonEssential) then
         print("|cff00ff00LootCollector:|r No incorrect instance records found.")
         L.db.global.instanceContinentFixV1 = true
         if pTime then L:ProfileStop("Core:FixIncorrectInstanceContinentIDs", pTime) end
@@ -1050,8 +1053,9 @@ function Core:FixIncorrectInstanceContinentIDs()
             L._debug("Core-Fix", "Corrected instance GUID: " .. oldGuid .. " -> " .. newGuid)
         end
     end
-
+	if fixedCount >0 and not (L.db and L.db.profile and L.db.profile.hideNonEssential) then
     print(string.format("|cff00ff00LootCollector:|r Corrected %d instance records with legacy continent data.", fixedCount))
+	end
 
     local lootedFixedCount = 0
     if L.db and L.db.char and L.db.char.looted then
@@ -1109,6 +1113,8 @@ function Core:PurgeDiscoveriesFromBlockedPlayers()
     local removedCount = #guidsToRemove
     if removedCount > 0 then
         for _, guid in ipairs(guidsToRemove) do
+            local d = discoveries[guid]
+            if d and d.z then self:RemoveFromZoneIndex(guid, d.z) end
             discoveries[guid] = nil
             L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
         end
@@ -1361,7 +1367,13 @@ function Core:DeduplicateItems(mysticScrollsKeepOldest)
     end
 
     if #guidsToRemove > 0 then
-        for _, guid in ipairs(guidsToRemove) do discoveries[guid] = nil end
+        for _, guid in ipairs(guidsToRemove) do 
+            local d = discoveries[guid]
+            if d and d.z then
+                self:RemoveFromZoneIndex(guid, d.z)
+            end
+            discoveries[guid] = nil 
+        end
     end
     
     L._debug("Deduplicator", string.format("Completed in %.2f ms. Removed %d WF, %d MS. Refined %d coords.", debugprofilestop() - startTime, wfRemoved, msRemoved, refinedCount))
@@ -1450,6 +1462,10 @@ function Core:DeduplicateVendorsPerZone()
     
     if #guidsToRemove > 0 then
         for _, guid in ipairs(guidsToRemove) do
+            local v = vendors[guid]
+            if v and v.z then
+                self:RemoveFromZoneIndex(guid, v.z)
+            end
             vendors[guid] = nil
             L:SendMessage("LootCollector_DiscoveriesUpdated", "remove", guid, nil)
         end
@@ -1518,7 +1534,7 @@ function Core:FixLegacyVendorQuality()
         end
     end
     
-    if count > 0 then
+    if count > 0 and not (L.db and L.db.profile and L.db.profile.hideNonEssential) then
         print(string.format("|cff00ff00LootCollector:|r Repaired %d existing Specialty Vendor records in database to Heirloom quality.", count))
         L.DataHasChanged = true
     end
@@ -1567,6 +1583,8 @@ function Core:RunManualDatabaseCleanup()
     if stats.msMigrated > 0 then print(string.format("|cff00ff00LootCollector:|r Converted %d trusted legacy Mystic Scroll entries to specialobject source.", stats.msMigrated)) end
     if stats.msInvalidSrc > 0 then print(string.format("|cff00ff00LootCollector:|r Purged %d Mystic Scroll entries with invalid legacy sources.", stats.msInvalidSrc)) end
     if stats.vendorsFixed > 0 then print(string.format("|cff00ff00LootCollector:|r Repaired %d vendor entries missing 'vendorType' tags.", stats.vendorsFixed)) end
+    
+    if stats.invalidZoneCombo > 0 then print(string.format("|cff00ff00LootCollector:|r Purged %d discoveries with invalid Continent-Zone combinations.", stats.invalidZoneCombo)) end
 
     local vendorsMerged = self:DeduplicateVendorsPerZone()
     if vendorsMerged > 0 then print(string.format("|cff00ff00LootCollector:|r Merged %d duplicate vendor entries.", vendorsMerged)) end
@@ -1587,7 +1605,7 @@ function Core:RunManualDatabaseCleanup()
 
     local totalChanges = vendorsMerged + totalAOERemoved + wfRemoved + msRemoved + capRemoved + 
         stats.blacklist + stats.zeroCoord + stats.ignored + stats.prefix + stats.forbidden + 
-        stats.coa + stats.vendorDeadzones + stats.msMigrated + stats.msInvalidSrc + stats.vendorsFixed
+        stats.coa + stats.vendorDeadzones + stats.msMigrated + stats.msInvalidSrc + stats.vendorsFixed + stats.invalidZoneCombo
 
     self:InvalidateLookupIndices()
 
@@ -1613,7 +1631,7 @@ function Core:RunAutomaticOnLoginCleanup()
     local wfRemoved, msRemoved, refinedCount = self:DeduplicateItems(true)
     local capRemoved = self:EnforceDatabaseCapBulk()
 
-    local totalRemoved = capRemoved + totalAOERemoved + stats.blacklist + stats.zeroCoord + stats.ignored + stats.prefix + stats.forbidden + stats.coa + stats.vendorDeadzones + stats.msInvalidSrc
+    local totalRemoved = capRemoved + totalAOERemoved + stats.blacklist + stats.zeroCoord + stats.ignored + stats.prefix + stats.forbidden + stats.coa + stats.vendorDeadzones + stats.msInvalidSrc + stats.invalidZoneCombo
     
     self:InvalidateLookupIndices()
 
@@ -1640,12 +1658,12 @@ function Core:RunInitialCleanup()
 
     self:InvalidateLookupIndices()
 
-    local totalRemoved = stats.blacklist + stats.msInvalidSrc + stats.zeroCoord + stats.forbidden + stats.prefix + stats.ignored
+    local totalRemoved = stats.blacklist + stats.msInvalidSrc + stats.zeroCoord + stats.forbidden + stats.prefix + stats.ignored + stats.invalidZoneCombo
 
     if totalRemoved + stats.msMigrated + wfRemoved + msRemoved + stats.vendorsFixed > 0 then
         if not (L.db and L.db.profile and L.db.profile.hideNonEssential) then
             print(string.format("|cff00ff00LootCollector:|r Initial cleanup complete. Removed %d blacklist, %d invalid scrolls, converted %d trusted legacy scrolls, %d 0,0, %d city/forbidden, %d prefix, %d ignored, %d WF dupes, %d MS dupes. Fixed %d vendor tags.",
-                stats.blacklist, stats.msInvalidSrc, stats.msMigrated, stats.zeroCoord, stats.forbidden, stats.prefix, stats.ignored, wfRemoved, msRemoved, stats.vendorsFixed))
+                totalRemoved, stats.msMigrated, stats.msMigrated, stats.zeroCoord, stats.forbidden, stats.prefix, stats.ignored, wfRemoved, msRemoved, stats.vendorsFixed))
         end
 
         local Map = L:GetModule("Map", true)
@@ -1663,7 +1681,9 @@ function Core:ConvertLegacyInstanceData()
         return
     end
 
+	if not (L.db and L.db.profile and L.db.profile.hideNonEssential) then
     print("|cff00ff00LootCollector:|r Scanning for and converting ALL legacy instance data (v5). This is a one-time process.")
+	end
     
     local ZoneList = L:GetModule("ZoneList", true)
     if not ZoneList then 
@@ -1697,7 +1717,7 @@ function Core:ConvertLegacyInstanceData()
     L._debug("Core-LegacyConvert", "--- SCANNING PHASE COMPLETE ---")
     L._debug("Core-LegacyConvert", "Total candidates for conversion: " .. #guidsToConvert)
 
-    if #guidsToConvert == 0 then
+    if #guidsToConvert == 0 and not (L.db and L.db.profile and L.db.profile.hideNonEssential) then
         print("|cff00ff00LootCollector:|r No legacy instance data found to convert.")
         L.db.global.legacyInstanceConversionV5 = true
         return
@@ -1779,7 +1799,9 @@ end
 function Core:FixInvalidContinentIDs()
     if L.db.global.invalidContinentFix_v1 then return end
 
+	if not (L.db and L.db.profile and L.db.profile.hideNonEssential) then
     print("|cff00ff00LootCollector:|r Scanning database for records with invalid continent IDs (c=-1)...")
+	end
 
     local discoveries = L:GetDiscoveriesDB()
     if not (discoveries and next(discoveries)) then
@@ -2695,8 +2717,17 @@ function Core:HandleLocalLoot(discovery)
         return 
     end
 
-    local guid = L:GenerateGUID(c, z, iz, itemID, x, y)
-    local rec = db[guid] or FindNearbyDiscovery(c, z, itemID, x, y, db)
+    local canonicalMid = nil
+    local existing, existingGuid = self:FindExistingDiscovery(guid, incomingMid)
+    
+    if not existing and FindNearbyDiscovery then
+        local nearby = FindNearbyDiscovery(d.c, d.z, d.i, d.xy.x, d.xy.y, db)
+        if nearby then
+            existing = nearby
+            existingGuid = nearby.g
+            guid = nearby.g
+        end
+    end
     
     if not rec then
         rec = {
@@ -2975,6 +3006,14 @@ function Core:AddToZoneIndex(guid, zoneID)
         Core.ZoneIndex[zoneID] = {}
     end
     
+    
+    for _, existingGuid in ipairs(Core.ZoneIndex[zoneID]) do
+        if existingGuid == guid then
+            if pTime then L:ProfileStop("Core:AddToZoneIndex", pTime) end
+            return
+        end
+    end
+    
     table.insert(Core.ZoneIndex[zoneID], guid)
     
     if pTime then L:ProfileStop("Core:AddToZoneIndex", pTime) end 
@@ -3231,8 +3270,14 @@ function Core:_ProcessItemDiscovery(d, options, op, t0)
     local canonicalMid = nil
     local existing, existingGuid = self:FindExistingDiscovery(guid, incomingMid)
     
-    if not existing and FindNearbyDiscovery then
-        local nearby = FindNearbyDiscovery(d.c, d.z, d.i, d.xy.x, d.xy.y, db)
+    if not existing then
+        local nearby = nil
+        if Constants and d.dt == Constants.DISCOVERY_TYPE.WORLDFORGED then
+            nearby = FindWorldforgedInZone(d.c, d.z, d.i, db)
+        elseif FindNearbyDiscovery then
+            nearby = FindNearbyDiscovery(d.c, d.z, d.i, d.xy.x, d.xy.y, db)
+        end
+        
         if nearby then
             existing = nearby
             existingGuid = nearby.g

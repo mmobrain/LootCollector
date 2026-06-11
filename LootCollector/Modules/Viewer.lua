@@ -1677,6 +1677,16 @@ function Viewer:ProcessCacheBuildChunk(budgetOverride)
             if (not itemName or itemName == "") and itemID then 
                 itemName = GetItemInfo(itemID) 
             end
+            
+            
+            if not itemName or itemName == "" then
+                if itemID then
+                    itemName = "Unknown Item (" .. tostring(itemID) .. ")"
+                else
+                    itemName = "Unknown Item"
+                end
+                self.hasUncachedData = true
+            end
                 
             if itemName and itemName ~= "" then
                 local Scanner = L:GetModule("Scanner", true)
@@ -1689,7 +1699,6 @@ function Viewer:ProcessCacheBuildChunk(budgetOverride)
                 local classToken = itemData.classToken
                 if classToken then
                     characterClass = _G.LOCALIZED_CLASS_NAMES_MALE[classToken] or _G.LOCALIZED_CLASS_NAMES_FEMALE[classToken] or classToken
-                    
                     
                     
                     local Constants = L:GetModule("Constants", true)
@@ -1730,7 +1739,6 @@ function Viewer:ProcessCacheBuildChunk(budgetOverride)
                 row.cl            = discovery.cl
                 row.isVendor      = false
                 row.tooltipText   = itemData.fullText or ""
-
                 
                 row.zoneNameStr   = GetLocalizedZoneName(discovery)
                 row.sortQuality   = tonumber(discovery.q) or 1
@@ -5937,6 +5945,17 @@ function Viewer:OnInitialize()
 
     self:UpdateClearAllButton()
     self:UpdateFilterButtonStates()
+    
+    
+    C_Timer.After(12, function()
+        local useAsync = L.db and L.db.profile and L.db.profile.viewer and L.db.profile.viewer.asyncLoading
+        if useAsync == nil then useAsync = true end
+        
+        
+        if useAsync and Viewer.PrewarmCache then
+            Viewer:PrewarmCache()
+        end
+    end)
     
     if pTime then L:ProfileStop("Viewer:OnInitialize", pTime) end 
 end

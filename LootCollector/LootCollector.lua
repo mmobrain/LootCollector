@@ -185,6 +185,7 @@ local dbDefaults = {
             hideCollectedME = false,
 		    hideBags = false,
 	        hidePlayerNames = false,
+			hideNonEssential = true,
             disableFadeEffect = false,
             pinSize = 17, 
             minimapPinSize = 14, 
@@ -252,7 +253,14 @@ local dbDefaults = {
 	    vdebugMode = false,
         discoveries = {},
     },
-    char = { looted = {}, hidden = {} },
+    char = { 
+        looted = {}, 
+        hidden = {},
+        paused = false,      
+        autoPauseInBG = true,
+        autoPauseInRaidInstance = true,
+        autoPauseInRaidGroup = false,  
+    },
     global = { 
         realms = {}, 
         cacheQueue = {},
@@ -401,6 +409,13 @@ function LootCollector:ComputeDistance(c1, z1, x1, y1, c2, z2, x2, y2)
     local cx1, cy1 = getContPosition(c1, z1, x1, y1)
     local cx2, cy2 = getContPosition(c2, z2, x2, y2)
     if not cx1 or not cx2 then 
+        if z1 == z2 then            
+            local dx = x2 - x1
+            local dy = y2 - y1
+            local dist = math.sqrt(dx*dx + dy*dy) * 2000
+            if pTime then self:ProfileStop("LootCollector:ComputeDistance", pTime) end
+            return dist, dx, dy
+        end
         if pTime then self:ProfileStop("LootCollector:ComputeDistance", pTime) end
         return nil 
     end
@@ -1317,7 +1332,7 @@ function LootCollector:OnInitialize()
 
     self.channelReady = false
     self.name         = "LootCollector"
-    self.Version      = "beta-0.8.3"
+    self.Version      = "beta-0.8.4"
 
     local Constants = self:GetModule("Constants", true)
     if Constants and Constants.GetDefaultChannel then
@@ -1592,6 +1607,23 @@ end
 
 function LootCollector:OnDisable()
     self:UnregisterAllEvents()
+end
+
+function LootCollector:SyncInvalidSendersWithBlockList()
+    if not (self.db and self.db.profile) then return end
+    local profile = self.db.profile
+    local blockList = profile.sharing and profile.sharing.blockList or {}
+    local invalidSenders = profile.invalidSenders
+    
+    if invalidSenders then
+        for name, track in pairs(invalidSenders) do
+            
+            if track.permanent and not blockList[name] then
+                
+                invalidSenders[name] = nil
+            end
+        end
+    end
 end
 
 SLASH_LCCLEANUP1 = "/lccdb"

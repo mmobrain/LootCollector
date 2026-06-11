@@ -494,12 +494,15 @@ function DBSync.Shares(scope, targetOrZone, zoneId)
     local discoveries = L:GetDiscoveriesDB()
     for _, d in pairs(discoveries or {}) do
         if type(d) == "table" and d.i and not d.onHold then
-            if not allowedTypes or allowedTypes[d.dt] ~= false then
-                if not zoneFilterID or (d.z == zoneFilterID) then
-                    if Constants and Constants.IsForbiddenZone and Constants:IsForbiddenZone(d.c, d.z, d.fp) then
-                        
-                    else
-                        table.insert(recordsToShare, d)
+            
+            if (now - (tonumber(d.ls) or 0)) <= (120 * 86400) then
+                if not allowedTypes or allowedTypes[d.dt] ~= false then
+                    if not zoneFilterID or (d.z == zoneFilterID) then
+                        if Constants and Constants.IsForbiddenZone and Constants:IsForbiddenZone(d.c, d.z, d.fp) then
+                            
+                        else
+                            table.insert(recordsToShare, d)
+                        end
                     end
                 end
             end

@@ -131,7 +131,7 @@ local function ensureDefaults()
 	local p = L.db.profile
 	
 	if p.hidePlayerNames == nil then p.hidePlayerNames = false end
-	if p.hideNonEssential == nil then p.hideNonEssential = false end
+	if p.hideNonEssential == nil then p.hideNonEssential = true end 
 	if p.disableMysticScrolls == nil then p.disableMysticScrolls = false end
     
     p.featureOverrides = p.featureOverrides or {
@@ -220,8 +220,8 @@ local function ensureDefaults()
         end
         
         c.paused = p.paused or false
-        c.autoPauseInBG = p.autoPauseInBG or false
-        c.autoPauseInRaidInstance = p.autoPauseInRaidInstance or false
+        c.autoPauseInBG = p.autoPauseInBG or true 
+        c.autoPauseInRaidInstance = p.autoPauseInRaidInstance or true 
         c.autoPauseInRaidGroup = p.autoPauseInRaidGroup or false
         
         c.migratedFiltersV8 = true
@@ -246,8 +246,8 @@ local function ensureDefaults()
     if c.mapFilters.allowedEquipLoc == nil then c.mapFilters.allowedEquipLoc = {} end
     
 	if c.paused == nil then c.paused = false end
-	if c.autoPauseInBG == nil then c.autoPauseInBG = false end
-	if c.autoPauseInRaidInstance == nil then c.autoPauseInRaidInstance = false end
+	if c.autoPauseInBG == nil then c.autoPauseInBG = true end 
+	if c.autoPauseInRaidInstance == nil then c.autoPauseInRaidInstance = true end 
 	if c.autoPauseInRaidGroup == nil then c.autoPauseInRaidGroup = false end
 end
 
@@ -304,7 +304,7 @@ local function buildOptions()
 				inline = false,
 				order = 10,
 				args = {
-pauseAddon = {
+					pauseAddon = {
 						type = "toggle",
 						name = "|cffff0000Manual Hibernation (Pause)|r",
 						order = 0.1,
@@ -349,9 +349,9 @@ pauseAddon = {
 						type = "toggle",
 						name = "Hide All",
 						order = 1,
-						get = function() return L.db.profile.mapFilters.hideAll end,
+						get = function() return L.db.char.mapFilters.hideAll end,
 						set = function(_, v)
-							L.db.profile.mapFilters.hideAll = v
+							L.db.char.mapFilters.hideAll = v
 							refreshUI()
 						end,
 					},
@@ -359,9 +359,9 @@ pauseAddon = {
 						type = "toggle",
 						name = "Hide Faded",
 						order = 2,
-						get = function() return L.db.profile.mapFilters.hideFaded end,
+						get = function() return L.db.char.mapFilters.hideFaded end,
 						set = function(_, v)
-							L.db.profile.mapFilters.hideFaded = v
+							L.db.char.mapFilters.hideFaded = v
 							refreshUI()
 						end,
 					},
@@ -369,9 +369,9 @@ pauseAddon = {
 						type = "toggle",
 						name = "Hide Stale",
 						order = 3,
-						get = function() return L.db.profile.mapFilters.hideStale end,
+						get = function() return L.db.char.mapFilters.hideStale end,
 						set = function(_, v)
-							L.db.profile.mapFilters.hideStale = v
+							L.db.char.mapFilters.hideStale = v
 							refreshUI()
 						end,
 					},
@@ -380,9 +380,9 @@ pauseAddon = {
 						name = "Hide Looted",
 						order = 4,
 						desc = "Hide discoveries already looted by this character.",
-						get = function() return L.db.profile.mapFilters.hideLooted end,
+						get = function() return L.db.char.mapFilters.hideLooted end,
 						set = function(_, v)
-							L.db.profile.mapFilters.hideLooted = v
+							L.db.char.mapFilters.hideLooted = v
 							refreshUI()
 						end,
 					},
@@ -391,9 +391,9 @@ pauseAddon = {
 						name = "Hide Collected Appearances",
 						order = 4.1,
 						desc = "Hide discoveries for items with appearances you have already collected.",
-						get = function() return L.db.profile.mapFilters.hideLearnedTransmog end,
+						get = function() return L.db.char.mapFilters.hideLearnedTransmog end,
 						set = function(_, v)
-							L.db.profile.mapFilters.hideLearnedTransmog = v
+							L.db.char.mapFilters.hideLearnedTransmog = v
 							refreshUI()
 						end,
 					},
@@ -402,9 +402,9 @@ pauseAddon = {
 						name = "Hide Collected Mystic Enchants",
 						order = 4.2,
 						desc = "Hide Mystic Scroll discoveries for enchants you have already collected.",
-						get = function() return L.db.profile.mapFilters.hideCollectedME end,
+						get = function() return L.db.char.mapFilters.hideCollectedME end,
 						set = function(_, v)
-							L.db.profile.mapFilters.hideCollectedME = v
+							L.db.char.mapFilters.hideCollectedME = v
 							refreshUI()
 						end,
 					},
@@ -413,9 +413,9 @@ pauseAddon = {
 						name = "Hide Bags",
 						order = 4.25,
 						desc = "Hide discoveries for bag items (containers). Useful if you already have large bags.",
-						get = function() return L.db.profile.mapFilters.hideBags end,
+						get = function() return L.db.char.mapFilters.hideBags end,
 						set = function(_, v)
-							L.db.profile.mapFilters.hideBags = v
+							L.db.char.mapFilters.hideBags = v
 							refreshUI()
 						end,
 					},
@@ -503,9 +503,9 @@ pauseAddon = {
                         name = "Auto-track Nearest Unlooted",
                         order = 5.5,
                         desc = "Automatically enables the arrow to point to the nearest unlooted discovery that matches your filters.",
-                        get = function() return L.db.profile.mapFilters.autoTrackNearest end,
+                        get = function() return L.db.char.mapFilters.autoTrackNearest end,
                         set = function(_, v)
-                            L.db.profile.mapFilters.autoTrackNearest = v
+                            L.db.char.mapFilters.autoTrackNearest = v
                             local Arrow = L:GetModule("Arrow", true)
                             if Arrow then
                                 if v then
@@ -871,33 +871,6 @@ pauseAddon = {
 					useInlineVendorView = {
 						type = "toggle",
 						name = "Use Inline Vendors Style",
-						desc = "Uses expansion style instead of the split view for the Vendors tab.",
-						order = 8,
-						get = function() return L.db.profile.viewer.inlineVendorView end,
-						set = function(_, v) 
-                            L.db.profile.viewer.inlineVendorView = v
-                            local Viewer = L:GetModule("Viewer", true)
-                            if Viewer then 
-                                
-                                Viewer.expandedVendors = {} 
-                                
-                                
-                                if Viewer.InvalidateFilterCache then
-                                    Viewer:InvalidateFilterCache()
-                                end
-                                
-                                if Viewer.ApplySettings then Viewer:ApplySettings() end
-                                
-                                
-                                if Viewer.window and Viewer.window:IsShown() then
-                                    Viewer:RefreshData()
-                                end
-                            end
-                        end,
-					},
-					useInlineVendorView = {
-						type = "toggle",
-						name = "Use Inline Vendors Style",
 						desc = "Reverts the Vendors tab to the old drop-down expansion style instead of the split view.",
 						order = 8,
 						get = function() return L.db.profile.viewer.inlineVendorView end,
@@ -918,8 +891,6 @@ pauseAddon = {
                         name = "Delay Viewer Data Loading",
                         desc = function()
                             local baseDesc = "Loads the Discoveries Viewer smoothly in the background over a few seconds to completely eliminate screen freezing, rather than locking the game for a split second."
-                            
-                            
                             
                             if not L.db.profile.viewer.asyncLoading and L._profilerStats then
                                 local stats = L._profilerStats["Viewer:UpdateAllDiscoveries"]
@@ -1190,6 +1161,10 @@ pauseAddon = {
 						end,
 						set = function(_, v)
 							stringToList(v, L.db.profile.sharing.blockList)
+                            
+                            if L.SyncInvalidSendersWithBlockList then
+                                L:SyncInvalidSendersWithBlockList()
+                            end
 						end,
 					},
                     purgeGroup = {
@@ -1206,7 +1181,7 @@ pauseAddon = {
                             },
                             purgeBlockedData = {
                                 type = "execute",
-                                name = "Purge Blocked Players Data",
+                                name = "Purge Blocked Players Discoveries",
                                 desc = "Removes all discoveries from your database where the original finder ('fp') is on your block list.",
                                 order = 2,
                                 func = function()

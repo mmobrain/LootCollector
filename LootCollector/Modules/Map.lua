@@ -632,6 +632,11 @@ local function SearchDiscoveryForTerm(d, term)
     if d._rawIl ~= rawItemLink then
         d._rawIl = rawItemLink
         local itemName = rawItemLink:match("%[(.+)%]") or ""
+        
+        if itemName == "" and d.i then
+            itemName = tostring(d.i) 
+        end
+        
         d._ln = string.lower(itemName)
     end
 

@@ -1,3 +1,8 @@
+## LootCollector 0.8.4 - Security, Fixes, tiny Performance fix.
+
+- **Fixes:** Fixed few bugs.
+- **Network Protocol "bump":** Bumped minimum compatible version to 0.8.4.
+
 ## LootCollector 0.8.3 - Fix.
 - **Lua error fix**
 

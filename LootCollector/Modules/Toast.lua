@@ -1,5 +1,3 @@
-
-
 local L = LootCollector
 local Toast = L:NewModule("Toast")
 
@@ -212,59 +210,81 @@ local function getQualityColor(q)
 	return 1, 1, 1
 end
 
-function Toast:ShowSpecialMessage(iconTexture, titleText, subtitleText)
+function Toast:ShowSpecialMessage(iconTexture, titleText, subtitleText, force)
     local pTime = L.ProfileStart and L:ProfileStart() 
 
-    if not (L.db and L.db.profile and L.db.profile.toasts and L.db.profile.toasts.enabled) then
-        if pTime then L:ProfileStop("Toast:ShowSpecialMessage", pTime) end
+	local Dev = L:GetModule("DevCommands", true)
+	if Dev and Dev.LogMessage then
+		options = options or {}
+		local opstr = options.op or (options.isLateDiscovery and "CONF" or "DISC")
+		local datastr = nil
+		if discoveryData then
+			datastr = string.format("{i=%s, c=%s, z=%s, iz=%s, q=%s, fp=%s, il=%s}",
+				tostring(discoveryData.i), tostring(discoveryData.c), tostring(discoveryData.z),
+				tostring(discoveryData.iz), tostring(discoveryData.q), tostring(discoveryData.fp),
+				tostring(discoveryData.il))
+			if discoveryData.zn then datastr = datastr .. ", zn=" .. tostring(discoveryData.zn) .. "}"
+			else datastr = datastr .. "}" end
+		end
+		Dev:LogMessage("Toast:Show", string.format("Received data for op=%s: %s", opstr, datastr))
+	end
+	
+	options = options or {}
+	local op = options.op or "DISC"
+	
+	ensureProfile()
+    
+    
+    if not force then
+        if not (L.db and L.db.profile and L.db.profile.toasts and L.db.profile.toasts.enabled) then
+            if pTime then L:ProfileStop("Toast:ShowSpecialMessage", pTime) end
+            return
+        end
+    end
+    
+	local pname = discoveryData and (discoveryData.fp or discoveryData.playerName or discoveryData.finder)
+	local tnow = GetTime()
+	
+	if pname and pname ~= "An Unnamed Collector" then
+		if spamState.blocked[pname] then
+            if pTime then L:ProfileStop("Toast:Show", pTime) end
+			return
+		end
+		if op == "CONF" and tnow < (spamState.confSuppressed[pname] or 0) then
+            if pTime then L:ProfileStop("Toast:Show", pTime) end
+			return
+		end
+	end
+	if force then
+		renderToast(discoveryData, options)
+        if pTime then L:ProfileStop("Toast:Show", pTime) end
 		return
 	end
-	if not toastContainer then 
-        if pTime then L:ProfileStop("Toast:ShowSpecialMessage", pTime) end
-        return 
-    end
-
-    local f = self:acquireToast()
-    f.text.discoveryData = nil 
-	f.icon:SetTexture(iconTexture or "Interface\\Icons\\INV_Misc_Book_09")
-    f.text.fontString:SetText(titleText or "LootCollector Notification")
-	f.subtext:SetText(subtitleText or "")
-
-	if not toastContainer:IsShown() then
-		toastContainer:Show()
-	end
-	f:SetAlpha(0.0)
-	f.startTime = GetTime()
-	f:Show()
-	self:_layoutStacks()
-	f:SetScript("OnUpdate", function(self)
-		local dt = GetTime() - (self.startTime or 0)
-		if dt < TOASTFADEIN then
-			self:SetAlpha(dt / TOASTFADEIN)
-		elseif dt < TOASTFADEIN + Toast.displayTime then
-			self:SetAlpha(1.0)
-		elseif dt < TOASTFADEIN + Toast.displayTime + TOASTFADEOUT then
-			local fade = (dt - (TOASTFADEIN + Toast.displayTime)) / TOASTFADEOUT
-			self:SetAlpha(1.0 - fade)
-			if fade >= 1.0 then
-				self:SetScript("OnUpdate", nil)
-				self:Hide()
-				Toast:_layoutStacks()
-				if not anyShown() and not ticker.active then
-					toastContainer:Hide()
-				end
-			end
+	
+	local nBacklog = normalBacklogSize()
+	if nBacklog >= MAXQUEUEBEFORETICKER then
+		if Toast.tickerEnabled then
+			overflowActive = true
+			addToTicker(discoveryData, options)
+            if pTime then L:ProfileStop("Toast:Show", pTime) end
+			return
 		else
-			self:SetScript("OnUpdate", nil)
-			self:Hide()
-			Toast:_layoutStacks()
-			if not anyShown() and not ticker.active then
-				toastContainer:Hide()
-			end
+			enqueueToast(discoveryData, options)
+            if pTime then L:ProfileStop("Toast:Show", pTime) end
+			return
 		end
-	end)
+	end
+	
+	if discoveryData.fp == "An Unnamed Collector" then
+		table.insert(anonBuffer, { data = discoveryData, options = options })
+		if not anonWindowEnds then
+			anonWindowEnds = GetTime() + ANONGATHERTIME
+		end
+	else
+		enqueueToast(discoveryData, options)
+	end
     
-    if pTime then L:ProfileStop("Toast:ShowSpecialMessage", pTime) end 
+    if pTime then L:ProfileStop("Toast:Show", pTime) end 
 end
 
 local function makeItemDisplay(d)
@@ -524,6 +544,7 @@ function Toast:acquireToast()
 	f.text:SetPoint("RIGHT", f.close, "LEFT", -8, 0)
     f.text:SetHeight(20) 
 
+    
     f.text.fontString = f.text:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     f.text.fontString:SetAllPoints(f.text)
     f.text.fontString:SetJustifyH("LEFT")
@@ -715,6 +736,7 @@ local function tickerLoadNextMessage(fontStringIndex)
     
     local msg = table.remove(ticker.messages, 1)
     fs:SetText(msg)
+    
     
     
     local sw = ticker.scrollContainer:GetWidth() or 0
@@ -914,7 +936,8 @@ function Toast:Show(discoveryData, force, options)
 		return
 	end
 	
-	local isNewRecord = options.isNew
+	
+	local isNewRecord = (options.isNew == true)
 	local toastOnlyNew = L.db.profile.toasts.toastOnlyNew
 	if toastOnlyNew == nil then toastOnlyNew = true end
 	
@@ -929,6 +952,41 @@ function Toast:Show(discoveryData, force, options)
         if pTime then L:ProfileStop("Toast:Show", pTime) end
 	    return
 	end
+
+    
+    local Constants = L:GetModule("Constants", true)
+    local dt = discoveryData and discoveryData.dt
+    if Constants and dt then
+        local mapFilters = L.db and L.db.char and L.db.char.mapFilters
+        if mapFilters then
+            if dt == Constants.DISCOVERY_TYPE.MYSTIC_SCROLL and mapFilters.showMysticScrolls == false then
+                if pTime then L:ProfileStop("Toast:Show", pTime) end
+                return
+            end
+            if dt == Constants.DISCOVERY_TYPE.WORLDFORGED and mapFilters.showWorldforged == false then
+                if pTime then L:ProfileStop("Toast:Show", pTime) end
+                return
+            end
+            if dt == Constants.DISCOVERY_TYPE.BLACKMARKET and mapFilters.showVendors == false then
+                if pTime then L:ProfileStop("Toast:Show", pTime) end
+                return
+            end
+        end
+    end
+
+    
+    local c = tonumber(discoveryData and discoveryData.c) or 0
+    local z = tonumber(discoveryData and discoveryData.z) or 0
+    local ZoneList = L:GetModule("ZoneList", true)
+    if ZoneList and ZoneList.MapDataByID then
+        local mapData = ZoneList.MapDataByID[z]
+        
+        if not mapData or (mapData.continentID ~= c and z <= 2000) then
+            L._debug("Toast", "Suppressed Toast for invalid or unknown zone mapping.")
+            if pTime then L:ProfileStop("Toast:Show", pTime) end
+            return
+        end
+    end
 
 	local pname = discoveryData and (discoveryData.fp or discoveryData.playerName or discoveryData.finder)
 	local tnow = GetTime()

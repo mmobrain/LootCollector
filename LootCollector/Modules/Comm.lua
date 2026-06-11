@@ -13,6 +13,7 @@ Comm._minCompatibleVersion = nil
 Comm.isLoggingOut = false
 Comm._senderInjectionRates = {}
 Comm._auCache = {}
+Comm.sessionIgnoredSenders = Comm.sessionIgnoredSenders or {}
 
 local function ChatFilter(_, _, msg, _, _, _, _, _, _, _, channelName)
     if not channelName then return false end
@@ -185,7 +186,6 @@ Comm._processTimer = 0
 local function trackInvalidSender(sender, reason, payload)
     if not (L.db and L.db.profile) then return end
     
-    
     if sender and sender ~= "" then
         local name = L:normalizeSenderName(sender)
         local wl = L.db.profile.sharing and L.db.profile.sharing.whiteList
@@ -193,6 +193,56 @@ local function trackInvalidSender(sender, reason, payload)
             return
         end
     end
+    
+    L.db.profile.invalidSenders = L.db.profile.invalidSenders or {}
+    local track = L.db.profile.invalidSenders[sender] or { count = 0, expiredCount = 0, lastInvalid = 0 }
+    
+    
+    local av = payload and payload.av or "Unknown"
+    local item = payload and (payload.i or payload.itemID) or "-"
+    local zone = payload and (payload.z or payload.zoneID) or "-"   
+    local continent = payload and payload.c or "-"
+    local izVal = tonumber(payload and (payload.iz or payload.instanceID)) or 0
+    local zVal = tonumber(payload and (payload.z or payload.zoneID)) or 0
+    
+    
+    local xVal = payload and (payload.x or (payload.xy and payload.xy.x))
+    local yVal = payload and (payload.y or (payload.xy and payload.xy.y))
+    
+    local ZoneList = L:GetModule("ZoneList", true)
+    local isInst = (izVal > 0 or (ZoneList and ZoneList.InstanceZones and ZoneList.InstanceZones[zVal] ~= nil))
+
+    
+    local guidVal = "-"
+    if tonumber(continent) and tonumber(zone) and tonumber(item) and tonumber(xVal) and tonumber(yVal) then
+        guidVal = L:GenerateGUID(tonumber(continent), tonumber(zone), izVal, tonumber(item), tonumber(xVal), tonumber(yVal))
+    end
+
+    
+    if reason == "expired_timestamp" then
+        if L.db.profile.idebugMode then
+            print(string.format("|cffffff00[LC-Benign]|r Dropped expired packet from %s (v%s)", tostring(sender), tostring(av)))
+        end
+        
+        track.expiredCount = (track.expiredCount or 0) + 1
+        track.lastInvalid = time()
+        track.lastReason = reason
+        track.version = av
+        track.lastItem = item
+        track.lastZone = zone
+        track.lastContinent = continent
+        track.lastIsInstance = isInst
+        track.lastGuid = guidVal
+        L.db.profile.invalidSenders[sender] = track
+
+        
+        if track.expiredCount >= 7 and not Comm.sessionIgnoredSenders[sender] then
+            Comm.sessionIgnoredSenders[sender] = true
+            print(string.format("|cffff7f00[LootCollector]|r %s (v%s) is broadcasting an expired database. Ignoring their messages for this session to save CPU.", sender, av))
+        end
+        return
+    end
+
     
     if L.db.profile.idebugMode then
         local payloadStr = "nil"
@@ -203,48 +253,141 @@ local function trackInvalidSender(sender, reason, payload)
             end
             payloadStr = "{" .. table.concat(parts, ", ") .. "}"
         end
-        print(string.format("|cffff00ff[LC-Invalid]|r Sender: %s | Reason: %s | Payload: %s", tostring(sender), tostring(reason), payloadStr))
+        print(string.format("|cffff00ff[LC-Invalid]|r Sender: %s (v%s) | Reason: %s | Payload: %s", tostring(sender), tostring(av), tostring(reason), payloadStr))
     end
     
-    L.db.profile.invalidSenders = L.db.profile.invalidSenders or {}
-    local track = L.db.profile.invalidSenders[sender] or { count = 0, lastInvalid = 0 }
-    
-    track.count = track.count + 1
+    track.count = (track.count or 0) + 1
     track.lastInvalid = time()
     track.lastReason = reason
+    track.version = av
+    track.lastItem = item
+    track.lastZone = zone
+    track.lastContinent = continent
+    track.lastIsInstance = isInst
+    track.lastGuid = guidVal
     
     L.db.profile.invalidSenders[sender] = track
     
-    if track.count == 3 and not track.sessionIgnored then
-        track.sessionIgnored = true
-        print(string.format("|cffff7f00[LootCollector]|r %s sent 3 invalid discoveries. Suppressing messages for this session.", sender))
+    
+    if track.count == 3 and not Comm.sessionIgnoredSenders[sender] then
+        Comm.sessionIgnoredSenders[sender] = true
+        print(string.format("|cffff7f00[LootCollector]|r %s (v%s) sent 3 invalid discoveries. Suppressing messages for this session.", sender, av))
     end
+    
     
     if track.count >= 7 and not track.permanent then
         track.permanent = true
         L.db.profile.sharing = L.db.profile.sharing or {}
         L.db.profile.sharing.blockList = L.db.profile.sharing.blockList or {}
         L.db.profile.sharing.blockList[sender] = true
-        print(string.format("|cffff0000[LootCollector]|r %s sent 7 invalid discoveries. PERMANENTLY BLACKLISTED.", sender))
+        
+        
+        Comm.sessionIgnoredSenders[sender] = true
+        
+        print(string.format("|cffff0000[LootCollector SECURITY]|r %s (v%s) sent 7 invalid discoveries. PERMANENTLY BLACKLISTED. Reason: %s (Last Target: Item %s, Continent %s, Zone %s, Instance: %s)", 
+            sender, av, reason, tostring(item), tostring(continent), tostring(zone), isInstStr))
     end
 end
 
 local function isSenderSessionIgnored(sender)
-    if not (L.db and L.db.profile) then return false end
+    if not sender or sender == "" then return false end
+    local name = L:normalizeSenderName(sender)
+    if not name then return false end
     
+    local wl = L.db.profile.sharing and L.db.profile.sharing.whiteList
+    if wl and wl[name] then return false end
+    
+    
+    if Comm.sessionIgnoredSenders and Comm.sessionIgnoredSenders[name] then
+        return true
+    end
+    return false
+end
+
+local function trackInvalidSender(sender, reason, payload)
+    if not (L.db and L.db.profile) then return end
     
     if sender and sender ~= "" then
         local name = L:normalizeSenderName(sender)
         local wl = L.db.profile.sharing and L.db.profile.sharing.whiteList
         if name and wl and wl[name] then
-            return false
+            return
         end
     end
     
-    if not L.db.profile.invalidSenders then return false end
+    local name = L:normalizeSenderName(sender)
+    if not name then return end
+
+    L.db.profile.invalidSenders = L.db.profile.invalidSenders or {}
+    local track = L.db.profile.invalidSenders[name] or { count = 0, expiredCount = 0, lastInvalid = 0 }
     
-    local track = L.db.profile.invalidSenders[sender]
-    return track and track.sessionIgnored == true
+    
+    local av = payload and payload.av or "Unknown"
+    local item = payload and (payload.i or payload.itemID) or "-"
+    local zone = payload and (payload.z or payload.zoneID) or "-"   
+    local continent = payload and payload.c or "-"
+    local izVal = tonumber(payload and (payload.iz or payload.instanceID)) or 0
+    local zVal = tonumber(payload and (payload.z or payload.zoneID)) or 0
+    
+    
+    local xVal = payload and (payload.x or (payload.xy and payload.xy.x))
+    local yVal = payload and (payload.y or (payload.xy and payload.xy.y))
+    
+    local ZoneList = L:GetModule("ZoneList", true)
+    local isInst = (izVal > 0 or (ZoneList and ZoneList.InstanceZones and ZoneList.InstanceZones[zVal] ~= nil))
+
+    
+    local guidVal = "-"
+    if tonumber(continent) and tonumber(zone) and tonumber(item) and tonumber(xVal) and tonumber(yVal) then
+        guidVal = L:GenerateGUID(tonumber(continent), tonumber(zone), izVal, tonumber(item), tonumber(xVal), tonumber(yVal))
+    end
+
+    
+    if L.db.profile.idebugMode then
+        local payloadStr = "nil"
+        if payload then
+            local parts = {}
+            for k, v in pairs(payload) do
+                table.insert(parts, tostring(k) .. "=" .. tostring(v))
+            end
+            payloadStr = "{" .. table.concat(parts, ", ") .. "}"
+        end
+        print(string.format("|cffff00ff[LC-Invalid]|r Sender: %s (v%s) | Reason: %s | Payload: %s", tostring(name), tostring(av), tostring(reason), payloadStr))
+    end
+    
+    track.count = (track.count or 0) + 1
+    track.lastInvalid = time()
+    track.lastReason = reason
+    track.version = av
+    track.lastItem = item
+    track.lastZone = zone
+    track.lastContinent = continent
+    track.lastIsInstance = isInst
+    track.lastGuid = guidVal 
+    
+    L.db.profile.invalidSenders[name] = track
+    
+    
+    if track.count == 3 and not Comm.sessionIgnoredSenders[name] then
+        Comm.sessionIgnoredSenders[name] = true
+        print(string.format("|cffff7f00[LootCollector]|r %s (v%s) sent 3 invalid discoveries. Suppressing messages for this session.", name, av))
+    end
+    
+    
+    if track.count >= 7 and not track.permanent then
+        track.permanent = true
+        L.db.profile.sharing = L.db.profile.sharing or {}
+        L.db.profile.sharing.blockList = L.db.profile.sharing.blockList or {}
+        L.db.profile.sharing.blockList[name] = true
+        
+        
+        Comm.sessionIgnoredSenders[name] = true
+        
+        
+        local isInstStr = isInst and "true" or "false"
+        print(string.format("|cffff0000[LootCollector SECURITY]|r %s (v%s) sent 7 invalid discoveries. PERMANENTLY BLACKLISTED. Reason: %s (Last Target: Item %s, Continent %s, Zone %s, Instance: %s)", 
+            name, av, reason, tostring(item), tostring(continent), tostring(zone), isInstStr))
+    end
 end
 
 local function isSenderPermanentlyBlacklisted(sender)
@@ -1000,6 +1143,12 @@ function Comm:BroadcastDiscovery(discovery)
         end
     end
     
+    local tnow = time()
+    if discovery.ls and (tnow - tonumber(discovery.ls)) > (120 * 86400) then
+        if pTime then L:ProfileStop("Comm:BroadcastDiscovery", pTime) end
+        return
+    end
+    
     local w = self:buildWireV5DISC(discovery)
     if not w then 
         if pTime then L:ProfileStop("Comm:BroadcastDiscovery", pTime) end
@@ -1037,6 +1186,12 @@ function Comm:BroadcastReinforcement(discovery)
         end
     end
     
+    local tnow = time()
+    if discovery.ls and (tnow - tonumber(discovery.ls)) > (120 * 86400) then
+        if pTime then L:ProfileStop("Comm:BroadcastReinforcement", pTime) end
+        return
+    end
+    
     local w = self:buildWireV5CONF(discovery)
     if not w then 
         if pTime then L:ProfileStop("Comm:BroadcastReinforcement", pTime) end
@@ -1062,6 +1217,11 @@ if L:IsPaused() then return end
     local isVendor = discovery.dt and Constants and discovery.dt == Constants.DISCOVERY_TYPE.BLACKMARKET
     if isVendor and discovery.vendorItems and #discovery.vendorItems > 10 then
         print(string.format("|cffff7f00LootCollector:|r Cannot show vendor to %s. It has too many items (%d) to send via whisper.", targetPlayer, #discovery.vendorItems))
+        return
+    end
+    
+    local tnow = time()
+    if discovery.ls and (tnow - tonumber(discovery.ls)) > (120 * 86400) then
         return
     end
 
@@ -1519,6 +1679,16 @@ local function _lc_validateNormalized(tbl)
             return nil, "invalid_zone"
         end
 
+        
+        local ZoneList = L:GetModule("ZoneList", true)
+        if ZoneList and ZoneList.MapDataByID then
+            local mapData = ZoneList.MapDataByID[z]
+            if mapData and mapData.continentID ~= c and z <= 2000 then
+                if pTime then L:ProfileStop("Comm:_lc_validateNormalized", pTime) end
+                return nil, "invalid_continent_zone_combo"
+            end
+        end
+
         local x, y = tonumber(tbl.x), tonumber(tbl.y)
         if not x or not y or x < 0 or x > 1 or y < 0 or y > 1 then
             if pTime then L:ProfileStop("Comm:_lc_validateNormalized", pTime) end
@@ -1526,6 +1696,8 @@ local function _lc_validateNormalized(tbl)
         end
 
         tbl.iz = tonumber(tbl.iz) or 0
+               
+        
         
         if tbl.op ~= "SHOW" then
             tbl.mid = tbl.mid or _computeMid(tbl)
@@ -1763,7 +1935,7 @@ function Comm:_ProcessChatMsg(msg, sender, channelName)
     end
 
     if optOp and optMid then
-        L._cdebug("Comm-Process", string.format("Regex matched header - Type: %s, OP: %s, MID: %s", tostring(mType), optOp, optMid))
+        L._cdebug("Comm-Process", string.format("Regex matched header - Type: %s, OP: %s, MID: %s, Sender: %s", tostring(mType), optOp, optMid, tostring(sender)))
 
         if mType then
             local spoolKey = sender .. ":" .. optMid
@@ -1828,14 +2000,14 @@ function Comm:_ProcessChatMsg(msg, sender, channelName)
         
         if L.db and L.db.global and L.db.global.deletedCache and L.db.global.deletedCache[optMid] then
              if optOp ~= "DISC" then 
-                 L._cdebug("Comm-Process", "Dropped: Mid is in deletedCache and OP is not DISC.")
+                 L._cdebug("Comm-Process", "Dropped: Mid is in deletedCache and OP is not DISC." .. tostring(sender))
                  if pTime then L:ProfileStop("Comm:_ProcessChatMsg", pTime) end
                  return 
              end
         end
         
         if shouldDropIngressDuplicate(sender, optOp, optMid) then
-            L._cdebug("Comm-Process", "Dropped: Ingress duplicate detected.")
+            L._cdebug("Comm-Process", "Dropped: Ingress duplicate detected." .. tostring(sender))
             if pTime then L:ProfileStop("Comm:_ProcessChatMsg", pTime) end
             return
         end
@@ -1843,7 +2015,7 @@ function Comm:_ProcessChatMsg(msg, sender, channelName)
         local data = _lc_tryDecodeEncodedPayload("LC1:" .. optEncoded)
         if data then
              if not isVersionCompatible(data.av) then 
-                 L._cdebug("Comm-Process", string.format("Dropped: Version incompatible (Packet AV: %s, Min Required: %s)", tostring(data.av), tostring(Comm._minCompatibleVersion)))
+                 L._cdebug("Comm-Process", string.format("Dropped: Version incompatible (Packet AV: %s, Min Required: %s, Sender: %s)", tostring(data.av), tostring(Comm._minCompatibleVersion), tostring(sender)))
                  if pTime then L:ProfileStop("Comm:_ProcessChatMsg", pTime) end
                  return 
              end
@@ -1866,7 +2038,7 @@ function Comm:_ProcessChatMsg(msg, sender, channelName)
              end
              
              if isSenderSessionIgnored(sender) then 
-                 L._cdebug("Comm-Process", "Dropped: Sender session ignored.")
+                 L._cdebug("Comm-Process", "Dropped: Sender " .. tostring(sender) .." session ignored.")
                  if pTime then L:ProfileStop("Comm:_ProcessChatMsg", pTime) end
                  return 
              end
@@ -2237,7 +2409,8 @@ function Comm:RouteIncoming(tbl, via, sender)
                 local subtitleText = ""
                 local icon = "Interface\\Icons\\INV_Misc_Book_09"
                 
-                Toast:ShowSpecialMessage(icon, titleText, subtitleText)
+                
+                Toast:ShowSpecialMessage(icon, titleText, subtitleText, true)
             end
         end
     end

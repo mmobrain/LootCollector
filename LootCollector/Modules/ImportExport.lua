@@ -671,7 +671,7 @@ function ImportExport:ApplyImport(parsed, mode, withOverlays, skipBlacklist, ski
                 importedTombstones = importedTombstones + 1
             end
         end
-        if importedTombstones > 0 then
+        if importedTombstones > 0 and not (L.db and L.db.profile and L.db.profile.hideNonEssential) then
             print(string.format("|cff00ff00LootCollector:|r Imported %d active tombstones.", importedTombstones))
         end
     end
@@ -711,7 +711,7 @@ function ImportExport:ApplyImport(parsed, mode, withOverlays, skipBlacklist, ski
             end
         end
         
-        if importedAOE > 0 then
+        if importedAOE > 0 and not (L.db and L.db.profile and L.db.profile.hideNonEssential) then
             print(string.format("|cff00ff00LootCollector:|r Imported %d active AOE Deadzones.", importedAOE))
             if Core and Core.GetDiscoveriesDB then
                 local dbDisc = Core:GetDiscoveriesDB()
@@ -725,7 +725,7 @@ function ImportExport:ApplyImport(parsed, mode, withOverlays, skipBlacklist, ski
                     for _, guid in ipairs(aoeGuidsToRemove) do
                         dbDisc[guid] = nil
                     end
-                    if #aoeGuidsToRemove > 0 then
+                    if #aoeGuidsToRemove > 0 and not (L.db and L.db.profile and L.db.profile.hideNonEssential) then
                         print(string.format("|cff00ff00LootCollector:|r Imported deadzones annihilated %d existing pins.", #aoeGuidsToRemove))
                     end
                 end
@@ -754,18 +754,30 @@ function ImportExport:ApplyImport(parsed, mode, withOverlays, skipBlacklist, ski
         _G.LootCollectorDB_Asc._schemaVersion = 8 
     end
     
-    if Core and Core.RebuildZoneIndex then
-        Core:RebuildZoneIndex()
+    
+    if Core then
+        if Core.DeduplicateItems then
+            local wfRem, msRem = Core:DeduplicateItems(true)
+            if (wfRem or 0) > 0 or (msRem or 0) > 0 then
+                L._debug("Import", string.format("Import deduplication successfully merged %d WF and %d MS duplicates.", wfRem or 0, msRem or 0))
+            end
+        end
+        if Core.DeduplicateVendorsPerZone then
+            Core:DeduplicateVendorsPerZone()
+        end
+        if Core.RebuildZoneIndex then
+            Core:RebuildZoneIndex()
+        end
     end
-	
-	local Map = L:GetModule("Map", true)
-	if Map then
+    
+    local Map = L:GetModule("Map", true)
+    if Map then
         Map.cacheIsDirty = true
         if Map.Update then Map:Update() end
         if Map.UpdateMinimap then Map:UpdateMinimap() end
     end
-	
-	return applied
+    
+    return applied
 end
 
 function ImportExport:ApplyImportString(importString, mode, withOverlays, skipBlacklist, skipWhitelist)

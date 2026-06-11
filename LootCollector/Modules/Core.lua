@@ -2545,8 +2545,8 @@ function Core:HandleLocalLoot(discovery)
         end
     end
     discovery.dt = dt
-    
 
+    
     if Constants and Constants.IsForbiddenZone then
         if Constants:IsForbiddenZone(discovery.c, discovery.z, discovery.fp) then
             L._debug("Core-Block", "Blocked local discovery from a forbidden zone: " .. tostring(discovery.il))
@@ -2555,11 +2555,13 @@ function Core:HandleLocalLoot(discovery)
         end
     end
     
+    
     if Core:IsInsideAOETombstone(discovery.c, discovery.z, discovery.iz, discovery.dt, discovery.xy and discovery.xy.x or 0, discovery.xy and discovery.xy.y or 0) then
 	    L._debug("Core-Block", "Blocked local discovery from tombstone area: " .. tostring(discovery.il))
         if pTime then L:ProfileStop("Core:HandleLocalLoot", pTime) end
         return
     end
+    
     
     if Core:IsInsideVendorDeadzone(discovery.c, discovery.z, discovery.iz, discovery.dt, discovery.xy and discovery.xy.x or 0, discovery.xy and discovery.xy.y or 0) then
         L._debug("Core-Block", "Blocked local discovery near Mystic Scroll vendor: " .. tostring(discovery.il))
@@ -2668,15 +2670,6 @@ function Core:HandleLocalLoot(discovery)
         end
         
         L.DataHasChanged = true
-        
-        if recordToBroadcast then
-            local shouldBeShared = (not recordToBroadcast.vendorItems) or (#recordToBroadcast.vendorItems <= 5)
-            if shouldBeShared then
-                L._debug("Core-Share", "Vendor discovery is eligible for sharing.")
-            else
-                L._debug("Core-Share", "Vendor discovery has too many items (" .. #recordToBroadcast.vendorItems .. ") and will NOT be shared in real-time.")
-            end
-        end
 
         if pTime then L:ProfileStop("Core:HandleLocalLoot", pTime) end
         return 
@@ -2717,15 +2710,15 @@ function Core:HandleLocalLoot(discovery)
         return 
     end
 
-    local canonicalMid = nil
-    local existing, existingGuid = self:FindExistingDiscovery(guid, incomingMid)
     
-    if not existing and FindNearbyDiscovery then
-        local nearby = FindNearbyDiscovery(d.c, d.z, d.i, d.xy.x, d.xy.y, db)
-        if nearby then
-            existing = nearby
-            existingGuid = nearby.g
-            guid = nearby.g
+    local guid = L:GenerateGUID(c, z, iz, itemID, x, y)
+    local rec = db[guid]
+    
+    if not rec then
+        if dt == Constants.DISCOVERY_TYPE.WORLDFORGED then
+            rec = FindWorldforgedInZone(c, z, itemID, db)
+        else
+            rec = FindNearbyDiscovery(c, z, itemID, x, y, db)
         end
     end
     

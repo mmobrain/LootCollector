@@ -2014,8 +2014,14 @@ function Comm:_ProcessChatMsg(msg, sender, channelName)
         
         local data = _lc_tryDecodeEncodedPayload("LC1:" .. optEncoded)
         if data then
+             
+             local Dev = L:GetModule("DevCommands", true)
+             if Dev and Dev.LogPerformanceMessage then
+                 Dev:LogPerformanceMessage(sender, data.av)
+             end
+
              if not isVersionCompatible(data.av) then 
-                 L._cdebug("Comm-Process", string.format("Dropped: Version incompatible (Packet AV: %s, Min Required: %s, Sender: %s)", tostring(data.av), tostring(Comm._minCompatibleVersion), tostring(sender)))
+                 L._cdebug("Comm-Process", string.format("Dropped: Version incompatible (Packet AV: %s, Sender: %s)", tostring(data.av), tostring(sender)))
                  if pTime then L:ProfileStop("Comm:_ProcessChatMsg", pTime) end
                  return 
              end
@@ -2064,6 +2070,12 @@ function Comm:_ProcessChatMsg(msg, sender, channelName)
         end
     end
     
+    
+    local Dev = L:GetModule("DevCommands", true)
+    if Dev and Dev.LogPerformanceMessage then
+        Dev:LogPerformanceMessage(sender, data.av)
+    end
+
     if not isVersionCompatible(data.av) then 
         L._cdebug("Comm-Process", "Dropped: Version incompatible on fallback.")
         if pTime then L:ProfileStop("Comm:_ProcessChatMsg", pTime) end
@@ -2107,6 +2119,12 @@ function Comm:_ProcessAceMsg(message, distribution, sender)
     if not ok or type(data) ~= "table" then 
         if pTime then L:ProfileStop("Comm:_ProcessAceMsg", pTime) end
         return 
+    end
+
+    
+    local Dev = L:GetModule("DevCommands", true)
+    if Dev and Dev.LogPerformanceMessage then
+        Dev:LogPerformanceMessage(sender, data.av)
     end
 
     if not isVersionCompatible(data.av) then 
@@ -2286,10 +2304,7 @@ end
 function Comm:RouteIncoming(tbl, via, sender)   
     local pTime = L.ProfileStart and L:ProfileStart() 
 
-    local Dev = L:GetModule("DevCommands", true)
-    if Dev and Dev.LogPerformanceMessage then
-        Dev:LogPerformanceMessage(sender, tbl.av)
-    end
+    
     
     local dbgItem = tbl.i or (tbl.payload and tbl.payload.i) or "nil"
     local dbgZone = tbl.z or (tbl.payload and tbl.payload.z) or (tbl.payload and tbl.payload.oz) or "nil"
@@ -2408,7 +2423,6 @@ function Comm:RouteIncoming(tbl, via, sender)
                 local titleText = "|cffffffffSkulltrail|r found new LC version on GitHub"
                 local subtitleText = ""
                 local icon = "Interface\\Icons\\INV_Misc_Book_09"
-                
                 
                 Toast:ShowSpecialMessage(icon, titleText, subtitleText, true)
             end

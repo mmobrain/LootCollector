@@ -1,3 +1,6 @@
+## LootCollector 0.8.5 - Fix.
+- **Lua error fix**
+
 ## LootCollector 0.8.4 - Security, Fixes, tiny Performance fix.
 
 - **Fixes:** Fixed few bugs.

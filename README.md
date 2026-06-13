@@ -1,12 +1,7 @@
-# LootCollector for Project Ascension
+# LootCollector
 
-**LootCollector** is a collaborative hunting and navigation tool designed to help you find Worldforged gear, chest spawns, and Mystic Scrolls across Project Ascension realms. Instead of wandering the world blindly, the addon pools discovery data from the community to map out active upgrade locations, letting you target the exact gear your character needs to build power quickly.
-
-> [!IMPORTANT]  
-> **Compatibility Notice:** This addon has been developed and tested specifically for the **Bronzebeard** realm of Project Ascension, with support recently extended to Conquest of Azeroth (CoA) realms. Its data-sharing model is designed for static world object spawns (e.g., clickable chests/nodes). On realms where items like Mystic Scrolls drop from random mobs, sharing coordinates is not useful, and this addon may not function as intended.
-
-> [!TIP]
-> **Support Development:** Keeping this complex codebase updated and stable takes continuous time and energy. If LootCollector helps streamline your progression, consider supporting the development on [GitHub Sponsors](https://github.com/sponsors/mmobrain) to help maintain compatibility, prevent regressions, and fund ongoing updates.
+> [!IMPORTANT: Project Status Notice]
+> ** Active development and support for LootCollector has ended. The repository is now archived and will no longer receive updates. Thank you to everyone who helped build and test this Proof of Concept (POC) project.**
 
 ---
 
@@ -109,9 +104,6 @@ This project is open to contributions from the community. If you are interested 
 *   **Author:** Skulltrail
 *   **Contributors:** Deidre, Rhenyra, Morty, Markosz, Bandit Tech, xan, Stilnight and Xurkon
 *   **Early alpha Top Collectors:** Morty, Laya, Brokenheart, Mie, Rhen, Aaltrix, Insanestar, Harrydn, Blutact
-
-#### Sponsors
-*   **Sponsors:** @ERitzman (First-ever sponsor-thank you!)
 
 #### License
 This project is released under the [MIT License](LICENSE.md).
